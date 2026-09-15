@@ -1,8 +1,19 @@
 import '@testing-library/jest-dom/vitest';
+// jsdom does not implement IndexedDB. Dexie (src/lib/db.ts) needs one to
+// exist at all -- this polyfills window.indexedDB/IDBKeyRange globally.
+import 'fake-indexeddb/auto';
 import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
 
-afterEach(() => cleanup());
+import { db } from '../lib/db';
+
+afterEach(async () => {
+  cleanup();
+  // fake-indexeddb persists across tests in the same file by default --
+  // without this, a cached identity from one test leaks into the next.
+  await db.authMeta.clear();
+  await db.device.clear();
+});
 
 // jsdom does not implement IntersectionObserver. Scroll-triggered reveal
 // components (RevealText, the landing page's BentoCard) only need it to

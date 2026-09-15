@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 
 import { PixelIcon } from '../components/PixelIcon';
+import { FeatureIcon, type FeatureIconType } from '../components/FeatureIcon';
 import { RevealText } from '../components/RevealText';
 import { MobileNav } from '../components/MobileNav';
 import { PhoneFrame } from '../components/PhoneFrame';
@@ -107,9 +108,9 @@ const PROBLEMS = [
 
 const FLOW = ['Stock', 'Sales', 'Bills', 'Payments', 'Expenses', 'Reports'];
 
-const FEATURES: { icon: Parameters<typeof PixelIcon>[0]['type']; title: string; desc: string }[] = [
+const FEATURES: { icon: FeatureIconType; title: string; desc: string }[] = [
   {
-    icon: 'sell',
+    icon: 'sales',
     title: 'Sales',
     desc: 'Record drinks and other sales in one or two taps, from any table or the counter.',
   },
@@ -119,22 +120,22 @@ const FEATURES: { icon: Parameters<typeof PixelIcon>[0]['type']; title: string; 
     desc: 'Know what came in, what was sold and what should remain — without a spreadsheet.',
   },
   {
-    icon: 'bills',
+    icon: 'tables',
     title: 'Tables & Tabs',
     desc: 'Keep track of open customer bills and table orders as the night goes on.',
   },
   {
-    icon: 'bills',
+    icon: 'payments',
     title: 'Outstanding Payments',
     desc: 'See who owes the business and send a branded reminder in a tap.',
   },
   {
-    icon: 'notebook',
+    icon: 'expenses',
     title: 'Expenses',
     desc: 'Record money spent on ice, transport, fuel, supplies and more.',
   },
   {
-    icon: 'people',
+    icon: 'staff',
     title: 'Staff Activity',
     desc: 'Know who did what and when — every sale, payment and adjustment.',
   },
@@ -343,7 +344,7 @@ export function Landing() {
                 delay={i * 60}
               >
                 <div className="w-9 h-9 rounded-xl border border-jb-ink/10 flex items-center justify-center mb-5">
-                  <PixelIcon type={f.icon} size={18} />
+                  <FeatureIcon type={f.icon} className="w-5 h-5 text-jb-ink" />
                 </div>
                 <div>
                   <h3 className="text-[15px] font-medium mb-1.5 text-jb-ink">{f.title}</h3>

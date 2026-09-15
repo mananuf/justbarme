@@ -1,6 +1,9 @@
 import { Link, Route, Routes } from 'react-router-dom';
 
+import { RequireAuth } from '../components/RequireAuth';
+import { SessionProvider } from '../lib/session';
 import { Landing } from '../pages/Landing';
+import { Login } from '../pages/Login';
 import { Onboarding } from '../pages/Onboarding';
 import { Install } from '../pages/Install';
 import { Dashboard } from '../pages/Dashboard';
@@ -23,13 +26,44 @@ function NotFound() {
 
 export function App() {
   return (
-    <Routes>
-      <Route path="/" element={<Landing />} />
-      <Route path="/onboarding" element={<Onboarding />} />
-      <Route path="/install" element={<Install />} />
-      <Route path="/dashboard" element={<Dashboard />} />
-      <Route path="/dashboard/sell" element={<Sell />} />
-      <Route path="*" element={<NotFound />} />
-    </Routes>
+    <SessionProvider>
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<Login />} />
+        <Route
+          path="/onboarding"
+          element={
+            <RequireAuth>
+              <Onboarding />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/install"
+          element={
+            <RequireAuth>
+              <Install />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/dashboard"
+          element={
+            <RequireAuth requireBusiness>
+              <Dashboard />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/dashboard/sell"
+          element={
+            <RequireAuth requireBusiness>
+              <Sell />
+            </RequireAuth>
+          }
+        />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </SessionProvider>
   );
 }

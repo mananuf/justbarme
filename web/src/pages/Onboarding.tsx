@@ -1,6 +1,10 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import type { InputHTMLAttributes, ButtonHTMLAttributes } from 'react';
+import { Link, Navigate } from 'react-router-dom';
+
+import { apiRequest, ApiError } from '../api/client';
 import { Logo } from '../components/Logo';
+import { useSession } from '../lib/session';
 
 const CATALOGUE_ITEMS = [
   'Guinness',
@@ -15,14 +19,10 @@ const CATALOGUE_ITEMS = [
   'Sprite',
   'Water',
 ];
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 4;
 
 type FormState = {
-  name: string;
-  contact: string;
-  password: string;
   businessName: string;
-  location: string;
   products: string[];
   prices: Record<string, string>;
 };
@@ -34,6 +34,11 @@ const DEFAULT_PRICES: Record<string, string> = {
   Coke: '500',
   Water: '300',
 };
+
+interface CreateBusinessResponse {
+  business: { id: string; name: string; timezone: string; currency: string };
+  membership: { business_id: string; role: string; status: string };
+}
 
 function ProgressBar({ step }: { step: number }) {
   return (
@@ -58,10 +63,7 @@ function ProgressBar({ step }: { step: number }) {
   );
 }
 
-function Field({
-  label,
-  ...props
-}: { label: string } & React.InputHTMLAttributes<HTMLInputElement>) {
+function Field({ label, ...props }: { label: string } & InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="block mb-4">
       <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">{label}</span>
@@ -73,7 +75,7 @@ function Field({
   );
 }
 
-function PrimaryButton({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+function PrimaryButton({ children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       {...props}
@@ -85,19 +87,27 @@ function PrimaryButton({ children, ...props }: React.ButtonHTMLAttributes<HTMLBu
 }
 
 export function Onboarding() {
+  const { csrfToken, addMembership, memberships } = useSession();
+
+  // Captured once at mount, not the live value: creating a business from
+  // step 1 calls addMembership before setStep(2), and those are two
+  // separate state updates (session context vs. local step) that can
+  // commit in separate renders. If this read the live `memberships` value,
+  // that in-between render (memberships now non-empty, step still 1) would
+  // incorrectly trigger the "already onboarded" redirect below and bounce a
+  // user away from their own just-created business.
+  const [alreadyHadBusiness] = useState(() => memberships.length > 0);
+
   const [step, setStep] = useState(1);
   const [form, setForm] = useState<FormState>({
-    name: '',
-    contact: '',
-    password: '',
     businessName: '',
-    location: '',
     products: ['Guinness', 'Star', 'Heineken', 'Coke', 'Water'],
     prices: DEFAULT_PRICES,
   });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const update = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
-  const next = () => setStep((s) => Math.min(TOTAL_STEPS, s + 1));
   const back = () => setStep((s) => Math.max(1, s - 1));
 
   const toggleProduct = (item: string) => {
@@ -110,70 +120,55 @@ export function Onboarding() {
     });
   };
 
+  async function createBusiness() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await apiRequest<CreateBusinessResponse>('/api/v1/businesses', {
+        method: 'POST',
+        headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
+        body: JSON.stringify({ name: form.businessName }),
+      });
+      await addMembership({
+        businessId: result.business.id,
+        businessName: result.business.name,
+        role: result.membership.role,
+      });
+      setStep(2);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : 'Could not reach justbarme. Check your connection and try again.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // A user can land here having already onboarded a first business in an
+  // earlier session (e.g. reopening /onboarding directly) -- send them
+  // straight to the dashboard rather than letting them create a duplicate.
+  if (alreadyHadBusiness && step === 1) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   return (
     <div className="min-h-screen bg-jb-cream text-jb-ink flex flex-col">
       <div className="w-full max-w-sm mx-auto px-6 pt-8 pb-16 flex-1 flex flex-col">
-        <Link
-          to="/"
-          className="flex items-center justify-center gap-1.5 mb-8"
-          aria-label="justbarme home"
-        >
+        <Link to="/" className="flex items-center justify-center gap-1.5 mb-8" aria-label="justbarme home">
           <Logo className="w-5 h-5 text-jb-ink/70" />
           <span className="font-pixel text-[10px] tracking-[0.2em] text-jb-ink/50">JUSTBARME</span>
         </Link>
-        {step < 5 && <ProgressBar step={step} />}
+        {step < TOTAL_STEPS && <ProgressBar step={step} />}
 
         {step === 1 && (
           <div className="flex-1 flex flex-col">
-            <h1
-              className="text-2xl font-light tracking-tight mb-1.5"
-              style={{ fontFamily: 'var(--font-display)' }}
-            >
-              Create your account
-            </h1>
-            <p className="text-[13px] text-jb-ink/45 mb-8">
-              Just enough to get you in. Everything else can wait.
-            </p>
-            <Field
-              label="Your name"
-              placeholder="e.g. Ada Obi"
-              value={form.name}
-              onChange={(e) => update({ name: e.target.value })}
-            />
-            <Field
-              label="Email or phone number"
-              placeholder="ada@example.com"
-              value={form.contact}
-              onChange={(e) => update({ contact: e.target.value })}
-            />
-            <Field
-              label="Password"
-              type="password"
-              placeholder="At least 8 characters"
-              value={form.password}
-              onChange={(e) => update({ password: e.target.value })}
-            />
-            <div className="mt-auto pt-6">
-              <PrimaryButton
-                onClick={next}
-                disabled={!form.name || !form.contact || form.password.length < 4}
-              >
-                Continue
-              </PrimaryButton>
-            </div>
-          </div>
-        )}
-
-        {step === 2 && (
-          <div className="flex-1 flex flex-col">
-            <h1
-              className="text-2xl font-light tracking-tight mb-1.5"
-              style={{ fontFamily: 'var(--font-display)' }}
-            >
+            <h1 className="text-2xl font-light tracking-tight mb-1.5" style={{ fontFamily: 'var(--font-display)' }}>
               Create your business
             </h1>
             <p className="text-[13px] text-jb-ink/45 mb-8">
-              You can change all of this later in Settings.
+              Branding, address and receipt details can be added later in Settings.
             </p>
             <Field
               label="Business name"
@@ -181,36 +176,30 @@ export function Onboarding() {
               value={form.businessName}
               onChange={(e) => update({ businessName: e.target.value })}
             />
-            <Field
-              label="Location (optional)"
-              placeholder="e.g. Lekki, Lagos"
-              value={form.location}
-              onChange={(e) => update({ location: e.target.value })}
-            />
-            <div className="mt-auto pt-6 flex flex-col gap-2.5">
-              <PrimaryButton onClick={next} disabled={!form.businessName}>
-                Create Business
-              </PrimaryButton>
-              <button
-                onClick={back}
-                className="text-[13px] text-jb-ink/40 hover:text-jb-ink py-2 transition-colors"
+            {error && (
+              <p role="alert" className="text-[13px] text-red-700 mb-2">
+                {error}
+              </p>
+            )}
+            <div className="mt-auto pt-6">
+              <PrimaryButton
+                onClick={() => void createBusiness()}
+                disabled={!form.businessName || submitting}
               >
-                Back
-              </button>
+                {submitting ? 'Creating…' : 'Create Business'}
+              </PrimaryButton>
             </div>
           </div>
         )}
 
-        {step === 3 && (
+        {step === 2 && (
           <div className="flex-1 flex flex-col">
-            <h1
-              className="text-2xl font-light tracking-tight mb-1.5"
-              style={{ fontFamily: 'var(--font-display)' }}
-            >
+            <h1 className="text-2xl font-light tracking-tight mb-1.5" style={{ fontFamily: 'var(--font-display)' }}>
               Choose what you sell
             </h1>
             <p className="text-[13px] text-jb-ink/45 mb-6">
-              Tap the drinks you already sell. Add your own anytime.
+              Tap the drinks you already sell. This step previews product setup — it lands for real in
+              a coming update.
             </p>
             <div className="flex flex-wrap gap-2 content-start flex-1">
               {CATALOGUE_ITEMS.map((item) => {
@@ -220,9 +209,7 @@ export function Onboarding() {
                     key={item}
                     onClick={() => toggleProduct(item)}
                     className={`px-4 py-2.5 rounded-full text-[14px] border transition-colors flex items-center gap-1.5 ${
-                      active
-                        ? 'bg-jb-ink border-jb-ink text-jb-cream'
-                        : 'border-jb-ink/15 text-jb-ink/60 bg-white'
+                      active ? 'bg-jb-ink border-jb-ink text-jb-cream' : 'border-jb-ink/15 text-jb-ink/60 bg-white'
                     }`}
                   >
                     {active && <span className="text-[11px]">✓</span>}
@@ -235,29 +222,23 @@ export function Onboarding() {
               </button>
             </div>
             <div className="mt-6 flex flex-col gap-2.5">
-              <PrimaryButton onClick={next} disabled={form.products.length === 0}>
+              <PrimaryButton onClick={() => setStep(3)} disabled={form.products.length === 0}>
                 Continue ({form.products.length} selected)
               </PrimaryButton>
-              <button
-                onClick={back}
-                className="text-[13px] text-jb-ink/40 hover:text-jb-ink py-2 transition-colors"
-              >
+              <button onClick={back} className="text-[13px] text-jb-ink/40 hover:text-jb-ink py-2 transition-colors">
                 Back
               </button>
             </div>
           </div>
         )}
 
-        {step === 4 && (
+        {step === 3 && (
           <div className="flex-1 flex flex-col">
-            <h1
-              className="text-2xl font-light tracking-tight mb-1.5"
-              style={{ fontFamily: 'var(--font-display)' }}
-            >
+            <h1 className="text-2xl font-light tracking-tight mb-1.5" style={{ fontFamily: 'var(--font-display)' }}>
               Set your prices
             </h1>
             <p className="text-[13px] text-jb-ink/45 mb-6">
-              Quick estimates are fine — you can edit these anytime.
+              Quick estimates are fine — you can edit these anytime once product setup ships.
             </p>
             <div className="space-y-2.5 flex-1 overflow-y-auto">
               {form.products.map((item) => (
@@ -273,9 +254,7 @@ export function Onboarding() {
                       inputMode="numeric"
                       placeholder="0"
                       value={form.prices[item] ?? ''}
-                      onChange={(e) =>
-                        update({ prices: { ...form.prices, [item]: e.target.value } })
-                      }
+                      onChange={(e) => update({ prices: { ...form.prices, [item]: e.target.value } })}
                       className="w-20 text-right text-[14px] text-jb-ink bg-transparent focus:outline-none"
                     />
                   </div>
@@ -283,18 +262,15 @@ export function Onboarding() {
               ))}
             </div>
             <div className="mt-6 flex flex-col gap-2.5">
-              <PrimaryButton onClick={next}>Finish Setup</PrimaryButton>
-              <button
-                onClick={back}
-                className="text-[13px] text-jb-ink/40 hover:text-jb-ink py-2 transition-colors"
-              >
+              <PrimaryButton onClick={() => setStep(4)}>Finish Setup</PrimaryButton>
+              <button onClick={back} className="text-[13px] text-jb-ink/40 hover:text-jb-ink py-2 transition-colors">
                 Back
               </button>
             </div>
           </div>
         )}
 
-        {step === 5 && (
+        {step === 4 && (
           <div className="flex-1 flex flex-col items-center text-center justify-center">
             <div
               className="w-16 h-16 rounded-full bg-jb-ink text-jb-cream flex items-center justify-center text-2xl mb-6"
@@ -302,15 +278,12 @@ export function Onboarding() {
             >
               ✓
             </div>
-            <h1
-              className="text-2xl font-light tracking-tight mb-2"
-              style={{ fontFamily: 'var(--font-display)' }}
-            >
+            <h1 className="text-2xl font-light tracking-tight mb-2" style={{ fontFamily: 'var(--font-display)' }}>
               {form.businessName || 'Your bar'} is ready.
             </h1>
             <p className="text-[13px] text-jb-ink/45 mb-10 max-w-xs">
-              You can start recording sales right away. Everything else can be adjusted later from
-              Settings.
+              Your business is saved. Product setup and staff invites are coming soon — for now, install
+              justbarme on this phone.
             </p>
             <div className="w-full flex flex-col gap-2.5">
               <Link
@@ -319,10 +292,7 @@ export function Onboarding() {
               >
                 Install justbarme on your phone
               </Link>
-              <Link
-                to="/dashboard"
-                className="text-[13px] text-jb-ink/45 hover:text-jb-ink py-2 transition-colors"
-              >
+              <Link to="/dashboard" className="text-[13px] text-jb-ink/45 hover:text-jb-ink py-2 transition-colors">
                 Maybe later — open justbarme
               </Link>
             </div>

@@ -17,8 +17,36 @@ afterEach(() => {
   Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
 });
 
-describe('App', () => {
-  it('renders the Phase 1 shell and reports a healthy service', async () => {
+describe('App routing', () => {
+  it('renders the landing page at /', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    renderApp('/');
+    expect(screen.getByRole('heading', { level: 1, name: /run your bar/i })).toBeInTheDocument();
+  });
+
+  it('renders onboarding at /onboarding', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    renderApp('/onboarding');
+    expect(screen.getByRole('heading', { name: /create your account/i })).toBeInTheDocument();
+  });
+
+  it('renders the install guide at /install', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    renderApp('/install');
+    expect(
+      screen.getByRole('heading', { name: /install justbarme on your phone/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('renders a not-found route for unknown paths', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    renderApp('/missing');
+    expect(screen.getByRole('heading', { name: /page is not here/i })).toBeInTheDocument();
+  });
+});
+
+describe('Dashboard connectivity', () => {
+  it('reports a healthy service when the backend is reachable', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -29,9 +57,7 @@ describe('App', () => {
       ),
     );
 
-    renderApp();
-    expect(screen.getByRole('heading', { name: /run the shift/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /sell/i })).toBeDisabled();
+    renderApp('/dashboard');
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Connected'));
   });
 
@@ -40,21 +66,15 @@ describe('App', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-    renderApp();
+    renderApp('/dashboard');
     expect(screen.getByRole('status')).toHaveTextContent('Offline');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('shows a controlled service unavailable notice', async () => {
+  it('shows a waiting-to-sync status when the service cannot be reached', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network failed')));
-    renderApp();
+    renderApp('/dashboard');
 
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('cannot be reached'));
-  });
-
-  it('renders a not-found route', () => {
-    vi.stubGlobal('fetch', vi.fn());
-    renderApp('/missing');
-    expect(screen.getByRole('heading', { name: /page is not here/i })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Waiting to sync'));
   });
 });

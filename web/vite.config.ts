@@ -53,7 +53,20 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': 'http://localhost:8080',
+      // The backend's CSRF check compares the request's Origin against its
+      // Host header, which only line up when they share one origin -- true
+      // in production, but not for this proxy, which otherwise rewrites
+      // Host to the target (localhost:8080) while the browser's real Origin
+      // stays localhost:5173. Preserving the original Host keeps the two in
+      // sync for local dev.
+      '/api': {
+        target: 'http://localhost:8080',
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            if (req.headers.host) proxyReq.setHeader('host', req.headers.host);
+          });
+        },
+      },
     },
   },
   test: {

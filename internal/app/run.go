@@ -21,6 +21,7 @@ import (
 	"github.com/mananuf/justbarme/internal/inventory"
 	"github.com/mananuf/justbarme/internal/oauth"
 	"github.com/mananuf/justbarme/internal/platformadmin"
+	"github.com/mananuf/justbarme/internal/sales"
 	"github.com/mananuf/justbarme/internal/signup"
 	"github.com/mananuf/justbarme/internal/store"
 )
@@ -45,6 +46,7 @@ func Run(ctx context.Context) error {
 	identitySvc := identity.New(pool, cfg.Argon2)
 	catalogueSvc := catalogue.New(pool)
 	inventorySvc := inventory.New(pool)
+	salesSvc := sales.New(pool)
 	platformAdminSvc := platformadmin.New(pool, cfg.Argon2)
 	signupSvc := signup.New(pool, cfg.Argon2, identitySvc, emailProvider(cfg, logger), cfg.Signup.OTPTTL)
 	oauthSvc := googleOAuthService(cfg, pool, identitySvc, logger)
@@ -57,6 +59,7 @@ func Run(ctx context.Context) error {
 		Identity:      identitySvc,
 		Catalogue:     catalogueSvc,
 		Inventory:     inventorySvc,
+		Sales:         salesSvc,
 		PlatformAdmin: platformAdminSvc,
 		Signup:        signupSvc,
 		OAuth:         oauthSvc,

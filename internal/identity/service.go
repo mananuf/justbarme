@@ -37,11 +37,6 @@ func newID() (uuid.UUID, error) {
 // CreateUser hashes password and inserts a new global identity. It returns
 // ErrEmailTaken if the email (case-insensitive) is already registered.
 func (s *Service) CreateUser(ctx context.Context, email, phone, displayName, password string) (User, error) {
-	id, err := newID()
-	if err != nil {
-		return User{}, err
-	}
-
 	hash, err := auth.HashPassword(password, auth.Argon2Params{
 		MemoryKiB:   s.argon2.MemoryKiB,
 		Iterations:  s.argon2.Iterations,
@@ -49,6 +44,23 @@ func (s *Service) CreateUser(ctx context.Context, email, phone, displayName, pas
 	})
 	if err != nil {
 		return User{}, fmt.Errorf("hash password: %w", err)
+	}
+	return s.CreateUserWithHashedPassword(ctx, email, phone, displayName, hash)
+}
+
+// CreateUserWithHashedPassword inserts a new global identity from a password
+// already hashed by the caller, for a flow that must not hold a plaintext
+// password in memory across a delay (internal/signup hashes it at
+// signup-start time, before the person has even confirmed their email, and
+// passes the hash through here once the OTP verifies). It is the only other
+// writer of the users table, kept here rather than in internal/signup so
+// that package never touches sqlc/store directly for a table it does not
+// own. Returns ErrEmailTaken if the email (case-insensitive) is already
+// registered.
+func (s *Service) CreateUserWithHashedPassword(ctx context.Context, email, phone, displayName, passwordHash string) (User, error) {
+	id, err := newID()
+	if err != nil {
+		return User{}, err
 	}
 
 	var created sqlc.User
@@ -58,7 +70,7 @@ func (s *Service) CreateUser(ctx context.Context, email, phone, displayName, pas
 			Email:        email,
 			Phone:        pgText(phone),
 			DisplayName:  displayName,
-			PasswordHash: hash,
+			PasswordHash: passwordHash,
 		})
 		if err != nil {
 			return err
@@ -73,6 +85,24 @@ func (s *Service) CreateUser(ctx context.Context, email, phone, displayName, pas
 		return User{}, fmt.Errorf("create user: %w", err)
 	}
 	return toUser(created), nil
+}
+
+// EmailIsRegistered reports whether email (case-insensitive) already
+// belongs to a real, completed account -- the minimal check
+// internal/signup needs before starting a new signup, without exposing a
+// full User lookup across the package boundary.
+func (s *Service) EmailIsRegistered(ctx context.Context, email string) (bool, error) {
+	err := store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+		_, err := q.GetUserByEmail(ctx, email)
+		return err
+	})
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return false, fmt.Errorf("look up user by email: %w", err)
 }
 
 // Authenticate verifies email and password, returning ErrInvalidCredentials

@@ -117,7 +117,7 @@ const FEATURES: { icon: FeatureIconType; title: string; desc: string }[] = [
   {
     icon: 'stock',
     title: 'Stock',
-    desc: 'Know what came in, what was sold and what should remain — without a spreadsheet.',
+    desc: 'Know what came in, what was sold and what should remain, without needing a spreadsheet.',
   },
   {
     icon: 'tables',
@@ -137,7 +137,7 @@ const FEATURES: { icon: FeatureIconType; title: string; desc: string }[] = [
   {
     icon: 'staff',
     title: 'Staff Activity',
-    desc: 'Know who did what and when — every sale, payment and adjustment.',
+    desc: 'Know who did what and when, across every sale, payment and adjustment.',
   },
   {
     icon: 'reports',
@@ -194,7 +194,7 @@ const STEPS = [
   {
     n: '03',
     title: 'Set your prices',
-    desc: 'Configure prices, sizes, tables and other preferences — editable anytime.',
+    desc: 'Configure prices, sizes, tables and other preferences, and edit them anytime.',
   },
   {
     n: '04',
@@ -392,9 +392,9 @@ export function Landing() {
               {'Start with the drinks\nyou already sell.'}
             </RevealText>
             <p className="mt-5 text-sm text-jb-ink/50 leading-relaxed max-w-md">
-              Pick from a prefilled catalogue of common Nigerian drinks — Guinness, Star, Heineken,
-              Trophy, Jameson, Hennessy, Gordon&apos;s, Coke, Fanta, Sprite, Water — instead of
-              typing everything from scratch.
+              Pick from a prefilled catalogue of common Nigerian drinks, like Guinness, Star,
+              Heineken, Trophy, Jameson, Hennessy, Gordon&apos;s, Coke, Fanta, Sprite and Water,
+              instead of typing everything from scratch.
             </p>
             <ul className="mt-6 space-y-2.5">
               {[
@@ -486,7 +486,7 @@ export function Landing() {
             <BentoCard className="p-6" delay={0}>
               <div className="text-[10px] tracking-widest text-jb-ink/35 mb-3">NO CONNECTION</div>
               <p className="text-[13px] text-jb-ink/60 leading-relaxed">
-                Sales, payments and stock are saved on the device right away — nothing waits on a
+                Sales, payments and stock are saved on the device right away. Nothing waits on a
                 signal.
               </p>
             </BentoCard>

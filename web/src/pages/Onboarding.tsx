@@ -110,6 +110,14 @@ export function Onboarding() {
   const update = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
   const back = () => setStep((s) => Math.max(1, s - 1));
 
+  // Skipping product selection makes a pricing step meaningless, so this
+  // clears whatever was tapped and goes straight to the finish screen
+  // rather than leaving step 3 with nothing to price.
+  const skipProducts = () => {
+    setForm((f) => ({ ...f, products: [] }));
+    setStep(4);
+  };
+
   const toggleProduct = (item: string) => {
     setForm((f) => {
       const has = f.products.includes(item);
@@ -156,7 +164,11 @@ export function Onboarding() {
   return (
     <div className="min-h-screen bg-jb-cream text-jb-ink flex flex-col">
       <div className="w-full max-w-sm mx-auto px-6 pt-8 pb-16 flex-1 flex flex-col">
-        <Link to="/" className="flex items-center justify-center gap-1.5 mb-8" aria-label="justbarme home">
+        <Link
+          to="/"
+          className="flex items-center justify-center gap-1.5 mb-8"
+          aria-label="justbarme home"
+        >
           <Logo className="w-5 h-5 text-jb-ink/70" />
           <span className="font-pixel text-[10px] tracking-[0.2em] text-jb-ink/50">JUSTBARME</span>
         </Link>
@@ -164,7 +176,10 @@ export function Onboarding() {
 
         {step === 1 && (
           <div className="flex-1 flex flex-col">
-            <h1 className="text-2xl font-light tracking-tight mb-1.5" style={{ fontFamily: 'var(--font-display)' }}>
+            <h1
+              className="text-2xl font-light tracking-tight mb-1.5"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
               Create your business
             </h1>
             <p className="text-[13px] text-jb-ink/45 mb-8">
@@ -194,12 +209,15 @@ export function Onboarding() {
 
         {step === 2 && (
           <div className="flex-1 flex flex-col">
-            <h1 className="text-2xl font-light tracking-tight mb-1.5" style={{ fontFamily: 'var(--font-display)' }}>
+            <h1
+              className="text-2xl font-light tracking-tight mb-1.5"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
               Choose what you sell
             </h1>
             <p className="text-[13px] text-jb-ink/45 mb-6">
-              Tap the drinks you already sell. This step previews product setup — it lands for real in
-              a coming update.
+              Tap the drinks you already sell. This is just a quick preview, and you&apos;ll be able
+              to add or edit your full product list anytime once that update ships.
             </p>
             <div className="flex flex-wrap gap-2 content-start flex-1">
               {CATALOGUE_ITEMS.map((item) => {
@@ -209,7 +227,9 @@ export function Onboarding() {
                     key={item}
                     onClick={() => toggleProduct(item)}
                     className={`px-4 py-2.5 rounded-full text-[14px] border transition-colors flex items-center gap-1.5 ${
-                      active ? 'bg-jb-ink border-jb-ink text-jb-cream' : 'border-jb-ink/15 text-jb-ink/60 bg-white'
+                      active
+                        ? 'bg-jb-ink border-jb-ink text-jb-cream'
+                        : 'border-jb-ink/15 text-jb-ink/60 bg-white'
                     }`}
                   >
                     {active && <span className="text-[11px]">✓</span>}
@@ -225,20 +245,35 @@ export function Onboarding() {
               <PrimaryButton onClick={() => setStep(3)} disabled={form.products.length === 0}>
                 Continue ({form.products.length} selected)
               </PrimaryButton>
-              <button onClick={back} className="text-[13px] text-jb-ink/40 hover:text-jb-ink py-2 transition-colors">
-                Back
-              </button>
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={back}
+                  className="text-[13px] text-jb-ink/40 hover:text-jb-ink py-2 transition-colors"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={skipProducts}
+                  className="text-[13px] text-jb-ink/40 hover:text-jb-ink py-2 transition-colors"
+                >
+                  Skip for now
+                </button>
+              </div>
             </div>
           </div>
         )}
 
         {step === 3 && (
           <div className="flex-1 flex flex-col">
-            <h1 className="text-2xl font-light tracking-tight mb-1.5" style={{ fontFamily: 'var(--font-display)' }}>
+            <h1
+              className="text-2xl font-light tracking-tight mb-1.5"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
               Set your prices
             </h1>
             <p className="text-[13px] text-jb-ink/45 mb-6">
-              Quick estimates are fine — you can edit these anytime once product setup ships.
+              Quick estimates are fine for now. You&apos;ll be able to fine-tune every price anytime
+              once product setup ships.
             </p>
             <div className="space-y-2.5 flex-1 overflow-y-auto">
               {form.products.map((item) => (
@@ -254,7 +289,9 @@ export function Onboarding() {
                       inputMode="numeric"
                       placeholder="0"
                       value={form.prices[item] ?? ''}
-                      onChange={(e) => update({ prices: { ...form.prices, [item]: e.target.value } })}
+                      onChange={(e) =>
+                        update({ prices: { ...form.prices, [item]: e.target.value } })
+                      }
                       className="w-20 text-right text-[14px] text-jb-ink bg-transparent focus:outline-none"
                     />
                   </div>
@@ -263,9 +300,20 @@ export function Onboarding() {
             </div>
             <div className="mt-6 flex flex-col gap-2.5">
               <PrimaryButton onClick={() => setStep(4)}>Finish Setup</PrimaryButton>
-              <button onClick={back} className="text-[13px] text-jb-ink/40 hover:text-jb-ink py-2 transition-colors">
-                Back
-              </button>
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={back}
+                  className="text-[13px] text-jb-ink/40 hover:text-jb-ink py-2 transition-colors"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={() => setStep(4)}
+                  className="text-[13px] text-jb-ink/40 hover:text-jb-ink py-2 transition-colors"
+                >
+                  Skip for now
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -278,12 +326,15 @@ export function Onboarding() {
             >
               ✓
             </div>
-            <h1 className="text-2xl font-light tracking-tight mb-2" style={{ fontFamily: 'var(--font-display)' }}>
+            <h1
+              className="text-2xl font-light tracking-tight mb-2"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
               {form.businessName || 'Your bar'} is ready.
             </h1>
             <p className="text-[13px] text-jb-ink/45 mb-10 max-w-xs">
-              Your business is saved. Product setup and staff invites are coming soon — for now, install
-              justbarme on this phone.
+              Your business is saved. Product setup and staff invites are coming soon, but you can
+              install justbarme on this phone right now.
             </p>
             <div className="w-full flex flex-col gap-2.5">
               <Link
@@ -292,8 +343,11 @@ export function Onboarding() {
               >
                 Install justbarme on your phone
               </Link>
-              <Link to="/dashboard" className="text-[13px] text-jb-ink/45 hover:text-jb-ink py-2 transition-colors">
-                Maybe later — open justbarme
+              <Link
+                to="/dashboard"
+                className="text-[13px] text-jb-ink/45 hover:text-jb-ink py-2 transition-colors"
+              >
+                Maybe later, open justbarme
               </Link>
             </div>
           </div>

@@ -33,6 +33,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.SMTP.Host != "smtp.gmail.com" || cfg.SMTP.Port != "587" || cfg.SMTP.Configured() {
 		t.Fatalf("unexpected SMTP defaults: %+v", cfg.SMTP)
 	}
+	if cfg.SMTP.MaxSendAttempts != 3 || cfg.SMTP.RetryBaseDelay != 500*time.Millisecond {
+		t.Fatalf("unexpected SMTP retry defaults: %+v", cfg.SMTP)
+	}
 	if cfg.Signup.OTPTTL != 10*time.Minute {
 		t.Fatalf("unexpected signup OTP TTL default: %v", cfg.Signup.OTPTTL)
 	}
@@ -98,6 +101,9 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 		{name: "session cookie secure not a bool", key: "JBM_SESSION_COOKIE_SECURE", value: "yes", message: "must be true or false"},
 		{name: "platform session ttl without unit", key: "JBM_PLATFORM_SESSION_TTL", value: "12", message: "positive duration"},
 		{name: "signup otp ttl without unit", key: "JBM_SIGNUP_OTP_TTL", value: "10", message: "positive duration"},
+		{name: "smtp max send attempts zero", key: "JBM_SMTP_MAX_SEND_ATTEMPTS", value: "0", message: "positive integer"},
+		{name: "smtp max send attempts non-numeric", key: "JBM_SMTP_MAX_SEND_ATTEMPTS", value: "many", message: "positive integer"},
+		{name: "smtp retry base delay without unit", key: "JBM_SMTP_RETRY_BASE_DELAY", value: "500", message: "positive duration"},
 		{name: "zero argon2 memory", key: "JBM_ARGON2_MEMORY_KIB", value: "0", message: "positive integer"},
 		{name: "non-numeric argon2 iterations", key: "JBM_ARGON2_ITERATIONS", value: "many", message: "positive integer"},
 		{name: "argon2 parallelism too large", key: "JBM_ARGON2_PARALLELISM", value: "300", message: "no greater than 255"},

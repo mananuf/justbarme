@@ -87,16 +87,23 @@ func ensureOfflineSigningKeys(cfg *config.Config, logger *slog.Logger) error {
 	return nil
 }
 
-// emailProvider returns a real SMTP provider when configured, or a
-// console-logging one outside production when it isn't. config.Load
-// already refuses to start in production without SMTP credentials, so the
-// console fallback only ever fires in development/test -- the same
-// dev-convenience-not-silent-gap pattern as ensureOfflineSigningKeys.
+// emailProvider returns a real SMTP provider, wrapped with retry/backoff,
+// when configured, or a console-logging one outside production when it
+// isn't. config.Load already refuses to start in production without SMTP
+// credentials, so the console fallback only ever fires in development/test
+// -- the same dev-convenience-not-silent-gap pattern as
+// ensureOfflineSigningKeys. The retry wrapper is only applied to the real
+// SMTP provider: ConsoleProvider never fails, so retrying it would just be
+// dead code exercised on every call.
 func emailProvider(cfg config.Config, logger *slog.Logger) email.Provider {
 	if cfg.SMTP.Configured() {
-		return email.NewSMTPProvider(email.SMTPConfig{
+		smtp := email.NewSMTPProvider(email.SMTPConfig{
 			Host: cfg.SMTP.Host, Port: cfg.SMTP.Port,
 			Username: cfg.SMTP.Username, Password: cfg.SMTP.Password, From: cfg.SMTP.From,
+		})
+		return email.WithRetry(smtp, email.RetryConfig{
+			MaxAttempts: int(cfg.SMTP.MaxSendAttempts),
+			BaseDelay:   cfg.SMTP.RetryBaseDelay,
 		})
 	}
 	logger.Warn("no SMTP credentials configured; signup codes will only be logged, not emailed",

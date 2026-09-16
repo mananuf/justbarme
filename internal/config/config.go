@@ -81,6 +81,11 @@ type SMTP struct {
 	Username string
 	Password string
 	From     string
+	// MaxSendAttempts and RetryBaseDelay configure internal/email.WithRetry,
+	// which wraps the real SMTP provider (never the console dev fallback,
+	// which cannot fail) -- see internal/app.emailProvider.
+	MaxSendAttempts int32
+	RetryBaseDelay  time.Duration
 }
 
 // Configured reports whether real SMTP credentials are present. When
@@ -151,8 +156,10 @@ func load(lookup lookupEnv) (Config, error) {
 			TTL: 168 * time.Hour,
 		},
 		SMTP: SMTP{
-			Host: "smtp.gmail.com",
-			Port: "587",
+			Host:            "smtp.gmail.com",
+			Port:            "587",
+			MaxSendAttempts: 3,
+			RetryBaseDelay:  500 * time.Millisecond,
 		},
 		Signup: Signup{
 			OTPTTL: 10 * time.Minute,
@@ -225,6 +232,8 @@ func load(lookup lookupEnv) (Config, error) {
 	if cfg.Env == Production && !cfg.SMTP.Configured() {
 		problems = append(problems, "JBM_SMTP_USERNAME, JBM_SMTP_PASSWORD, and JBM_SMTP_FROM are required in production")
 	}
+	parseInt32(lookup, "JBM_SMTP_MAX_SEND_ATTEMPTS", &cfg.SMTP.MaxSendAttempts, false, &problems)
+	parseDuration(lookup, "JBM_SMTP_RETRY_BASE_DELAY", &cfg.SMTP.RetryBaseDelay, &problems)
 
 	parseDuration(lookup, "JBM_SIGNUP_OTP_TTL", &cfg.Signup.OTPTTL, &problems)
 

@@ -115,6 +115,25 @@ func cleanupCatalogue(t *testing.T, pool *pgxpool.Pool, businessID uuid.UUID) {
 	})
 }
 
+// cleanupTemplate removes a platform catalogue template seeded by a test
+// (by name, since that is the natural key SeedTemplates upserts on).
+// catalogue_templates is platform-wide, not scoped to any one test's
+// business, so without this a test that seeds its own template leaks a row
+// into it permanently on every run.
+func cleanupTemplate(t *testing.T, pool *pgxpool.Pool, templateName string) {
+	t.Helper()
+	t.Cleanup(func() {
+		conn, err := pool.Acquire(context.Background())
+		if err != nil {
+			return
+		}
+		defer conn.Release()
+		_, _ = conn.Exec(context.Background(),
+			"DELETE FROM catalogue_template_variants WHERE template_id IN (SELECT id FROM catalogue_templates WHERE name = $1)", templateName)
+		_, _ = conn.Exec(context.Background(), "DELETE FROM catalogue_templates WHERE name = $1", templateName)
+	})
+}
+
 func TestCreateVariantSetsInitialPriceAtomically(t *testing.T) {
 	svc, identitySvc, pool := testServices(t)
 	ctx := context.Background()
@@ -431,6 +450,7 @@ func TestApplyTemplatesCreatesBusinessOwnedRecordsAtomically(t *testing.T) {
 
 	templateName := uniqueName("Test Guinness")
 	categoryName := uniqueName("Test Beer & Stout")
+	cleanupTemplate(t, pool, templateName)
 	if err := svc.SeedTemplates(ctx, []catalogue.TemplateSeed{
 		{
 			Name: templateName, CategoryName: categoryName, SortOrder: 1,
@@ -490,6 +510,7 @@ func TestApplyTemplatesUnknownIDRollsBackEverything(t *testing.T) {
 	ownerID, businessID := newTenant(t, ctx, identitySvc, pool)
 
 	templateName := uniqueName("Test Rollback Product")
+	cleanupTemplate(t, pool, templateName)
 	if err := svc.SeedTemplates(ctx, []catalogue.TemplateSeed{
 		{Name: templateName, CategoryName: uniqueName("Rollback Category"), SortOrder: 1},
 	}); err != nil {

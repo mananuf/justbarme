@@ -99,7 +99,10 @@ export function Login() {
               {submitting ? 'Signing in…' : 'Sign in'}
             </button>
             <p className="text-center text-[12px] text-jb-ink/35 mt-4">
-              New here? Your owner sets up your account first.
+              New here?{' '}
+              <Link to="/signup" className="text-jb-ink/60 underline underline-offset-2">
+                Set up your bar
+              </Link>
             </p>
           </div>
         </form>

@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { AppBottomNav } from '../components/AppBottomNav';
+import { DashboardTour } from '../components/DashboardTour';
 import { Logo } from '../components/Logo';
+import { hasSeenDashboardTour } from '../lib/dashboardTour';
 import { StatusBadge } from '../components/StatusBadge';
 import { useConnectivity } from '../hooks/useConnectivity';
 import { useServiceHealth } from '../hooks/useServiceHealth';
@@ -33,6 +35,7 @@ function useLeaseStatus(): LeaseStatus {
 export function Dashboard() {
   const [showGuide, setShowGuide] = useState(true);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [showTour, setShowTour] = useState(() => !hasSeenDashboardTour());
   const isOnline = useConnectivity();
   const serviceHealth = useServiceHealth(isOnline);
   const { user, memberships, selectedBusinessId, logout } = useSession();
@@ -96,6 +99,7 @@ export function Dashboard() {
         </div>
 
         <Link
+          id="quick-sell"
           to="/dashboard/sell"
           className="w-full rounded-xl bg-jb-ink text-jb-cream text-[15px] font-medium py-4 flex items-center justify-center gap-2 active:scale-[0.98] transition-transform mb-4"
         >
@@ -180,6 +184,7 @@ export function Dashboard() {
       </div>
 
       <AppBottomNav />
+      {showTour && <DashboardTour onDone={() => setShowTour(false)} />}
     </div>
   );
 }

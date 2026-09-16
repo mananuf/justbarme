@@ -6,6 +6,7 @@ import { SessionProvider } from '../lib/session';
 import { PlatformSessionProvider } from '../lib/platformSession';
 import { Landing } from '../pages/Landing';
 import { Login } from '../pages/Login';
+import { SignUp } from '../pages/SignUp';
 import { Onboarding } from '../pages/Onboarding';
 import { Install } from '../pages/Install';
 import { Dashboard } from '../pages/Dashboard';
@@ -34,6 +35,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<SignUp />} />
         <Route
           path="/onboarding"
           element={

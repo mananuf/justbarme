@@ -40,6 +40,12 @@ interface SessionContextValue extends SessionState {
   // Lets a screen that just called POST /businesses update session state
   // immediately, without a second GET /me round trip.
   addMembership: (membership: Membership) => Promise<void>;
+  // Public signup (see SignUp.tsx): startSignup only triggers an email with
+  // a code, it never touches session state. verifySignup is what actually
+  // logs the person in -- its response is identical in shape to login's,
+  // so it reuses the same applyMe path.
+  startSignup: (email: string, name: string, password: string) => Promise<void>;
+  verifySignup: (email: string, code: string) => Promise<void>;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -137,6 +143,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [applyMe],
   );
 
+  const startSignup = useCallback(async (email: string, name: string, password: string) => {
+    await apiRequest('/api/v1/auth/signup/start', {
+      method: 'POST',
+      body: JSON.stringify({ email, name, password }),
+    });
+  }, []);
+
+  const verifySignup = useCallback(
+    async (email: string, code: string) => {
+      const data = await apiRequest<MeResponse>('/api/v1/auth/signup/verify', {
+        method: 'POST',
+        body: JSON.stringify({ email, code }),
+      });
+      await applyMe(data);
+    },
+    [applyMe],
+  );
+
   const logout = useCallback(async () => {
     if (state.csrfToken) {
       try {
@@ -175,8 +199,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<SessionContextValue>(
-    () => ({ ...state, login, logout, refresh, selectBusiness, addMembership }),
-    [state, login, logout, refresh, selectBusiness, addMembership],
+    () => ({ ...state, login, logout, refresh, selectBusiness, addMembership, startSignup, verifySignup }),
+    [state, login, logout, refresh, selectBusiness, addMembership, startSignup, verifySignup],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

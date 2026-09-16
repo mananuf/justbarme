@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -80,6 +81,12 @@ describe('public routes', () => {
     expect(screen.getByRole('heading', { name: /welcome back/i })).toBeInTheDocument();
   });
 
+  it('renders the signup page at /signup', () => {
+    stubFetch({ '/api/v1/me': UNAUTHENTICATED });
+    renderApp('/signup');
+    expect(screen.getByRole('heading', { name: /set up your bar/i })).toBeInTheDocument();
+  });
+
   it('renders a not-found route for unknown paths', () => {
     stubFetch({ '/api/v1/me': UNAUTHENTICATED });
     renderApp('/missing');
@@ -114,6 +121,83 @@ describe('authenticated routes', () => {
     await waitFor(() =>
       expect(screen.getByRole('heading', { name: /install justbarme on your phone/i })).toBeInTheDocument(),
     );
+  });
+});
+
+describe('signup', () => {
+  const SIGNUP_START_OK = () => jsonResponse(200, { data: { email: 'ada@example.com' } });
+  const SIGNUP_VERIFY_OK = () =>
+    jsonResponse(200, {
+      data: {
+        user: { id: 'user-new', name: 'Ada Owner', email: 'ada@example.com' },
+        memberships: [],
+        csrf_token: 'test-csrf-token',
+      },
+    });
+
+  it('walks through details, code entry, and lands in onboarding on success', async () => {
+    const user = userEvent.setup();
+    stubFetch({
+      '/api/v1/me': UNAUTHENTICATED,
+      '/api/v1/auth/signup/start': SIGNUP_START_OK,
+      '/api/v1/auth/signup/verify': SIGNUP_VERIFY_OK,
+    });
+    renderApp('/signup');
+
+    await user.type(screen.getByLabelText(/your name/i), 'Ada Owner');
+    await user.type(screen.getByLabelText(/^email$/i), 'ada@example.com');
+    await user.type(screen.getByLabelText(/^password$/i), 'correcthorse123');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: /check your email/i })).toBeInTheDocument());
+
+    await user.type(screen.getByLabelText(/verification code/i), '123456');
+    await user.click(screen.getByRole('button', { name: /verify and continue/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: /create your business/i })).toBeInTheDocument(),
+    );
+  });
+
+  it('shows the already-registered message without advancing to the code step', async () => {
+    const user = userEvent.setup();
+    stubFetch({
+      '/api/v1/me': UNAUTHENTICATED,
+      '/api/v1/auth/signup/start': () =>
+        jsonResponse(409, {
+          error: { code: 'EMAIL_ALREADY_REGISTERED', message: 'taken', request_id: '', details: {} },
+        }),
+    });
+    renderApp('/signup');
+
+    await user.type(screen.getByLabelText(/your name/i), 'Ada Owner');
+    await user.type(screen.getByLabelText(/^email$/i), 'ada@example.com');
+    await user.type(screen.getByLabelText(/^password$/i), 'correcthorse123');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/already registered/i));
+    expect(screen.queryByRole('heading', { name: /check your email/i })).not.toBeInTheDocument();
+  });
+});
+
+describe('dashboard tour', () => {
+  it('shows the walkthrough on a first visit and dismisses on skip', async () => {
+    const user = userEvent.setup();
+    stubFetch({ '/api/v1/me': ME_OK, '/api/v1/health/ready': HEALTH_READY });
+    renderApp('/dashboard');
+
+    await waitFor(() => expect(screen.getByRole('dialog', { name: /dashboard walkthrough/i })).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /skip tour/i }));
+    expect(screen.queryByRole('dialog', { name: /dashboard walkthrough/i })).not.toBeInTheDocument();
+  });
+
+  it('does not show again once already seen', async () => {
+    localStorage.setItem('jb_dashboard_tour_seen', 'true');
+    stubFetch({ '/api/v1/me': ME_OK, '/api/v1/health/ready': HEALTH_READY });
+    renderApp('/dashboard');
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: /good evening/i })).toBeInTheDocument());
+    expect(screen.queryByRole('dialog', { name: /dashboard walkthrough/i })).not.toBeInTheDocument();
   });
 });
 

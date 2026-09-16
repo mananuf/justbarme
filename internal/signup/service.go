@@ -31,6 +31,21 @@ import (
 // a 6-digit code is only as safe as this limit makes brute-forcing it.
 const maxOTPAttempts = 5
 
+// otpEmailTemplate is parsed once at package init (a malformed template is
+// a programmer error, not something a live signup attempt should ever be
+// able to trigger) via internal/email's generic Template type -- the same
+// mechanism any future transactional email (a receipt, a password-reset
+// notice) would use, not something signup-specific.
+var otpEmailTemplate = email.MustNewTemplate("signup_otp",
+	"Your justbarme verification code",
+	"Your code is {{.Code}}. It expires in {{.ExpiresIn}}.",
+)
+
+type otpEmailData struct {
+	Code      string
+	ExpiresIn string
+}
+
 type Service struct {
 	pool     *pgxpool.Pool
 	argon2   config.Argon2
@@ -95,11 +110,14 @@ func (s *Service) Start(ctx context.Context, emailAddr, displayName, password st
 		return fmt.Errorf("store pending signup: %w", err)
 	}
 
-	if err := s.email.Send(ctx, email.Message{
-		To:      emailAddr,
-		Subject: "Your justbarme verification code",
-		Text:    fmt.Sprintf("Your code is %s. It expires in %s.", code, s.otpTTL.Round(time.Minute)),
-	}); err != nil {
+	msg, err := otpEmailTemplate.Render(emailAddr, otpEmailData{
+		Code:      code,
+		ExpiresIn: s.otpTTL.Round(time.Minute).String(),
+	})
+	if err != nil {
+		return fmt.Errorf("render verification email: %w", err)
+	}
+	if err := s.email.Send(ctx, msg); err != nil {
 		return fmt.Errorf("send verification email: %w", err)
 	}
 	return nil

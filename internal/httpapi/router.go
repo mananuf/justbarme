@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/mananuf/justbarme/internal/auth"
+	"github.com/mananuf/justbarme/internal/catalogue"
 	"github.com/mananuf/justbarme/internal/config"
 	"github.com/mananuf/justbarme/internal/identity"
 )
@@ -24,6 +25,7 @@ type Dependencies struct {
 	HealthTimeout time.Duration
 	Version       string
 	Identity      *identity.Service
+	Catalogue     *catalogue.Service
 	Config        config.Config
 }
 
@@ -33,8 +35,9 @@ type API struct {
 	healthTimeout time.Duration
 	version       string
 
-	identity *identity.Service
-	env      string
+	identity  *identity.Service
+	catalogue *catalogue.Service
+	env       string
 
 	sessionTTL               time.Duration
 	sessionCookieSecure      bool
@@ -61,8 +64,9 @@ func NewHandler(deps Dependencies) http.Handler {
 		healthTimeout: deps.HealthTimeout,
 		version:       deps.Version,
 
-		identity: deps.Identity,
-		env:      deps.Config.Env,
+		identity:  deps.Identity,
+		catalogue: deps.Catalogue,
+		env:       deps.Config.Env,
 
 		sessionTTL:               deps.Config.Session.TTL,
 		sessionCookieSecure:      deps.Config.Session.CookieSecure,
@@ -98,6 +102,7 @@ func NewHandler(deps Dependencies) http.Handler {
 			router.Post("/auth/logout", api.logout)
 			router.Get("/me", api.me)
 			router.Post("/businesses", api.createBusiness)
+			router.Get("/catalogue-templates", api.listCatalogueTemplates)
 
 			router.Group(func(router chi.Router) {
 				router.Use(api.requireBusinessContext)
@@ -106,6 +111,22 @@ func NewHandler(deps Dependencies) http.Handler {
 				router.Post("/devices/enroll", api.enrollDevice)
 				router.Get("/devices", api.listDevices)
 				router.Delete("/devices/{device_id}", api.revokeDevice)
+
+				router.Post("/catalogue-templates/apply", api.applyCatalogueTemplates)
+
+				router.Get("/categories", api.listCategories)
+				router.Post("/categories", api.createCategory)
+				router.Patch("/categories/{category_id}", api.updateCategory)
+
+				router.Get("/products", api.listProducts)
+				router.Post("/products", api.createProduct)
+				router.Get("/products/{product_id}", api.getProduct)
+				router.Patch("/products/{product_id}", api.updateProduct)
+				router.Post("/products/{product_id}/variants", api.createVariant)
+
+				router.Patch("/variants/{variant_id}", api.updateVariant)
+				router.Get("/variants/{variant_id}/prices", api.listVariantPrices)
+				router.Post("/variants/{variant_id}/prices", api.setVariantPrice)
 			})
 		})
 	})

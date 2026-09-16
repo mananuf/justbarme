@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/mananuf/justbarme/internal/catalogue"
 	"github.com/mananuf/justbarme/internal/config"
 	"github.com/mananuf/justbarme/internal/httpapi"
 	"github.com/mananuf/justbarme/internal/identity"
@@ -35,6 +36,7 @@ func Run(ctx context.Context) error {
 	}
 
 	identitySvc := identity.New(pool, cfg.Argon2)
+	catalogueSvc := catalogue.New(pool)
 
 	handler := httpapi.NewHandler(httpapi.Dependencies{
 		Logger:        logger,
@@ -42,6 +44,7 @@ func Run(ctx context.Context) error {
 		HealthTimeout: cfg.Database.HealthTimeout,
 		Version:       Version,
 		Identity:      identitySvc,
+		Catalogue:     catalogueSvc,
 		Config:        cfg,
 	})
 	server := httpapi.NewServer(cfg.HTTP, handler, logger)

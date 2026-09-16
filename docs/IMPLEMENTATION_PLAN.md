@@ -798,6 +798,10 @@ No profit figure is shown as authoritative unless its underlying inventory consu
 
 ---
 
+### In progress, out of frozen order
+
+- **Stock receiving** — a thin, deliberately partial slice of Phase 7 (receipts, lots, movements, balances; no counts/approvals/reviews) pulled forward because it doesn't depend on sync, selling, or tabs existing first, and "get the bar running with one user" needs it now. See [`PHASE_STOCK_RECEIVING.md`](PHASE_STOCK_RECEIVING.md).
+
 ### Proposed future phases (not part of this frozen sequence)
 
 - **WhatsApp messaging via Zavu** — OTP delivery, an email-resend backup, bar operational updates, and WhatsApp-based staff invitations. Draft only, undecided, with an NDPA 2023 compliance assessment already run: see [`PHASE_WHATSAPP_MESSAGING.md`](PHASE_WHATSAPP_MESSAGING.md).

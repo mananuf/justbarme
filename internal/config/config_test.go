@@ -30,6 +30,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.PlatformSession.TTL != 12*time.Hour {
 		t.Fatalf("unexpected platform session TTL default: %v", cfg.PlatformSession.TTL)
 	}
+	if cfg.SMTP.Host != "smtp.gmail.com" || cfg.SMTP.Port != "587" || cfg.SMTP.Configured() {
+		t.Fatalf("unexpected SMTP defaults: %+v", cfg.SMTP)
+	}
+	if cfg.Signup.OTPTTL != 10*time.Minute {
+		t.Fatalf("unexpected signup OTP TTL default: %v", cfg.Signup.OTPTTL)
+	}
 	if cfg.Argon2.MemoryKiB != 64*1024 || cfg.Argon2.Iterations != 3 || cfg.Argon2.Parallelism != 2 {
 		t.Fatalf("unexpected argon2 defaults: %+v", cfg.Argon2)
 	}
@@ -91,6 +97,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 		{name: "session ttl without unit", key: "JBM_SESSION_TTL", value: "720", message: "positive duration"},
 		{name: "session cookie secure not a bool", key: "JBM_SESSION_COOKIE_SECURE", value: "yes", message: "must be true or false"},
 		{name: "platform session ttl without unit", key: "JBM_PLATFORM_SESSION_TTL", value: "12", message: "positive duration"},
+		{name: "signup otp ttl without unit", key: "JBM_SIGNUP_OTP_TTL", value: "10", message: "positive duration"},
 		{name: "zero argon2 memory", key: "JBM_ARGON2_MEMORY_KIB", value: "0", message: "positive integer"},
 		{name: "non-numeric argon2 iterations", key: "JBM_ARGON2_ITERATIONS", value: "many", message: "positive integer"},
 		{name: "argon2 parallelism too large", key: "JBM_ARGON2_PARALLELISM", value: "300", message: "no greater than 255"},
@@ -194,7 +201,7 @@ func TestLoadProductionRequiresHardenedConfiguration(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected production defaults to be rejected")
 		}
-		for _, want := range []string{"JBM_OFFLINE_SIGNING_PRIVATE_KEY", "JBM_PUBLIC_BASE_URL must be an https URL"} {
+		for _, want := range []string{"JBM_OFFLINE_SIGNING_PRIVATE_KEY", "JBM_PUBLIC_BASE_URL must be an https URL", "JBM_SMTP_USERNAME"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("load() error = %v, want it to mention %q", err, want)
 			}
@@ -209,6 +216,9 @@ func TestLoadProductionRequiresHardenedConfiguration(t *testing.T) {
 			"JBM_OFFLINE_SIGNING_PRIVATE_KEY": base64.StdEncoding.EncodeToString(priv),
 			"JBM_OFFLINE_SIGNING_PUBLIC_KEY":  base64.StdEncoding.EncodeToString(pub),
 			"JBM_PUBLIC_BASE_URL":             "https://justbarme.app",
+			"JBM_SMTP_USERNAME":               "signup@justbarme.app",
+			"JBM_SMTP_PASSWORD":               "app-password",
+			"JBM_SMTP_FROM":                   "justbarme <signup@justbarme.app>",
 		}
 		if _, err := load(mapLookup(values)); err != nil {
 			t.Fatalf("load() error = %v", err)

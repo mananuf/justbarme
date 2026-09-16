@@ -72,6 +72,30 @@ type OfflineLease struct {
 	PublicKey  ed25519.PublicKey
 }
 
+// SMTP configures the transactional-email relay used to deliver signup OTP
+// codes (internal/email, internal/signup). The pilot uses Gmail's SMTP
+// relay with an app password.
+type SMTP struct {
+	Host     string
+	Port     string
+	Username string
+	Password string
+	From     string
+}
+
+// Configured reports whether real SMTP credentials are present. When
+// false, internal/app falls back to email.ConsoleProvider outside
+// production (config.Load itself refuses to start in production without
+// them).
+func (s SMTP) Configured() bool {
+	return s.Username != "" && s.Password != "" && s.From != ""
+}
+
+// Signup configures the public account-signup flow (internal/signup).
+type Signup struct {
+	OTPTTL time.Duration
+}
+
 type Config struct {
 	Env             string
 	HTTP            HTTP
@@ -81,6 +105,8 @@ type Config struct {
 	PlatformSession PlatformSession
 	Argon2          Argon2
 	OfflineLease    OfflineLease
+	SMTP            SMTP
+	Signup          Signup
 	PublicBaseURL   string
 }
 
@@ -123,6 +149,13 @@ func load(lookup lookupEnv) (Config, error) {
 		},
 		OfflineLease: OfflineLease{
 			TTL: 168 * time.Hour,
+		},
+		SMTP: SMTP{
+			Host: "smtp.gmail.com",
+			Port: "587",
+		},
+		Signup: Signup{
+			OTPTTL: 10 * time.Minute,
 		},
 	}
 
@@ -183,6 +216,17 @@ func load(lookup lookupEnv) (Config, error) {
 	if cfg.Env == Production && (cfg.OfflineLease.PrivateKey == nil || cfg.OfflineLease.PublicKey == nil) {
 		problems = append(problems, "JBM_OFFLINE_SIGNING_PRIVATE_KEY and JBM_OFFLINE_SIGNING_PUBLIC_KEY are required in production")
 	}
+
+	cfg.SMTP.Host = stringValue(lookup, "JBM_SMTP_HOST", cfg.SMTP.Host)
+	cfg.SMTP.Port = stringValue(lookup, "JBM_SMTP_PORT", cfg.SMTP.Port)
+	cfg.SMTP.Username = stringValue(lookup, "JBM_SMTP_USERNAME", cfg.SMTP.Username)
+	cfg.SMTP.Password = stringValue(lookup, "JBM_SMTP_PASSWORD", cfg.SMTP.Password)
+	cfg.SMTP.From = stringValue(lookup, "JBM_SMTP_FROM", cfg.SMTP.From)
+	if cfg.Env == Production && !cfg.SMTP.Configured() {
+		problems = append(problems, "JBM_SMTP_USERNAME, JBM_SMTP_PASSWORD, and JBM_SMTP_FROM are required in production")
+	}
+
+	parseDuration(lookup, "JBM_SIGNUP_OTP_TTL", &cfg.Signup.OTPTTL, &problems)
 
 	cfg.PublicBaseURL = stringValue(lookup, "JBM_PUBLIC_BASE_URL", cfg.PublicBaseURL)
 	if cfg.Env == Production && !strings.HasPrefix(cfg.PublicBaseURL, "https://") {

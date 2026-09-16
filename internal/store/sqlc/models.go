@@ -36,6 +36,33 @@ type BusinessMembership struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type CatalogueTemplate struct {
+	ID           uuid.UUID          `json:"id"`
+	Name         string             `json:"name"`
+	CategoryName string             `json:"category_name"`
+	SortOrder    int32              `json:"sort_order"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type CatalogueTemplateVariant struct {
+	ID                 uuid.UUID          `json:"id"`
+	TemplateID         uuid.UUID          `json:"template_id"`
+	Name               string             `json:"name"`
+	SuggestedPriceKobo int64              `json:"suggested_price_kobo"`
+	SortOrder          int32              `json:"sort_order"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
+type Category struct {
+	ID         uuid.UUID          `json:"id"`
+	BusinessID uuid.UUID          `json:"business_id"`
+	Name       string             `json:"name"`
+	SortOrder  int32              `json:"sort_order"`
+	Active     bool               `json:"active"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Device struct {
 	ID          uuid.UUID          `json:"id"`
 	BusinessID  uuid.UUID          `json:"business_id"`
@@ -57,6 +84,37 @@ type Location struct {
 	Name       string             `json:"name"`
 	IsDefault  bool               `json:"is_default"`
 	Status     string             `json:"status"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Product struct {
+	ID         uuid.UUID          `json:"id"`
+	BusinessID uuid.UUID          `json:"business_id"`
+	CategoryID pgtype.UUID        `json:"category_id"`
+	Name       string             `json:"name"`
+	Active     bool               `json:"active"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProductPrice struct {
+	ID         uuid.UUID          `json:"id"`
+	BusinessID uuid.UUID          `json:"business_id"`
+	VariantID  uuid.UUID          `json:"variant_id"`
+	AmountKobo int64              `json:"amount_kobo"`
+	ValidFrom  pgtype.Timestamptz `json:"valid_from"`
+	ValidTo    pgtype.Timestamptz `json:"valid_to"`
+	CreatedBy  uuid.UUID          `json:"created_by"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type ProductVariant struct {
+	ID         uuid.UUID          `json:"id"`
+	BusinessID uuid.UUID          `json:"business_id"`
+	ProductID  uuid.UUID          `json:"product_id"`
+	Name       string             `json:"name"`
+	Active     bool               `json:"active"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }

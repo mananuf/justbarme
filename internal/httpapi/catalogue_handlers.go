@@ -34,6 +34,11 @@ type variantResponse struct {
 	Name         string        `json:"name"`
 	Active       bool          `json:"active"`
 	CurrentPrice priceResponse `json:"current_price"`
+	// CurrentStock comes from internal/inventory, merged in here rather
+	// than internal/catalogue knowing about inventory at all -- see
+	// docs/PHASE_STOCK_RECEIVING.md. A variant with no stock receipts yet
+	// is simply absent from the balances map, and reads as 0 here.
+	CurrentStock int64 `json:"current_stock"`
 }
 
 type productResponse struct {
@@ -57,14 +62,17 @@ func toPriceResponse(p catalogue.Price) priceResponse {
 	return out
 }
 
-func toVariantResponse(v catalogue.VariantWithPrice) variantResponse {
-	return variantResponse{ID: v.ID.String(), Name: v.Name, Active: v.Active, CurrentPrice: toPriceResponse(v.CurrentPrice)}
+func toVariantResponse(v catalogue.VariantWithPrice, balances map[uuid.UUID]int64) variantResponse {
+	return variantResponse{
+		ID: v.ID.String(), Name: v.Name, Active: v.Active, CurrentPrice: toPriceResponse(v.CurrentPrice),
+		CurrentStock: balances[v.ID],
+	}
 }
 
-func toProductResponse(p catalogue.ProductWithVariants) productResponse {
+func toProductResponse(p catalogue.ProductWithVariants, balances map[uuid.UUID]int64) productResponse {
 	out := productResponse{ID: p.ID.String(), Name: p.Name, Active: p.Active, CategoryID: uuidOrNil(p.CategoryID)}
 	for _, v := range p.Variants {
-		out.Variants = append(out.Variants, toVariantResponse(v))
+		out.Variants = append(out.Variants, toVariantResponse(v, balances))
 	}
 	return out
 }
@@ -255,9 +263,14 @@ func (api *API) listProducts(w http.ResponseWriter, r *http.Request) {
 		api.internalErrorResponse(w, r, fmt.Errorf("list products: %w", err))
 		return
 	}
+	balances, err := api.inventory.GetBalances(r.Context(), principal.UserID, business.BusinessID)
+	if err != nil {
+		api.internalErrorResponse(w, r, fmt.Errorf("list inventory balances: %w", err))
+		return
+	}
 	out := make([]productResponse, 0, len(products))
 	for _, p := range products {
-		out = append(out, toProductResponse(p))
+		out = append(out, toProductResponse(p, balances))
 	}
 	if err := writeJSON(w, http.StatusOK, envelope{"data": out}, nil); err != nil {
 		api.logger.Error("write list products response", "request_id", RequestID(r.Context()), "error", err)
@@ -304,7 +317,7 @@ func (api *API) createProduct(w http.ResponseWriter, r *http.Request) {
 		catalogueErrorResponse(api, w, r, err, "create product")
 		return
 	}
-	payload := toProductResponse(catalogue.ProductWithVariants{Product: product})
+	payload := toProductResponse(catalogue.ProductWithVariants{Product: product}, nil)
 	if err := writeJSON(w, http.StatusCreated, envelope{"data": payload}, nil); err != nil {
 		api.logger.Error("write create product response", "request_id", RequestID(r.Context()), "error", err)
 	}
@@ -334,7 +347,7 @@ func (api *API) getProduct(w http.ResponseWriter, r *http.Request) {
 		catalogueErrorResponse(api, w, r, err, "get product")
 		return
 	}
-	payload := toProductResponse(catalogue.ProductWithVariants{Product: product})
+	payload := toProductResponse(catalogue.ProductWithVariants{Product: product}, nil)
 	if err := writeJSON(w, http.StatusOK, envelope{"data": payload}, nil); err != nil {
 		api.logger.Error("write get product response", "request_id", RequestID(r.Context()), "error", err)
 	}
@@ -391,7 +404,7 @@ func (api *API) updateProduct(w http.ResponseWriter, r *http.Request) {
 		catalogueErrorResponse(api, w, r, err, "update product")
 		return
 	}
-	payload := toProductResponse(catalogue.ProductWithVariants{Product: product})
+	payload := toProductResponse(catalogue.ProductWithVariants{Product: product}, nil)
 	if err := writeJSON(w, http.StatusOK, envelope{"data": payload}, nil); err != nil {
 		api.logger.Error("write update product response", "request_id", RequestID(r.Context()), "error", err)
 	}
@@ -447,7 +460,7 @@ func (api *API) createVariant(w http.ResponseWriter, r *http.Request) {
 		catalogueErrorResponse(api, w, r, err, "create variant")
 		return
 	}
-	if err := writeJSON(w, http.StatusCreated, envelope{"data": toVariantResponse(variant)}, nil); err != nil {
+	if err := writeJSON(w, http.StatusCreated, envelope{"data": toVariantResponse(variant, nil)}, nil); err != nil {
 		api.logger.Error("write create variant response", "request_id", RequestID(r.Context()), "error", err)
 	}
 }

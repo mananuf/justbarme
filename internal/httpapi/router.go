@@ -13,6 +13,7 @@ import (
 	"github.com/mananuf/justbarme/internal/catalogue"
 	"github.com/mananuf/justbarme/internal/config"
 	"github.com/mananuf/justbarme/internal/identity"
+	"github.com/mananuf/justbarme/internal/inventory"
 	"github.com/mananuf/justbarme/internal/oauth"
 	"github.com/mananuf/justbarme/internal/platformadmin"
 	"github.com/mananuf/justbarme/internal/signup"
@@ -29,6 +30,7 @@ type Dependencies struct {
 	Version       string
 	Identity      *identity.Service
 	Catalogue     *catalogue.Service
+	Inventory     *inventory.Service
 	PlatformAdmin *platformadmin.Service
 	Signup        *signup.Service
 	// OAuth is nil when Google sign-in isn't configured (see
@@ -46,6 +48,7 @@ type API struct {
 
 	identity      *identity.Service
 	catalogue     *catalogue.Service
+	inventory     *inventory.Service
 	platformAdmin *platformadmin.Service
 	signup        *signup.Service
 	oauth         *oauth.Service
@@ -87,6 +90,7 @@ func NewHandler(deps Dependencies) http.Handler {
 
 		identity:      deps.Identity,
 		catalogue:     deps.Catalogue,
+		inventory:     deps.Inventory,
 		platformAdmin: deps.PlatformAdmin,
 		signup:        deps.Signup,
 		oauth:         deps.OAuth,
@@ -179,6 +183,8 @@ func NewHandler(deps Dependencies) http.Handler {
 				router.Patch("/variants/{variant_id}", api.updateVariant)
 				router.Get("/variants/{variant_id}/prices", api.listVariantPrices)
 				router.Post("/variants/{variant_id}/prices", api.setVariantPrice)
+
+				router.Post("/stock-receipts", api.receiveStock)
 			})
 		})
 

@@ -95,7 +95,8 @@ func (api *API) applyCatalogueTemplates(w http.ResponseWriter, r *http.Request) 
 
 	out := make([]productResponse, 0, len(products))
 	for _, p := range products {
-		out = append(out, toProductResponse(p))
+		// Freshly applied templates have no stock receipts yet.
+		out = append(out, toProductResponse(p, nil))
 	}
 	if err := writeJSON(w, http.StatusCreated, envelope{"data": out}, nil); err != nil {
 		api.logger.Error("write apply catalogue templates response", "request_id", RequestID(r.Context()), "error", err)

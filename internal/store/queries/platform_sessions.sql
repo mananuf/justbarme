@@ -10,6 +10,9 @@ WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now();
 -- name: TouchPlatformSession :exec
 UPDATE platform_sessions SET last_used_at = now() WHERE id = $1;
 
+-- name: UpdatePlatformSessionCSRFTokenHash :exec
+UPDATE platform_sessions SET csrf_token_hash = $2 WHERE id = $1;
+
 -- name: RevokePlatformSession :execrows
 UPDATE platform_sessions
 SET revoked_at = now(), revoked_reason = $2

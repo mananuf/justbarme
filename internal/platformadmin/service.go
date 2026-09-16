@@ -180,6 +180,28 @@ func (s *Service) GetActiveSessionByToken(ctx context.Context, rawToken string) 
 	return toSession(found), nil
 }
 
+// RotateCSRFToken issues and stores a new CSRF token for an existing
+// session without disturbing the session itself, mirroring
+// internal/identity.Service.RotateCSRFToken exactly -- this is what lets
+// platformMe return a usable token after a page reload, since only the
+// hash is ever persisted and login is the only other place a raw token is
+// issued. The previous CSRF token stops working immediately.
+func (s *Service) RotateCSRFToken(ctx context.Context, sessionID uuid.UUID) (string, error) {
+	rawCSRF, err := auth.GenerateToken()
+	if err != nil {
+		return "", fmt.Errorf("generate csrf token: %w", err)
+	}
+	err = store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+		return q.UpdatePlatformSessionCSRFTokenHash(ctx, sqlc.UpdatePlatformSessionCSRFTokenHashParams{
+			ID: sessionID, CsrfTokenHash: auth.HashToken(rawCSRF),
+		})
+	})
+	if err != nil {
+		return "", fmt.Errorf("rotate csrf token: %w", err)
+	}
+	return rawCSRF, nil
+}
+
 // RevokeSession revokes sessionID if and only if it belongs to staffID.
 func (s *Service) RevokeSession(ctx context.Context, staffID, sessionID uuid.UUID, reason string) error {
 	var affected int64

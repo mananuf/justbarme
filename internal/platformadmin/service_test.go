@@ -174,6 +174,14 @@ func TestPlatformSessionLifecycle(t *testing.T) {
 		t.Fatalf("expected ErrSessionNotFound for a bogus token, got %v", err)
 	}
 
+	rotatedCSRF, err := svc.RotateCSRFToken(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("RotateCSRFToken: %v", err)
+	}
+	if rotatedCSRF == "" || rotatedCSRF == rawCSRF {
+		t.Fatalf("expected a new, non-empty CSRF token, got %q (original was %q)", rotatedCSRF, rawCSRF)
+	}
+
 	if err := svc.RevokeSession(ctx, staff.ID, sess.ID, "logout"); err != nil {
 		t.Fatalf("RevokeSession: %v", err)
 	}

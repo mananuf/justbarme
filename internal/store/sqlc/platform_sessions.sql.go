@@ -103,3 +103,17 @@ func (q *Queries) TouchPlatformSession(ctx context.Context, id uuid.UUID) error 
 	_, err := q.db.Exec(ctx, touchPlatformSession, id)
 	return err
 }
+
+const updatePlatformSessionCSRFTokenHash = `-- name: UpdatePlatformSessionCSRFTokenHash :exec
+UPDATE platform_sessions SET csrf_token_hash = $2 WHERE id = $1
+`
+
+type UpdatePlatformSessionCSRFTokenHashParams struct {
+	ID            uuid.UUID `json:"id"`
+	CsrfTokenHash string    `json:"csrf_token_hash"`
+}
+
+func (q *Queries) UpdatePlatformSessionCSRFTokenHash(ctx context.Context, arg UpdatePlatformSessionCSRFTokenHashParams) error {
+	_, err := q.db.Exec(ctx, updatePlatformSessionCSRFTokenHash, arg.ID, arg.CsrfTokenHash)
+	return err
+}

@@ -61,6 +61,7 @@ type Querier interface {
 	TouchPlatformSession(ctx context.Context, id uuid.UUID) error
 	TouchSession(ctx context.Context, id uuid.UUID) error
 	UpdateCategory(ctx context.Context, arg UpdateCategoryParams) (Category, error)
+	UpdatePlatformSessionCSRFTokenHash(ctx context.Context, arg UpdatePlatformSessionCSRFTokenHashParams) error
 	UpdateProduct(ctx context.Context, arg UpdateProductParams) (Product, error)
 	UpdateSessionCSRFTokenHash(ctx context.Context, arg UpdateSessionCSRFTokenHashParams) error
 	UpdateVariant(ctx context.Context, arg UpdateVariantParams) (ProductVariant, error)

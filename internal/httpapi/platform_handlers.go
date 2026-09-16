@@ -102,23 +102,29 @@ func (api *API) platformLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// platformMe implements GET /api/v1/platform/me. Unlike GET /me, this does
-// not rotate the CSRF token -- a fixed token for the session's lifetime is
-// an accepted simplification here (see CLAUDE.md).
+// platformMe implements GET /api/v1/platform/me: current staff and a
+// freshly rotated CSRF token, mirroring GET /me exactly -- without
+// rotation, a reloaded platform admin page would have no way to obtain a
+// usable CSRF token (only its hash is ever stored) and every mutating
+// request would fail until the staff member logged in again.
 func (api *API) platformMe(w http.ResponseWriter, r *http.Request) {
 	staff, ok := platformStaffFromContext(r.Context())
 	if !ok {
 		api.internalErrorResponse(w, r, errors.New("platformMe ran without requirePlatformAuth"))
 		return
 	}
-	if _, ok := platformSessionFromContext(r.Context()); !ok {
+	sess, ok := platformSessionFromContext(r.Context())
+	if !ok {
 		api.internalErrorResponse(w, r, errors.New("platformMe ran without a platform session in context"))
 		return
 	}
-	// The session's own CSRF token was already issued at login; platformMe
-	// does not have a raw token to return, since only the hash is stored.
-	// Callers that need the CSRF token again must re-authenticate.
-	api.writePlatformSessionPayload(w, r, http.StatusOK, staff, "")
+
+	csrfToken, err := api.platformAdmin.RotateCSRFToken(r.Context(), sess.ID)
+	if err != nil {
+		api.internalErrorResponse(w, r, fmt.Errorf("rotate platform csrf token: %w", err))
+		return
+	}
+	api.writePlatformSessionPayload(w, r, http.StatusOK, staff, csrfToken)
 }
 
 func (api *API) writePlatformSessionPayload(w http.ResponseWriter, r *http.Request, status int, staff platformadmin.Staff, csrfToken string) {

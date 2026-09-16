@@ -11,6 +11,7 @@ import { Onboarding } from '../pages/Onboarding';
 import { Install } from '../pages/Install';
 import { Dashboard } from '../pages/Dashboard';
 import { Sell } from '../pages/Sell';
+import { Stock } from '../pages/Stock';
 import { PlatformLogin } from '../pages/platform/PlatformLogin';
 import { PlatformDashboard } from '../pages/platform/PlatformDashboard';
 
@@ -65,6 +66,14 @@ export function App() {
           element={
             <RequireAuth requireBusiness>
               <Sell />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/dashboard/stock"
+          element={
+            <RequireAuth requireBusiness>
+              <Stock />
             </RequireAuth>
           }
         />

@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 const NAV_ITEMS = [
   { label: 'Home', href: '/dashboard', icon: 'home' },
   { label: 'Sell', href: '/dashboard/sell', icon: 'sell' },
-  { label: 'Stock', href: '/dashboard#stock', icon: 'stock' },
+  { label: 'Stock', href: '/dashboard/stock', icon: 'stock' },
   { label: 'Bills', href: '/dashboard#bills', icon: 'bills' },
   { label: 'More', href: '/dashboard#more', icon: 'more' },
 ] as const;
@@ -68,7 +68,9 @@ export function AppBottomNav() {
               ? pathname === '/dashboard'
               : item.label === 'Sell'
                 ? pathname.startsWith('/dashboard/sell')
-                : false;
+                : item.label === 'Stock'
+                  ? pathname.startsWith('/dashboard/stock')
+                  : false;
           const isSell = item.label === 'Sell';
           return (
             <Link

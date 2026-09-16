@@ -64,3 +64,7 @@ sqlc:
 # Usage: make seed ARGS="-email=owner@example.com -password=... -name='Ada Obi' -business='The Place'"
 seed:
 	go run ./cmd/seed $(ARGS)
+
+# Idempotently upserts the platform catalogue templates — see cmd/seed-catalogue.
+seed-catalogue:
+	go run ./cmd/seed-catalogue

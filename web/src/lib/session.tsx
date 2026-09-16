@@ -46,6 +46,11 @@ interface SessionContextValue extends SessionState {
   // so it reuses the same applyMe path.
   startSignup: (email: string, name: string, password: string) => Promise<void>;
   verifySignup: (email: string, code: string) => Promise<void>;
+  // "Sign in with Google" (see GoogleSignInButton.tsx). idToken is the raw
+  // JWT Google Identity Services hands back client-side; the backend
+  // verifies it and returns a session in the same shape login/verifySignup
+  // do, whether this is a brand new account or a returning one.
+  continueWithGoogle: (idToken: string) => Promise<void>;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -59,7 +64,11 @@ const emptyState: SessionState = {
 };
 
 function toMemberships(raw: MeResponse['memberships']): Membership[] {
-  return raw.map((m) => ({ businessId: m.business_id, businessName: m.business_name, role: m.role }));
+  return raw.map((m) => ({
+    businessId: m.business_id,
+    businessName: m.business_name,
+    role: m.role,
+  }));
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {
@@ -69,7 +78,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const memberships = toMemberships(data.memberships);
     const cached = await db.authMeta.get('current');
     const selectedBusinessId =
-      cached?.selectedBusinessId && memberships.some((m) => m.businessId === cached.selectedBusinessId)
+      cached?.selectedBusinessId &&
+      memberships.some((m) => m.businessId === cached.selectedBusinessId)
         ? cached.selectedBusinessId
         : (memberships[0]?.businessId ?? null);
 
@@ -161,6 +171,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [applyMe],
   );
 
+  const continueWithGoogle = useCallback(
+    async (idToken: string) => {
+      const data = await apiRequest<MeResponse>('/api/v1/auth/google', {
+        method: 'POST',
+        body: JSON.stringify({ id_token: idToken }),
+      });
+      await applyMe(data);
+    },
+    [applyMe],
+  );
+
   const logout = useCallback(async () => {
     if (state.csrfToken) {
       try {
@@ -199,8 +220,28 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<SessionContextValue>(
-    () => ({ ...state, login, logout, refresh, selectBusiness, addMembership, startSignup, verifySignup }),
-    [state, login, logout, refresh, selectBusiness, addMembership, startSignup, verifySignup],
+    () => ({
+      ...state,
+      login,
+      logout,
+      refresh,
+      selectBusiness,
+      addMembership,
+      startSignup,
+      verifySignup,
+      continueWithGoogle,
+    }),
+    [
+      state,
+      login,
+      logout,
+      refresh,
+      selectBusiness,
+      addMembership,
+      startSignup,
+      verifySignup,
+      continueWithGoogle,
+    ],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

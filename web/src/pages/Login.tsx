@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 import { ApiError } from '../api/client';
+import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { Logo } from '../components/Logo';
 import { useSession } from '../lib/session';
 
@@ -17,15 +18,21 @@ export function Login() {
 
   const from = (location.state as { from?: string } | null)?.from ?? null;
 
+  function goPostSignIn() {
+    // A brand-new account (created via cmd/seed, no business yet) goes
+    // through onboarding; a returning owner/staff member goes straight in.
+    void navigate(from ?? (memberships.length > 0 ? '/dashboard' : '/onboarding'), {
+      replace: true,
+    });
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
     try {
       await login(email, password);
-      // A brand-new account (created via cmd/seed, no business yet) goes
-      // through onboarding; a returning owner/staff member goes straight in.
-      void navigate(from ?? (memberships.length > 0 ? '/dashboard' : '/onboarding'), { replace: true });
+      goPostSignIn();
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.code === 'RATE_LIMITED') {
@@ -44,7 +51,11 @@ export function Login() {
   return (
     <div className="min-h-screen bg-jb-cream text-jb-ink flex flex-col">
       <div className="w-full max-w-sm mx-auto px-6 pt-8 pb-16 flex-1 flex flex-col">
-        <Link to="/" className="flex items-center justify-center gap-1.5 mb-10" aria-label="justbarme home">
+        <Link
+          to="/"
+          className="flex items-center justify-center gap-1.5 mb-10"
+          aria-label="justbarme home"
+        >
           <Logo className="w-5 h-5 text-jb-ink/70" />
           <span className="font-pixel text-[10px] tracking-[0.2em] text-jb-ink/50">JUSTBARME</span>
         </Link>
@@ -98,6 +109,14 @@ export function Login() {
             >
               {submitting ? 'Signing in…' : 'Sign in'}
             </button>
+
+            <div className="flex items-center gap-3 my-5">
+              <div className="h-px flex-1 bg-jb-ink/10" />
+              <span className="text-[11px] text-jb-ink/35">or</span>
+              <div className="h-px flex-1 bg-jb-ink/10" />
+            </div>
+            <GoogleSignInButton onSuccess={goPostSignIn} onError={setError} />
+
             <p className="text-center text-[12px] text-jb-ink/35 mt-4">
               New here?{' '}
               <Link to="/signup" className="text-jb-ink/60 underline underline-offset-2">

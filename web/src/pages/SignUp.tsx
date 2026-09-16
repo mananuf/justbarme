@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { ApiError } from '../api/client';
+import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { Logo } from '../components/Logo';
 import { useSession } from '../lib/session';
 
@@ -13,7 +14,7 @@ type Step = 'details' | 'code';
 // internal/signup) -- but presented as one continuous flow, not a
 // multi-page wizard, since it's a handful of seconds between them.
 export function SignUp() {
-  const { startSignup, verifySignup } = useSession();
+  const { startSignup, verifySignup, memberships } = useSession();
   const navigate = useNavigate();
 
   const [step, setStep] = useState<Step>('details');
@@ -26,6 +27,14 @@ export function SignUp() {
   const [error, setError] = useState<string | null>(null);
   const [resent, setResent] = useState(false);
   const codeInputRef = useRef<HTMLInputElement | null>(null);
+
+  function goPostSignIn() {
+    // Almost always a brand-new account with no business yet -- but a
+    // Google sign-in here can also resolve to an existing, already-linked
+    // account (see internal/oauth), so check memberships rather than
+    // hardcoding /onboarding the way the email/OTP path below can.
+    void navigate(memberships.length > 0 ? '/dashboard' : '/onboarding', { replace: true });
+  }
 
   async function handleStart(e: React.FormEvent) {
     e.preventDefault();
@@ -75,7 +84,11 @@ export function SignUp() {
   return (
     <div className="min-h-screen bg-jb-cream text-jb-ink flex flex-col">
       <div className="w-full max-w-sm mx-auto px-6 pt-8 pb-16 flex-1 flex flex-col">
-        <Link to="/" className="flex items-center justify-center gap-1.5 mb-10" aria-label="justbarme home">
+        <Link
+          to="/"
+          className="flex items-center justify-center gap-1.5 mb-10"
+          aria-label="justbarme home"
+        >
           <Logo className="w-5 h-5 text-jb-ink/70" />
           <span className="font-pixel text-[10px] tracking-[0.2em] text-jb-ink/50">JUSTBARME</span>
         </Link>
@@ -88,7 +101,9 @@ export function SignUp() {
             >
               Set up your bar
             </h1>
-            <p className="text-[13px] text-jb-ink/45 mb-8">Takes about a minute. No card, no waiting.</p>
+            <p className="text-[13px] text-jb-ink/45 mb-8">
+              Takes about a minute. No card, no waiting.
+            </p>
 
             <label className="block mb-4">
               <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">Your name</span>
@@ -144,6 +159,14 @@ export function SignUp() {
               >
                 {submitting ? 'Sending code…' : 'Continue'}
               </button>
+
+              <div className="flex items-center gap-3 my-5">
+                <div className="h-px flex-1 bg-jb-ink/10" />
+                <span className="text-[11px] text-jb-ink/35">or</span>
+                <div className="h-px flex-1 bg-jb-ink/10" />
+              </div>
+              <GoogleSignInButton onSuccess={goPostSignIn} onError={setError} />
+
               <p className="text-center text-[12px] text-jb-ink/35 mt-4">
                 Already have an account?{' '}
                 <Link to="/login" className="text-jb-ink/60 underline underline-offset-2">
@@ -167,7 +190,9 @@ export function SignUp() {
             </p>
 
             <label className="block mb-4">
-              <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">Verification code</span>
+              <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">
+                Verification code
+              </span>
               <input
                 ref={codeInputRef}
                 type="text"
@@ -217,9 +242,12 @@ export function SignUp() {
 
 function describeError(err: unknown, phase: 'start' | 'verify'): string {
   if (err instanceof ApiError) {
-    if (err.code === 'EMAIL_ALREADY_REGISTERED') return 'This email is already registered. Sign in instead.';
-    if (err.code === 'RATE_LIMITED') return 'Too many attempts. Please wait a moment and try again.';
-    if (err.code === 'INVALID_CODE') return "That code is wrong or has expired. You can request a new one.";
+    if (err.code === 'EMAIL_ALREADY_REGISTERED')
+      return 'This email is already registered. Sign in instead.';
+    if (err.code === 'RATE_LIMITED')
+      return 'Too many attempts. Please wait a moment and try again.';
+    if (err.code === 'INVALID_CODE')
+      return 'That code is wrong or has expired. You can request a new one.';
     if (err.code === 'VALIDATION_FAILED') return 'Please check your details and try again.';
   }
   return phase === 'start'

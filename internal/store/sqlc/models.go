@@ -9,6 +9,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Bill struct {
+	ID         uuid.UUID          `json:"id"`
+	BusinessID uuid.UUID          `json:"business_id"`
+	LocationID uuid.UUID          `json:"location_id"`
+	Status     string             `json:"status"`
+	OpenedBy   uuid.UUID          `json:"opened_by"`
+	OpenedAt   pgtype.Timestamptz `json:"opened_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Business struct {
 	ID                  uuid.UUID          `json:"id"`
 	Name                string             `json:"name"`
@@ -94,6 +105,7 @@ type InventoryEvent struct {
 	ReceiptID  pgtype.UUID        `json:"receipt_id"`
 	OccurredAt pgtype.Timestamptz `json:"occurred_at"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	SaleID     pgtype.UUID        `json:"sale_id"`
 }
 
 type InventoryMovement struct {
@@ -114,6 +126,17 @@ type Location struct {
 	Status     string             `json:"status"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Payment struct {
+	ID                  uuid.UUID          `json:"id"`
+	BusinessID          uuid.UUID          `json:"business_id"`
+	BillID              uuid.UUID          `json:"bill_id"`
+	AmountKobo          int64              `json:"amount_kobo"`
+	Method              string             `json:"method"`
+	ActorID             uuid.UUID          `json:"actor_id"`
+	ReversalOfPaymentID pgtype.UUID        `json:"reversal_of_payment_id"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
 type PlatformAuditLog struct {
@@ -179,6 +202,44 @@ type ProductVariant struct {
 	Active     bool               `json:"active"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Sale struct {
+	ID               uuid.UUID          `json:"id"`
+	BusinessID       uuid.UUID          `json:"business_id"`
+	BillID           uuid.UUID          `json:"bill_id"`
+	SellerID         uuid.UUID          `json:"seller_id"`
+	IdempotencyKey   uuid.UUID          `json:"idempotency_key"`
+	OccurredAt       pgtype.Timestamptz `json:"occurred_at"`
+	ReceivedAt       pgtype.Timestamptz `json:"received_at"`
+	TotalKobo        int64              `json:"total_kobo"`
+	ReversalOfSaleID pgtype.UUID        `json:"reversal_of_sale_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type SaleItem struct {
+	ID            uuid.UUID          `json:"id"`
+	BusinessID    uuid.UUID          `json:"business_id"`
+	SaleID        uuid.UUID          `json:"sale_id"`
+	VariantID     uuid.UUID          `json:"variant_id"`
+	Description   string             `json:"description"`
+	Quantity      int32              `json:"quantity"`
+	UnitPriceKobo int64              `json:"unit_price_kobo"`
+	LineTotalKobo int64              `json:"line_total_kobo"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type SaleReview struct {
+	ID           uuid.UUID          `json:"id"`
+	BusinessID   uuid.UUID          `json:"business_id"`
+	SaleID       uuid.UUID          `json:"sale_id"`
+	SaleItemID   pgtype.UUID        `json:"sale_item_id"`
+	Reason       string             `json:"reason"`
+	Status       string             `json:"status"`
+	ResolvedBy   pgtype.UUID        `json:"resolved_by"`
+	ResolvedNote pgtype.Text        `json:"resolved_note"`
+	ResolvedAt   pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
 type Session struct {

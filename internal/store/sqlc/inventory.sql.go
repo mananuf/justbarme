@@ -15,7 +15,7 @@ import (
 const createInventoryEvent = `-- name: CreateInventoryEvent :one
 INSERT INTO inventory_events (id, business_id, type, actor_id, receipt_id)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, business_id, type, actor_id, receipt_id, occurred_at, created_at
+RETURNING id, business_id, type, actor_id, receipt_id, occurred_at, created_at, sale_id
 `
 
 type CreateInventoryEventParams struct {
@@ -43,6 +43,7 @@ func (q *Queries) CreateInventoryEvent(ctx context.Context, arg CreateInventoryE
 		&i.ReceiptID,
 		&i.OccurredAt,
 		&i.CreatedAt,
+		&i.SaleID,
 	)
 	return i, err
 }

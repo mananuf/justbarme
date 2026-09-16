@@ -16,3 +16,8 @@ SELECT * FROM product_prices WHERE business_id = $1 AND valid_to IS NULL;
 
 -- name: ListPriceHistory :many
 SELECT * FROM product_prices WHERE business_id = $1 AND variant_id = $2 ORDER BY valid_from DESC;
+
+-- name: GetPriceAt :one
+SELECT * FROM product_prices
+    WHERE business_id = $1 AND variant_id = $2 AND valid_from <= $3 AND (valid_to IS NULL OR valid_to > $3)
+    LIMIT 1;

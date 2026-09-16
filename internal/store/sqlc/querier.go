@@ -12,18 +12,24 @@ import (
 
 type Querier interface {
 	CloseCurrentPrice(ctx context.Context, arg CloseCurrentPriceParams) error
+	CreateBill(ctx context.Context, arg CreateBillParams) (Bill, error)
 	CreateBusiness(ctx context.Context, arg CreateBusinessParams) (Business, error)
 	CreateCategory(ctx context.Context, arg CreateCategoryParams) (Category, error)
 	CreateDefaultLocation(ctx context.Context, arg CreateDefaultLocationParams) (Location, error)
 	CreateDevice(ctx context.Context, arg CreateDeviceParams) (Device, error)
 	CreateInventoryEvent(ctx context.Context, arg CreateInventoryEventParams) (InventoryEvent, error)
+	CreateInventoryEventForSale(ctx context.Context, arg CreateInventoryEventForSaleParams) (InventoryEvent, error)
 	CreateInventoryMovement(ctx context.Context, arg CreateInventoryMovementParams) (InventoryMovement, error)
 	CreateMembership(ctx context.Context, arg CreateMembershipParams) (BusinessMembership, error)
+	CreatePayment(ctx context.Context, arg CreatePaymentParams) (Payment, error)
 	CreatePlatformAuditEntry(ctx context.Context, arg CreatePlatformAuditEntryParams) (PlatformAuditLog, error)
 	CreatePlatformSession(ctx context.Context, arg CreatePlatformSessionParams) (PlatformSession, error)
 	CreatePlatformStaff(ctx context.Context, arg CreatePlatformStaffParams) (PlatformStaff, error)
 	CreatePrice(ctx context.Context, arg CreatePriceParams) (ProductPrice, error)
 	CreateProduct(ctx context.Context, arg CreateProductParams) (Product, error)
+	CreateSale(ctx context.Context, arg CreateSaleParams) (Sale, error)
+	CreateSaleItem(ctx context.Context, arg CreateSaleItemParams) (SaleItem, error)
+	CreateSaleReview(ctx context.Context, arg CreateSaleReviewParams) (SaleReview, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateStockLot(ctx context.Context, arg CreateStockLotParams) (StockLot, error)
 	CreateStockReceipt(ctx context.Context, arg CreateStockReceiptParams) (StockReceipt, error)
@@ -34,6 +40,7 @@ type Querier interface {
 	DeleteSignupVerification(ctx context.Context, id uuid.UUID) error
 	GetActivePlatformSessionByTokenHash(ctx context.Context, tokenHash string) (PlatformSession, error)
 	GetActiveSessionByTokenHash(ctx context.Context, tokenHash string) (Session, error)
+	GetBillByID(ctx context.Context, arg GetBillByIDParams) (Bill, error)
 	GetBusinessByID(ctx context.Context, id uuid.UUID) (Business, error)
 	GetCategoryByID(ctx context.Context, arg GetCategoryByIDParams) (Category, error)
 	GetCategoryByName(ctx context.Context, arg GetCategoryByNameParams) (Category, error)
@@ -44,7 +51,11 @@ type Querier interface {
 	GetMembership(ctx context.Context, arg GetMembershipParams) (BusinessMembership, error)
 	GetPlatformStaffByEmail(ctx context.Context, email string) (PlatformStaff, error)
 	GetPlatformStaffByID(ctx context.Context, id uuid.UUID) (PlatformStaff, error)
+	GetPriceAt(ctx context.Context, arg GetPriceAtParams) (ProductPrice, error)
 	GetProductByID(ctx context.Context, arg GetProductByIDParams) (Product, error)
+	GetReversalOfSale(ctx context.Context, arg GetReversalOfSaleParams) (Sale, error)
+	GetSaleByID(ctx context.Context, arg GetSaleByIDParams) (Sale, error)
+	GetSaleByIdempotencyKey(ctx context.Context, arg GetSaleByIdempotencyKeyParams) (Sale, error)
 	GetSignupVerificationByEmail(ctx context.Context, email string) (SignupVerification, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
@@ -60,17 +71,28 @@ type Querier interface {
 	ListDevicesForBusiness(ctx context.Context, businessID uuid.UUID) ([]Device, error)
 	ListInventoryBalances(ctx context.Context, businessID uuid.UUID) ([]InventoryBalance, error)
 	ListMembershipsForUser(ctx context.Context, userID uuid.UUID) ([]ListMembershipsForUserRow, error)
+	ListPaymentsByBillID(ctx context.Context, arg ListPaymentsByBillIDParams) ([]Payment, error)
 	ListPlatformAuditLog(ctx context.Context, limit int32) ([]PlatformAuditLog, error)
 	ListPriceHistory(ctx context.Context, arg ListPriceHistoryParams) ([]ProductPrice, error)
 	ListProducts(ctx context.Context, businessID uuid.UUID) ([]Product, error)
+	ListSaleItemsBySaleID(ctx context.Context, arg ListSaleItemsBySaleIDParams) ([]SaleItem, error)
+	ListSaleReviews(ctx context.Context, arg ListSaleReviewsParams) ([]SaleReview, error)
+	ListSales(ctx context.Context, arg ListSalesParams) ([]Sale, error)
 	ListVariantsByBusiness(ctx context.Context, businessID uuid.UUID) ([]ProductVariant, error)
 	ListVariantsByProduct(ctx context.Context, arg ListVariantsByProductParams) ([]ProductVariant, error)
+	ResolveSaleReview(ctx context.Context, arg ResolveSaleReviewParams) (SaleReview, error)
 	RevokeDevice(ctx context.Context, arg RevokeDeviceParams) (Device, error)
 	RevokePlatformSession(ctx context.Context, arg RevokePlatformSessionParams) (int64, error)
 	RevokeSession(ctx context.Context, arg RevokeSessionParams) (int64, error)
 	SetBusinessStatus(ctx context.Context, arg SetBusinessStatusParams) (Business, error)
+	// total nets every row including reversals (a reversal's total_kobo is
+	// negative by construction -- see migration 000019); count deliberately
+	// excludes reversal rows, since a correction isn't "one more sale" for
+	// display purposes.
+	SumSalesTotalSince(ctx context.Context, arg SumSalesTotalSinceParams) (SumSalesTotalSinceRow, error)
 	TouchPlatformSession(ctx context.Context, id uuid.UUID) error
 	TouchSession(ctx context.Context, id uuid.UUID) error
+	UpdateBillStatus(ctx context.Context, arg UpdateBillStatusParams) (Bill, error)
 	UpdateCategory(ctx context.Context, arg UpdateCategoryParams) (Category, error)
 	UpdatePlatformSessionCSRFTokenHash(ctx context.Context, arg UpdatePlatformSessionCSRFTokenHashParams) error
 	UpdateProduct(ctx context.Context, arg UpdateProductParams) (Product, error)

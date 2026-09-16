@@ -92,6 +92,34 @@ func (q *Queries) GetCurrentPrice(ctx context.Context, arg GetCurrentPriceParams
 	return i, err
 }
 
+const getPriceAt = `-- name: GetPriceAt :one
+SELECT id, business_id, variant_id, amount_kobo, valid_from, valid_to, created_by, created_at FROM product_prices
+    WHERE business_id = $1 AND variant_id = $2 AND valid_from <= $3 AND (valid_to IS NULL OR valid_to > $3)
+    LIMIT 1
+`
+
+type GetPriceAtParams struct {
+	BusinessID uuid.UUID          `json:"business_id"`
+	VariantID  uuid.UUID          `json:"variant_id"`
+	ValidFrom  pgtype.Timestamptz `json:"valid_from"`
+}
+
+func (q *Queries) GetPriceAt(ctx context.Context, arg GetPriceAtParams) (ProductPrice, error) {
+	row := q.db.QueryRow(ctx, getPriceAt, arg.BusinessID, arg.VariantID, arg.ValidFrom)
+	var i ProductPrice
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.VariantID,
+		&i.AmountKobo,
+		&i.ValidFrom,
+		&i.ValidTo,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listCurrentPricesByBusiness = `-- name: ListCurrentPricesByBusiness :many
 SELECT id, business_id, variant_id, amount_kobo, valid_from, valid_to, created_by, created_at FROM product_prices WHERE business_id = $1 AND valid_to IS NULL
 `

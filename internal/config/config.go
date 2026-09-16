@@ -42,6 +42,16 @@ type Session struct {
 	CookieSecure bool
 }
 
+// PlatformSession configures the separate session issued to platform staff
+// (internal/platformadmin) -- shorter-lived by default than an ordinary
+// business Session, since this tier's blast radius if compromised is every
+// business, not one. Shares Session.CookieSecure rather than a second
+// cookie-security knob, since the two should always match this
+// environment's dev/prod posture identically.
+type PlatformSession struct {
+	TTL time.Duration
+}
+
 // Argon2 are the versioned password-hashing cost parameters. Changing these
 // only affects newly hashed passwords — internal/auth verifies existing
 // hashes using the parameters recorded in the hash itself.
@@ -63,14 +73,15 @@ type OfflineLease struct {
 }
 
 type Config struct {
-	Env           string
-	HTTP          HTTP
-	Database      Database
-	LogLevel      string
-	Session       Session
-	Argon2        Argon2
-	OfflineLease  OfflineLease
-	PublicBaseURL string
+	Env             string
+	HTTP            HTTP
+	Database        Database
+	LogLevel        string
+	Session         Session
+	PlatformSession PlatformSession
+	Argon2          Argon2
+	OfflineLease    OfflineLease
+	PublicBaseURL   string
 }
 
 type lookupEnv func(string) (string, bool)
@@ -101,6 +112,9 @@ func load(lookup lookupEnv) (Config, error) {
 		Session: Session{
 			TTL:          720 * time.Hour,
 			CookieSecure: true,
+		},
+		PlatformSession: PlatformSession{
+			TTL: 12 * time.Hour,
 		},
 		Argon2: Argon2{
 			MemoryKiB:   64 * 1024,
@@ -157,6 +171,8 @@ func load(lookup lookupEnv) (Config, error) {
 	if oneOf(cfg.Env, Staging, Production) && !cfg.Session.CookieSecure {
 		problems = append(problems, "JBM_SESSION_COOKIE_SECURE must be true in staging or production")
 	}
+
+	parseDuration(lookup, "JBM_PLATFORM_SESSION_TTL", &cfg.PlatformSession.TTL, &problems)
 
 	parseUint32(lookup, "JBM_ARGON2_MEMORY_KIB", &cfg.Argon2.MemoryKiB, &problems)
 	parseUint32(lookup, "JBM_ARGON2_ITERATIONS", &cfg.Argon2.Iterations, &problems)

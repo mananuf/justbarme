@@ -27,6 +27,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Session.TTL != 720*time.Hour || !cfg.Session.CookieSecure {
 		t.Fatalf("unexpected session defaults: %+v", cfg.Session)
 	}
+	if cfg.PlatformSession.TTL != 12*time.Hour {
+		t.Fatalf("unexpected platform session TTL default: %v", cfg.PlatformSession.TTL)
+	}
 	if cfg.Argon2.MemoryKiB != 64*1024 || cfg.Argon2.Iterations != 3 || cfg.Argon2.Parallelism != 2 {
 		t.Fatalf("unexpected argon2 defaults: %+v", cfg.Argon2)
 	}
@@ -87,6 +90,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 		{name: "invalid log level", key: "JBM_LOG_LEVEL", value: "trace", message: "JBM_LOG_LEVEL"},
 		{name: "session ttl without unit", key: "JBM_SESSION_TTL", value: "720", message: "positive duration"},
 		{name: "session cookie secure not a bool", key: "JBM_SESSION_COOKIE_SECURE", value: "yes", message: "must be true or false"},
+		{name: "platform session ttl without unit", key: "JBM_PLATFORM_SESSION_TTL", value: "12", message: "positive duration"},
 		{name: "zero argon2 memory", key: "JBM_ARGON2_MEMORY_KIB", value: "0", message: "positive integer"},
 		{name: "non-numeric argon2 iterations", key: "JBM_ARGON2_ITERATIONS", value: "many", message: "positive integer"},
 		{name: "argon2 parallelism too large", key: "JBM_ARGON2_PARALLELISM", value: "300", message: "no greater than 255"},

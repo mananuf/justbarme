@@ -24,6 +24,7 @@ type Querier interface {
 	CreateProduct(ctx context.Context, arg CreateProductParams) (Product, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	CreateUserIdentity(ctx context.Context, arg CreateUserIdentityParams) (UserIdentity, error)
 	CreateVariant(ctx context.Context, arg CreateVariantParams) (ProductVariant, error)
 	DeleteSignupVerification(ctx context.Context, id uuid.UUID) error
 	GetActivePlatformSessionByTokenHash(ctx context.Context, tokenHash string) (PlatformSession, error)
@@ -42,6 +43,7 @@ type Querier interface {
 	GetSignupVerificationByEmail(ctx context.Context, email string) (SignupVerification, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
+	GetUserIdentity(ctx context.Context, arg GetUserIdentityParams) (UserIdentity, error)
 	GetVariantByID(ctx context.Context, arg GetVariantByIDParams) (ProductVariant, error)
 	IncrementSignupVerificationAttempts(ctx context.Context, id uuid.UUID) error
 	ListAllBusinesses(ctx context.Context) ([]Business, error)

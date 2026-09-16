@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mananuf/justbarme/internal/store"
@@ -56,7 +57,7 @@ func createTenant(t *testing.T, ctx context.Context, pool *pgxpool.Pool, label s
 	// uniqueness constraints left over from a previous run.
 	err := store.WithTenant(ctx, pool, ownerID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
 		if _, err := q.CreateUser(ctx, sqlc.CreateUserParams{
-			ID: ownerID, Email: ownerID.String() + "@example.com", DisplayName: label + " Owner", PasswordHash: "x",
+			ID: ownerID, Email: ownerID.String() + "@example.com", DisplayName: label + " Owner", PasswordHash: pgtype.Text{String: "x", Valid: true},
 		}); err != nil {
 			return err
 		}

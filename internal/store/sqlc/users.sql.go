@@ -23,7 +23,7 @@ type CreateUserParams struct {
 	Email        string      `json:"email"`
 	Phone        pgtype.Text `json:"phone"`
 	DisplayName  string      `json:"display_name"`
-	PasswordHash string      `json:"password_hash"`
+	PasswordHash pgtype.Text `json:"password_hash"`
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {

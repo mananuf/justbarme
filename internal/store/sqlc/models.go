@@ -183,8 +183,17 @@ type User struct {
 	Email        string             `json:"email"`
 	Phone        pgtype.Text        `json:"phone"`
 	DisplayName  string             `json:"display_name"`
-	PasswordHash string             `json:"password_hash"`
+	PasswordHash pgtype.Text        `json:"password_hash"`
 	Status       string             `json:"status"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UserIdentity struct {
+	ID             uuid.UUID          `json:"id"`
+	UserID         uuid.UUID          `json:"user_id"`
+	Provider       string             `json:"provider"`
+	ProviderUserID string             `json:"provider_user_id"`
+	Email          string             `json:"email"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }

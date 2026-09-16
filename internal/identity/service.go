@@ -70,7 +70,7 @@ func (s *Service) CreateUserWithHashedPassword(ctx context.Context, email, phone
 			Email:        email,
 			Phone:        pgText(phone),
 			DisplayName:  displayName,
-			PasswordHash: passwordHash,
+			PasswordHash: pgText(passwordHash),
 		})
 		if err != nil {
 			return err
@@ -85,6 +85,41 @@ func (s *Service) CreateUserWithHashedPassword(ctx context.Context, email, phone
 		return User{}, fmt.Errorf("create user: %w", err)
 	}
 	return toUser(created), nil
+}
+
+// CreateUserWithoutPassword inserts a new global identity with no password
+// at all -- for an account created via an external identity provider
+// (internal/oauth) that already proved control of the email some other
+// way. password_hash is nullable specifically for this case;
+// auth.VerifyPassword already fails safely (ErrInvalidHashFormat) against
+// an empty/NULL hash, so Authenticate needs no special case for these
+// accounts -- a password-login attempt on one just looks like a wrong
+// password. Returns ErrEmailTaken if the email is already registered.
+func (s *Service) CreateUserWithoutPassword(ctx context.Context, email, phone, displayName string) (User, error) {
+	return s.CreateUserWithHashedPassword(ctx, email, phone, displayName, "")
+}
+
+// GetUserByEmail looks up a user by email (case-insensitive), for a caller
+// that already knows (e.g. via EmailIsRegistered) that a real account
+// should exist -- internal/oauth uses this to auto-link a Google sign-in to
+// an existing password-based account. Returns ErrUserNotFound if none does.
+func (s *Service) GetUserByEmail(ctx context.Context, email string) (User, error) {
+	var found sqlc.User
+	err := store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+		row, err := q.GetUserByEmail(ctx, email)
+		if err != nil {
+			return err
+		}
+		found = row
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, ErrUserNotFound
+		}
+		return User{}, fmt.Errorf("look up user by email: %w", err)
+	}
+	return toUser(found), nil
 }
 
 // EmailIsRegistered reports whether email (case-insensitive) already
@@ -127,7 +162,7 @@ func (s *Service) Authenticate(ctx context.Context, email, password string) (Use
 		return User{}, fmt.Errorf("look up user: %w", err)
 	}
 
-	ok, verifyErr := auth.VerifyPassword(found.PasswordHash, password)
+	ok, verifyErr := auth.VerifyPassword(toText(found.PasswordHash), password)
 	if verifyErr != nil || !ok || found.Status != "active" {
 		return User{}, ErrInvalidCredentials
 	}

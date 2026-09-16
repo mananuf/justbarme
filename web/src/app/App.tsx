@@ -1,13 +1,17 @@
-import { Link, Route, Routes } from 'react-router-dom';
+import { Link, Outlet, Route, Routes } from 'react-router-dom';
 
 import { RequireAuth } from '../components/RequireAuth';
+import { RequirePlatformAuth } from '../components/RequirePlatformAuth';
 import { SessionProvider } from '../lib/session';
+import { PlatformSessionProvider } from '../lib/platformSession';
 import { Landing } from '../pages/Landing';
 import { Login } from '../pages/Login';
 import { Onboarding } from '../pages/Onboarding';
 import { Install } from '../pages/Install';
 import { Dashboard } from '../pages/Dashboard';
 import { Sell } from '../pages/Sell';
+import { PlatformLogin } from '../pages/platform/PlatformLogin';
+import { PlatformDashboard } from '../pages/platform/PlatformDashboard';
 
 function NotFound() {
   return (
@@ -62,6 +66,28 @@ export function App() {
             </RequireAuth>
           }
         />
+
+        {/* Platform admin: a wholly separate session (PlatformSessionProvider,
+            never SessionProvider) for internal staff overseeing businesses
+            across the service -- not part of the product a bar owner uses. */}
+        <Route
+          element={
+            <PlatformSessionProvider>
+              <Outlet />
+            </PlatformSessionProvider>
+          }
+        >
+          <Route path="/platform/login" element={<PlatformLogin />} />
+          <Route
+            path="/platform"
+            element={
+              <RequirePlatformAuth>
+                <PlatformDashboard />
+              </RequirePlatformAuth>
+            }
+          />
+        </Route>
+
         <Route path="*" element={<NotFound />} />
       </Routes>
     </SessionProvider>

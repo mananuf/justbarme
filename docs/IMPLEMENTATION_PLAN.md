@@ -801,6 +801,7 @@ No profit figure is shown as authoritative unless its underlying inventory consu
 ### In progress, out of frozen order
 
 - **Stock receiving** — a thin, deliberately partial slice of Phase 7 (receipts, lots, movements, balances; no counts/approvals/reviews) pulled forward because it doesn't depend on sync, selling, or tabs existing first, and "get the bar running with one user" needs it now. See [`PHASE_STOCK_RECEIVING.md`](PHASE_STOCK_RECEIVING.md).
+- **Walk-in selling** — Phase 5, built as a single-device slice ahead of Phase 4 (sync foundation), which is deferred until invitations bring a second device into a real business. Real sales, real stock deduction, real offline persistence; no tabs/credit (Phase 6) and no multi-device sync yet. See [`PHASE_WALKIN_SELLING.md`](PHASE_WALKIN_SELLING.md).
 
 ### Proposed future phases (not part of this frozen sequence)
 

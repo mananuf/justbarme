@@ -13,6 +13,7 @@ afterEach(async () => {
   // without this, a cached identity from one test leaks into the next.
   await db.authMeta.clear();
   await db.device.clear();
+  await db.pendingSales.clear();
   // Same reasoning for jsdom's localStorage (e.g. the dashboard tour's
   // "seen" flag).
   localStorage.clear();

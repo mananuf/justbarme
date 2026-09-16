@@ -46,6 +46,7 @@ export async function listCatalogueTemplates(): Promise<CatalogueTemplate[]> {
 export interface CatalogueVariant {
   id: string;
   name: string;
+  active: boolean;
   currentPriceKobo: number;
   // From internal/inventory, merged in server-side -- see
   // docs/PHASE_STOCK_RECEIVING.md. Always 0 for a variant with no stock
@@ -63,6 +64,7 @@ export interface CatalogueProduct {
 interface RawVariant {
   id: string;
   name: string;
+  active: boolean;
   current_price: { amount_kobo: number };
   current_stock: number;
 }
@@ -82,6 +84,7 @@ function toCatalogueProduct(p: RawProduct): CatalogueProduct {
     variants: p.variants.map((v) => ({
       id: v.id,
       name: v.name,
+      active: v.active,
       currentPriceKobo: v.current_price.amount_kobo,
       currentStock: v.current_stock,
     })),
@@ -152,6 +155,7 @@ export async function createVariant(
   return {
     id: raw.id,
     name: raw.name,
+    active: raw.active,
     currentPriceKobo: raw.current_price.amount_kobo,
     currentStock: raw.current_stock,
   };

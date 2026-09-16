@@ -166,6 +166,18 @@ type Session struct {
 	RevokedReason pgtype.Text        `json:"revoked_reason"`
 }
 
+type SignupVerification struct {
+	ID           uuid.UUID          `json:"id"`
+	Email        string             `json:"email"`
+	DisplayName  string             `json:"display_name"`
+	PasswordHash string             `json:"password_hash"`
+	OtpHash      string             `json:"otp_hash"`
+	Attempts     int32              `json:"attempts"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
 type User struct {
 	ID           uuid.UUID          `json:"id"`
 	Email        string             `json:"email"`

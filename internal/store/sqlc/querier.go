@@ -25,6 +25,7 @@ type Querier interface {
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	CreateVariant(ctx context.Context, arg CreateVariantParams) (ProductVariant, error)
+	DeleteSignupVerification(ctx context.Context, id uuid.UUID) error
 	GetActivePlatformSessionByTokenHash(ctx context.Context, tokenHash string) (PlatformSession, error)
 	GetActiveSessionByTokenHash(ctx context.Context, tokenHash string) (Session, error)
 	GetBusinessByID(ctx context.Context, id uuid.UUID) (Business, error)
@@ -38,9 +39,11 @@ type Querier interface {
 	GetPlatformStaffByEmail(ctx context.Context, email string) (PlatformStaff, error)
 	GetPlatformStaffByID(ctx context.Context, id uuid.UUID) (PlatformStaff, error)
 	GetProductByID(ctx context.Context, arg GetProductByIDParams) (Product, error)
+	GetSignupVerificationByEmail(ctx context.Context, email string) (SignupVerification, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetVariantByID(ctx context.Context, arg GetVariantByIDParams) (ProductVariant, error)
+	IncrementSignupVerificationAttempts(ctx context.Context, id uuid.UUID) error
 	ListAllBusinesses(ctx context.Context) ([]Business, error)
 	ListCatalogueTemplateVariantsByTemplateIDs(ctx context.Context, templateIds []uuid.UUID) ([]CatalogueTemplateVariant, error)
 	ListCatalogueTemplates(ctx context.Context) ([]CatalogueTemplate, error)
@@ -67,6 +70,7 @@ type Querier interface {
 	UpdateVariant(ctx context.Context, arg UpdateVariantParams) (ProductVariant, error)
 	UpsertCatalogueTemplate(ctx context.Context, arg UpsertCatalogueTemplateParams) (CatalogueTemplate, error)
 	UpsertCatalogueTemplateVariant(ctx context.Context, arg UpsertCatalogueTemplateVariantParams) (CatalogueTemplateVariant, error)
+	UpsertSignupVerification(ctx context.Context, arg UpsertSignupVerificationParams) (SignupVerification, error)
 }
 
 var _ Querier = (*Queries)(nil)

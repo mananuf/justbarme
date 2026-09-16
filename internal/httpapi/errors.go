@@ -71,3 +71,11 @@ func (api *API) conflictResponse(w http.ResponseWriter, r *http.Request, message
 func (api *API) rateLimitedResponse(w http.ResponseWriter, r *http.Request) {
 	api.errorResponse(w, r, http.StatusTooManyRequests, "RATE_LIMITED", "Too many attempts. Please try again shortly.", nil)
 }
+
+func (api *API) invalidSignupCodeResponse(w http.ResponseWriter, r *http.Request) {
+	api.errorResponse(w, r, http.StatusUnprocessableEntity, "INVALID_CODE", "That code is invalid or has expired. Request a new one.", nil)
+}
+
+func (api *API) emailAlreadyRegisteredResponse(w http.ResponseWriter, r *http.Request) {
+	api.errorResponse(w, r, http.StatusConflict, "EMAIL_ALREADY_REGISTERED", "This email is already registered. Sign in instead.", nil)
+}

@@ -13,9 +13,11 @@ import (
 
 	"github.com/mananuf/justbarme/internal/catalogue"
 	"github.com/mananuf/justbarme/internal/config"
+	"github.com/mananuf/justbarme/internal/email"
 	"github.com/mananuf/justbarme/internal/httpapi"
 	"github.com/mananuf/justbarme/internal/identity"
 	"github.com/mananuf/justbarme/internal/platformadmin"
+	"github.com/mananuf/justbarme/internal/signup"
 	"github.com/mananuf/justbarme/internal/store"
 )
 
@@ -39,6 +41,7 @@ func Run(ctx context.Context) error {
 	identitySvc := identity.New(pool, cfg.Argon2)
 	catalogueSvc := catalogue.New(pool)
 	platformAdminSvc := platformadmin.New(pool, cfg.Argon2)
+	signupSvc := signup.New(pool, cfg.Argon2, identitySvc, emailProvider(cfg, logger), cfg.Signup.OTPTTL)
 
 	handler := httpapi.NewHandler(httpapi.Dependencies{
 		Logger:        logger,
@@ -48,6 +51,7 @@ func Run(ctx context.Context) error {
 		Identity:      identitySvc,
 		Catalogue:     catalogueSvc,
 		PlatformAdmin: platformAdminSvc,
+		Signup:        signupSvc,
 		Config:        cfg,
 	})
 	server := httpapi.NewServer(cfg.HTTP, handler, logger)
@@ -81,6 +85,23 @@ func ensureOfflineSigningKeys(cfg *config.Config, logger *slog.Logger) error {
 	logger.Warn("no offline signing keys configured; generated an ephemeral development-only keypair",
 		"note", "every offline lease issued this run becomes invalid on restart; set JBM_OFFLINE_SIGNING_PRIVATE_KEY/PUBLIC_KEY to persist across restarts")
 	return nil
+}
+
+// emailProvider returns a real SMTP provider when configured, or a
+// console-logging one outside production when it isn't. config.Load
+// already refuses to start in production without SMTP credentials, so the
+// console fallback only ever fires in development/test -- the same
+// dev-convenience-not-silent-gap pattern as ensureOfflineSigningKeys.
+func emailProvider(cfg config.Config, logger *slog.Logger) email.Provider {
+	if cfg.SMTP.Configured() {
+		return email.NewSMTPProvider(email.SMTPConfig{
+			Host: cfg.SMTP.Host, Port: cfg.SMTP.Port,
+			Username: cfg.SMTP.Username, Password: cfg.SMTP.Password, From: cfg.SMTP.From,
+		})
+	}
+	logger.Warn("no SMTP credentials configured; signup codes will only be logged, not emailed",
+		"note", "set JBM_SMTP_USERNAME/PASSWORD/FROM to send real email")
+	return email.NewConsoleProvider(logger)
 }
 
 type server interface {

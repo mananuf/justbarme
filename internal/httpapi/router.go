@@ -14,6 +14,7 @@ import (
 	"github.com/mananuf/justbarme/internal/config"
 	"github.com/mananuf/justbarme/internal/identity"
 	"github.com/mananuf/justbarme/internal/platformadmin"
+	"github.com/mananuf/justbarme/internal/signup"
 )
 
 type DatabasePinger interface {
@@ -28,6 +29,7 @@ type Dependencies struct {
 	Identity      *identity.Service
 	Catalogue     *catalogue.Service
 	PlatformAdmin *platformadmin.Service
+	Signup        *signup.Service
 	Config        config.Config
 }
 
@@ -40,6 +42,7 @@ type API struct {
 	identity      *identity.Service
 	catalogue     *catalogue.Service
 	platformAdmin *platformadmin.Service
+	signup        *signup.Service
 	env           string
 
 	sessionTTL               time.Duration
@@ -50,6 +53,11 @@ type API struct {
 
 	loginLimiter         *auth.Limiter
 	platformLoginLimiter *auth.Limiter
+
+	signupStartEmailLimiter  *auth.Limiter
+	signupStartIPLimiter     *auth.Limiter
+	signupVerifyEmailLimiter *auth.Limiter
+	signupVerifyIPLimiter    *auth.Limiter
 }
 
 func NewHandler(deps Dependencies) http.Handler {
@@ -72,6 +80,7 @@ func NewHandler(deps Dependencies) http.Handler {
 		identity:      deps.Identity,
 		catalogue:     deps.Catalogue,
 		platformAdmin: deps.PlatformAdmin,
+		signup:        deps.Signup,
 		env:           deps.Config.Env,
 
 		sessionTTL:               deps.Config.Session.TTL,
@@ -88,6 +97,19 @@ func NewHandler(deps Dependencies) http.Handler {
 		// Tighter than the business login limiter: this tier's blast
 		// radius if compromised is every business, not one.
 		platformLoginLimiter: auth.NewLimiter(5, 15*time.Minute),
+
+		// Signup is rate-limited on both axes: per email (a spammed inbox
+		// is direct, visible harm from a typo'd or malicious target
+		// address) and per IP (this endpoint creates database rows and
+		// sends real email, a more attractive abuse target than login).
+		signupStartEmailLimiter: auth.NewLimiter(3, time.Hour),
+		signupStartIPLimiter:    auth.NewLimiter(10, time.Hour),
+		// Verify has its own per-row attempts counter (internal/signup's
+		// maxOTPAttempts) as the primary brute-force defense; these are a
+		// second, coarser layer against hammering many different emails
+		// from one source or one email from many sources.
+		signupVerifyEmailLimiter: auth.NewLimiter(10, 15*time.Minute),
+		signupVerifyIPLimiter:    auth.NewLimiter(30, 15*time.Minute),
 	}
 
 	router := chi.NewRouter()
@@ -104,6 +126,8 @@ func NewHandler(deps Dependencies) http.Handler {
 		router.Get("/health/ready", api.readiness)
 
 		router.Post("/auth/login", api.login)
+		router.Post("/auth/signup/start", api.signupStart)
+		router.Post("/auth/signup/verify", api.signupVerify)
 
 		router.Group(func(router chi.Router) {
 			router.Use(api.requireAuth)

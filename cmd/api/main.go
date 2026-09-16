@@ -11,6 +11,11 @@ import (
 )
 
 func main() {
+	if err := app.LoadDotEnvIfPresent(); err != nil {
+		slog.Error("application stopped", "error", err)
+		os.Exit(1)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

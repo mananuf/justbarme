@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/mananuf/justbarme/internal/app"
 	"github.com/mananuf/justbarme/internal/config"
 	"github.com/mananuf/justbarme/internal/identity"
 	"github.com/mananuf/justbarme/internal/store"
@@ -27,6 +28,10 @@ func main() {
 }
 
 func run() error {
+	if err := app.LoadDotEnvIfPresent(); err != nil {
+		return fmt.Errorf("load .env: %w", err)
+	}
+
 	email := flag.String("email", "", "email address for the new user (required)")
 	password := flag.String("password", "", "password for the new user (required, at least 8 characters)")
 	name := flag.String("name", "", "display name for the new user (required)")

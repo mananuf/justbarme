@@ -1,6 +1,20 @@
 .PHONY: run test test-race vet fmt fmt-check benchmark check tidy \
 	migrate-up migrate-down migrate-down-all migrate-create seed sqlc
 
+# Loads .env into every target's environment automatically, so `make run`,
+# `make migrate-up`, etc. work without first running
+# `set -a && source .env && set +a` by hand. Skipped entirely if .env
+# doesn't exist -- CI/production inject JBM_* variables directly instead.
+# This only affects what the shell running each recipe sees; it is not a
+# second config source for the Go binaries themselves (they still only read
+# os.Getenv, see internal/app.LoadDotEnvIfPresent for the equivalent
+# convenience when a cmd/ binary is run directly with `go run`, bypassing
+# make entirely).
+ifneq (,$(wildcard ./.env))
+include .env
+export
+endif
+
 # Explicit package roots, not ./..., because web/node_modules can contain
 # vendored .go files (e.g. from JS packages with a reference Go port) with
 # no go.mod of their own — under this module's go.mod, ./... would otherwise

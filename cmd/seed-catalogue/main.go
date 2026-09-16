@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/mananuf/justbarme/internal/app"
 	"github.com/mananuf/justbarme/internal/catalogue"
 	"github.com/mananuf/justbarme/internal/config"
 	"github.com/mananuf/justbarme/internal/store"
@@ -23,6 +24,10 @@ func main() {
 }
 
 func run() error {
+	if err := app.LoadDotEnvIfPresent(); err != nil {
+		return fmt.Errorf("load .env: %w", err)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)

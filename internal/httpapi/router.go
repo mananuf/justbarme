@@ -13,6 +13,7 @@ import (
 	"github.com/mananuf/justbarme/internal/catalogue"
 	"github.com/mananuf/justbarme/internal/config"
 	"github.com/mananuf/justbarme/internal/identity"
+	"github.com/mananuf/justbarme/internal/oauth"
 	"github.com/mananuf/justbarme/internal/platformadmin"
 	"github.com/mananuf/justbarme/internal/signup"
 )
@@ -30,7 +31,11 @@ type Dependencies struct {
 	Catalogue     *catalogue.Service
 	PlatformAdmin *platformadmin.Service
 	Signup        *signup.Service
-	Config        config.Config
+	// OAuth is nil when Google sign-in isn't configured (see
+	// internal/app.googleOAuthService) -- NewHandler only registers
+	// POST /auth/google when it's set.
+	OAuth  *oauth.Service
+	Config config.Config
 }
 
 type API struct {
@@ -43,6 +48,7 @@ type API struct {
 	catalogue     *catalogue.Service
 	platformAdmin *platformadmin.Service
 	signup        *signup.Service
+	oauth         *oauth.Service
 	env           string
 
 	sessionTTL               time.Duration
@@ -58,6 +64,8 @@ type API struct {
 	signupStartIPLimiter     *auth.Limiter
 	signupVerifyEmailLimiter *auth.Limiter
 	signupVerifyIPLimiter    *auth.Limiter
+
+	googleSignInIPLimiter *auth.Limiter
 }
 
 func NewHandler(deps Dependencies) http.Handler {
@@ -81,6 +89,7 @@ func NewHandler(deps Dependencies) http.Handler {
 		catalogue:     deps.Catalogue,
 		platformAdmin: deps.PlatformAdmin,
 		signup:        deps.Signup,
+		oauth:         deps.OAuth,
 		env:           deps.Config.Env,
 
 		sessionTTL:               deps.Config.Session.TTL,
@@ -110,6 +119,12 @@ func NewHandler(deps Dependencies) http.Handler {
 		// from one source or one email from many sources.
 		signupVerifyEmailLimiter: auth.NewLimiter(10, 15*time.Minute),
 		signupVerifyIPLimiter:    auth.NewLimiter(30, 15*time.Minute),
+
+		// Cryptographic ID-token verification isn't guessable the way a
+		// 6-digit OTP is, so this only needs to bound wasted verification
+		// work from garbage tokens, not defend against brute-forcing --
+		// generous enough that legitimate multi-tab sign-ins never trip it.
+		googleSignInIPLimiter: auth.NewLimiter(30, time.Minute),
 	}
 
 	router := chi.NewRouter()
@@ -128,6 +143,9 @@ func NewHandler(deps Dependencies) http.Handler {
 		router.Post("/auth/login", api.login)
 		router.Post("/auth/signup/start", api.signupStart)
 		router.Post("/auth/signup/verify", api.signupVerify)
+		if api.oauth != nil {
+			router.Post("/auth/google", api.googleSignIn)
+		}
 
 		router.Group(func(router chi.Router) {
 			router.Use(api.requireAuth)

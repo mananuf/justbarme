@@ -101,6 +101,15 @@ type Signup struct {
 	OTPTTL time.Duration
 }
 
+// GoogleOAuth configures optional "Sign in with Google" (internal/oauth).
+// Unlike SMTP, there is no dev fallback and no production requirement:
+// leaving ClientID unset simply leaves POST /auth/google unregistered (see
+// internal/app.Run and httpapi.NewHandler) rather than refusing to start,
+// since this is an optional extra sign-in method, not core to the pilot.
+type GoogleOAuth struct {
+	ClientID string
+}
+
 type Config struct {
 	Env             string
 	HTTP            HTTP
@@ -112,6 +121,7 @@ type Config struct {
 	OfflineLease    OfflineLease
 	SMTP            SMTP
 	Signup          Signup
+	GoogleOAuth     GoogleOAuth
 	PublicBaseURL   string
 }
 
@@ -236,6 +246,8 @@ func load(lookup lookupEnv) (Config, error) {
 	parseDuration(lookup, "JBM_SMTP_RETRY_BASE_DELAY", &cfg.SMTP.RetryBaseDelay, &problems)
 
 	parseDuration(lookup, "JBM_SIGNUP_OTP_TTL", &cfg.Signup.OTPTTL, &problems)
+
+	cfg.GoogleOAuth.ClientID = stringValue(lookup, "JBM_GOOGLE_OAUTH_CLIENT_ID", cfg.GoogleOAuth.ClientID)
 
 	cfg.PublicBaseURL = stringValue(lookup, "JBM_PUBLIC_BASE_URL", cfg.PublicBaseURL)
 	if cfg.Env == Production && !strings.HasPrefix(cfg.PublicBaseURL, "https://") {

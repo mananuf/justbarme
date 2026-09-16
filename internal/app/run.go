@@ -11,11 +11,14 @@ import (
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/mananuf/justbarme/internal/catalogue"
 	"github.com/mananuf/justbarme/internal/config"
 	"github.com/mananuf/justbarme/internal/email"
 	"github.com/mananuf/justbarme/internal/httpapi"
 	"github.com/mananuf/justbarme/internal/identity"
+	"github.com/mananuf/justbarme/internal/oauth"
 	"github.com/mananuf/justbarme/internal/platformadmin"
 	"github.com/mananuf/justbarme/internal/signup"
 	"github.com/mananuf/justbarme/internal/store"
@@ -42,6 +45,7 @@ func Run(ctx context.Context) error {
 	catalogueSvc := catalogue.New(pool)
 	platformAdminSvc := platformadmin.New(pool, cfg.Argon2)
 	signupSvc := signup.New(pool, cfg.Argon2, identitySvc, emailProvider(cfg, logger), cfg.Signup.OTPTTL)
+	oauthSvc := googleOAuthService(cfg, pool, identitySvc, logger)
 
 	handler := httpapi.NewHandler(httpapi.Dependencies{
 		Logger:        logger,
@@ -52,6 +56,7 @@ func Run(ctx context.Context) error {
 		Catalogue:     catalogueSvc,
 		PlatformAdmin: platformAdminSvc,
 		Signup:        signupSvc,
+		OAuth:         oauthSvc,
 		Config:        cfg,
 	})
 	server := httpapi.NewServer(cfg.HTTP, handler, logger)
@@ -109,6 +114,20 @@ func emailProvider(cfg config.Config, logger *slog.Logger) email.Provider {
 	logger.Warn("no SMTP credentials configured; signup codes will only be logged, not emailed",
 		"note", "set JBM_SMTP_USERNAME/PASSWORD/FROM to send real email")
 	return email.NewConsoleProvider(logger)
+}
+
+// googleOAuthService returns nil when JBM_GOOGLE_OAUTH_CLIENT_ID is unset --
+// unlike email, there is no dev-fallback provider for "sign in with an
+// external identity provider," so the feature is simply absent rather than
+// faked. httpapi.NewHandler only registers POST /auth/google when this is
+// non-nil.
+func googleOAuthService(cfg config.Config, pool *pgxpool.Pool, identitySvc *identity.Service, logger *slog.Logger) *oauth.Service {
+	if cfg.GoogleOAuth.ClientID == "" {
+		logger.Warn("no Google OAuth client ID configured; Google sign-in is disabled",
+			"note", "set JBM_GOOGLE_OAUTH_CLIENT_ID to enable it")
+		return nil
+	}
+	return oauth.New(pool, identitySvc, oauth.NewGoogleVerifier(cfg.GoogleOAuth.ClientID))
 }
 
 type server interface {

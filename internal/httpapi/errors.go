@@ -79,3 +79,7 @@ func (api *API) invalidSignupCodeResponse(w http.ResponseWriter, r *http.Request
 func (api *API) emailAlreadyRegisteredResponse(w http.ResponseWriter, r *http.Request) {
 	api.errorResponse(w, r, http.StatusConflict, "EMAIL_ALREADY_REGISTERED", "This email is already registered. Sign in instead.", nil)
 }
+
+func (api *API) googleSignInFailedResponse(w http.ResponseWriter, r *http.Request) {
+	api.errorResponse(w, r, http.StatusUnauthorized, "GOOGLE_SIGNIN_FAILED", "Couldn't sign in with Google. Please try again.", nil)
+}

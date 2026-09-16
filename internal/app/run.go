@@ -15,6 +15,7 @@ import (
 	"github.com/mananuf/justbarme/internal/config"
 	"github.com/mananuf/justbarme/internal/httpapi"
 	"github.com/mananuf/justbarme/internal/identity"
+	"github.com/mananuf/justbarme/internal/platformadmin"
 	"github.com/mananuf/justbarme/internal/store"
 )
 
@@ -37,6 +38,7 @@ func Run(ctx context.Context) error {
 
 	identitySvc := identity.New(pool, cfg.Argon2)
 	catalogueSvc := catalogue.New(pool)
+	platformAdminSvc := platformadmin.New(pool, cfg.Argon2)
 
 	handler := httpapi.NewHandler(httpapi.Dependencies{
 		Logger:        logger,
@@ -45,6 +47,7 @@ func Run(ctx context.Context) error {
 		Version:       Version,
 		Identity:      identitySvc,
 		Catalogue:     catalogueSvc,
+		PlatformAdmin: platformAdminSvc,
 		Config:        cfg,
 	})
 	server := httpapi.NewServer(cfg.HTTP, handler, logger)

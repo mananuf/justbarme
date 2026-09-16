@@ -1,5 +1,6 @@
 .PHONY: run test test-race vet fmt fmt-check benchmark check tidy \
-	migrate-up migrate-down migrate-down-all migrate-create seed sqlc
+	migrate-up migrate-down migrate-down-all migrate-create seed sqlc \
+	seed-catalogue seed-platform-staff
 
 # Loads .env into every target's environment automatically, so `make run`,
 # `make migrate-up`, etc. work without first running
@@ -82,3 +83,9 @@ seed:
 # Idempotently upserts the platform catalogue templates — see cmd/seed-catalogue.
 seed-catalogue:
 	go run ./cmd/seed-catalogue
+
+# Bootstraps a platform staff account (support or superadmin) — see
+# cmd/seed-platform-staff. There is no signup endpoint for this tier.
+# Usage: make seed-platform-staff ARGS="-email=ops@justbarme.example -password=... -name='Ada Ops' -role=superadmin"
+seed-platform-staff:
+	go run ./cmd/seed-platform-staff $(ARGS)

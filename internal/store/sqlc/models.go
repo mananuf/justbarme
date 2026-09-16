@@ -78,6 +78,34 @@ type Device struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type InventoryBalance struct {
+	BusinessID uuid.UUID          `json:"business_id"`
+	VariantID  uuid.UUID          `json:"variant_id"`
+	LocationID uuid.UUID          `json:"location_id"`
+	Quantity   int32              `json:"quantity"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type InventoryEvent struct {
+	ID         uuid.UUID          `json:"id"`
+	BusinessID uuid.UUID          `json:"business_id"`
+	Type       string             `json:"type"`
+	ActorID    uuid.UUID          `json:"actor_id"`
+	ReceiptID  pgtype.UUID        `json:"receipt_id"`
+	OccurredAt pgtype.Timestamptz `json:"occurred_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type InventoryMovement struct {
+	ID            uuid.UUID          `json:"id"`
+	BusinessID    uuid.UUID          `json:"business_id"`
+	EventID       uuid.UUID          `json:"event_id"`
+	VariantID     uuid.UUID          `json:"variant_id"`
+	LocationID    uuid.UUID          `json:"location_id"`
+	QuantityDelta int32              `json:"quantity_delta"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type Location struct {
 	ID         uuid.UUID          `json:"id"`
 	BusinessID uuid.UUID          `json:"business_id"`
@@ -176,6 +204,37 @@ type SignupVerification struct {
 	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type StockLot struct {
+	ID               uuid.UUID          `json:"id"`
+	BusinessID       uuid.UUID          `json:"business_id"`
+	ReceiptLineID    uuid.UUID          `json:"receipt_line_id"`
+	VariantID        uuid.UUID          `json:"variant_id"`
+	LocationID       uuid.UUID          `json:"location_id"`
+	ReceivedQuantity int32              `json:"received_quantity"`
+	TotalCostKobo    int64              `json:"total_cost_kobo"`
+	ReceivedAt       pgtype.Timestamptz `json:"received_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type StockReceipt struct {
+	ID         uuid.UUID          `json:"id"`
+	BusinessID uuid.UUID          `json:"business_id"`
+	LocationID uuid.UUID          `json:"location_id"`
+	ReceivedBy uuid.UUID          `json:"received_by"`
+	ReceivedAt pgtype.Timestamptz `json:"received_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type StockReceiptLine struct {
+	ID            uuid.UUID          `json:"id"`
+	BusinessID    uuid.UUID          `json:"business_id"`
+	ReceiptID     uuid.UUID          `json:"receipt_id"`
+	VariantID     uuid.UUID          `json:"variant_id"`
+	Quantity      int32              `json:"quantity"`
+	TotalCostKobo int64              `json:"total_cost_kobo"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
 type User struct {

@@ -798,6 +798,12 @@ No profit figure is shown as authoritative unless its underlying inventory consu
 
 ---
 
+### Proposed future phases (not part of this frozen sequence)
+
+- **WhatsApp messaging via Zavu** — OTP delivery, an email-resend backup, bar operational updates, and WhatsApp-based staff invitations. Draft only, undecided, with an NDPA 2023 compliance assessment already run: see [`PHASE_WHATSAPP_MESSAGING.md`](PHASE_WHATSAPP_MESSAGING.md).
+
+---
+
 ## 5. Current action — Phase 1 backend foundation
 
 Implement **Phase 1 only**. Do not create tenant/auth/domain packages, `sqlc` output, query directories, tenant transaction helpers, or migrations yet. Establish only the server lifecycle and PostgreSQL pool.

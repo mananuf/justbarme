@@ -88,6 +88,40 @@ type Location struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PlatformAuditLog struct {
+	ID               uuid.UUID          `json:"id"`
+	PlatformStaffID  uuid.UUID          `json:"platform_staff_id"`
+	Action           string             `json:"action"`
+	TargetBusinessID pgtype.UUID        `json:"target_business_id"`
+	Reason           pgtype.Text        `json:"reason"`
+	RequestID        pgtype.Text        `json:"request_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type PlatformSession struct {
+	ID            uuid.UUID          `json:"id"`
+	StaffID       uuid.UUID          `json:"staff_id"`
+	TokenHash     string             `json:"token_hash"`
+	CsrfTokenHash string             `json:"csrf_token_hash"`
+	UserAgent     pgtype.Text        `json:"user_agent"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt    pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
+	RevokedReason pgtype.Text        `json:"revoked_reason"`
+}
+
+type PlatformStaff struct {
+	ID           uuid.UUID          `json:"id"`
+	Email        string             `json:"email"`
+	DisplayName  string             `json:"display_name"`
+	PasswordHash string             `json:"password_hash"`
+	Role         string             `json:"role"`
+	Status       string             `json:"status"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Product struct {
 	ID         uuid.UUID          `json:"id"`
 	BusinessID uuid.UUID          `json:"business_id"`

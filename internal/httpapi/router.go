@@ -196,6 +196,23 @@ func NewHandler(deps Dependencies) http.Handler {
 				router.Post("/sales/{sale_id}/reverse", api.reverseSale)
 				router.Get("/sale-reviews", api.listSaleReviews)
 				router.Post("/sale-reviews/{review_id}/resolve", api.resolveSaleReview)
+
+				router.Get("/tables", api.listTables)
+				router.Post("/tables", api.createTable)
+
+				router.Get("/customers", api.listCustomers)
+				router.Post("/customers", api.createCustomer)
+
+				router.Post("/bills", api.openBill)
+				router.Get("/bills", api.listBills)
+				router.Get("/bills/{bill_id}", api.getBillDetail)
+				router.Post("/bills/{bill_id}/rounds", api.addSaleRound)
+				router.Post("/bills/{bill_id}/items/remove", api.removeBillItem)
+				router.Post("/bills/{bill_id}/close", api.closeBill)
+				router.Post("/bills/{bill_id}/void", api.voidBill)
+				router.Post("/bills/{bill_id}/write-off", api.writeOffBill)
+				router.Post("/bills/{bill_id}/payments", api.recordPayment)
+				router.Post("/payments/{payment_id}/reverse", api.reversePayment)
 			})
 		})
 

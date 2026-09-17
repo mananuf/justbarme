@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createVariant = `-- name: CreateVariant :one
@@ -64,6 +65,49 @@ func (q *Queries) GetVariantByID(ctx context.Context, arg GetVariantByIDParams) 
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getVariantWithProductNameByID = `-- name: GetVariantWithProductNameByID :one
+SELECT product_variants.id, product_variants.business_id, product_variants.product_id, product_variants.name, product_variants.active, product_variants.created_at, product_variants.updated_at, products.name AS product_name
+FROM product_variants
+JOIN products ON products.business_id = product_variants.business_id AND products.id = product_variants.product_id
+WHERE product_variants.business_id = $1 AND product_variants.id = $2
+`
+
+type GetVariantWithProductNameByIDParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	ID         uuid.UUID `json:"id"`
+}
+
+type GetVariantWithProductNameByIDRow struct {
+	ID          uuid.UUID          `json:"id"`
+	BusinessID  uuid.UUID          `json:"business_id"`
+	ProductID   uuid.UUID          `json:"product_id"`
+	Name        string             `json:"name"`
+	Active      bool               `json:"active"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ProductName string             `json:"product_name"`
+}
+
+// Joins in the owning product's name for callers that need a full
+// "Product -- Variant" display snapshot (e.g. internal/sales, when
+// recording what was actually sold) -- product_variants.name alone is
+// just the variant's own name ("50cl Bottle"), never the product name.
+func (q *Queries) GetVariantWithProductNameByID(ctx context.Context, arg GetVariantWithProductNameByIDParams) (GetVariantWithProductNameByIDRow, error) {
+	row := q.db.QueryRow(ctx, getVariantWithProductNameByID, arg.BusinessID, arg.ID)
+	var i GetVariantWithProductNameByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.ProductID,
+		&i.Name,
+		&i.Active,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ProductName,
 	)
 	return i, err
 }

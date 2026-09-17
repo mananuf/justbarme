@@ -60,3 +60,23 @@ func toSale(s sqlc.Sale) Sale {
 		TotalKobo: s.TotalKobo, ReversalOf: toUUID(s.ReversalOfSaleID),
 	}
 }
+
+func toTable(t sqlc.Table) Table {
+	return Table{ID: t.ID, Label: t.Label, Active: t.Active}
+}
+
+func toCustomer(c sqlc.Customer) Customer {
+	return Customer{ID: c.ID, Name: c.Name, Phone: c.Phone.String, Email: c.Email.String, Notes: c.Notes.String}
+}
+
+func toBill(b sqlc.Bill) Bill {
+	return Bill{
+		ID: b.ID, LocationID: b.LocationID, Status: b.Status,
+		TableID: toUUID(b.TableID), CustomerID: toUUID(b.CustomerID),
+		BalanceKobo: b.BalanceKobo, OpenedAt: toTime(b.OpenedAt),
+	}
+}
+
+func toWriteOff(w sqlc.BillWriteOff) WriteOff {
+	return WriteOff{ID: w.ID, BillID: w.BillID, AmountKobo: w.AmountKobo, Reason: w.Reason, CreatedAt: toTime(w.CreatedAt)}
+}

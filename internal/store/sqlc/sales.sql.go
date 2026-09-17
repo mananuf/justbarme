@@ -13,9 +13,9 @@ import (
 )
 
 const createBill = `-- name: CreateBill :one
-INSERT INTO bills (id, business_id, location_id, status, opened_by, opened_at)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at
+INSERT INTO bills (id, business_id, location_id, status, opened_by, opened_at, table_id, customer_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo
 `
 
 type CreateBillParams struct {
@@ -25,6 +25,8 @@ type CreateBillParams struct {
 	Status     string             `json:"status"`
 	OpenedBy   uuid.UUID          `json:"opened_by"`
 	OpenedAt   pgtype.Timestamptz `json:"opened_at"`
+	TableID    pgtype.UUID        `json:"table_id"`
+	CustomerID pgtype.UUID        `json:"customer_id"`
 }
 
 func (q *Queries) CreateBill(ctx context.Context, arg CreateBillParams) (Bill, error) {
@@ -35,6 +37,8 @@ func (q *Queries) CreateBill(ctx context.Context, arg CreateBillParams) (Bill, e
 		arg.Status,
 		arg.OpenedBy,
 		arg.OpenedAt,
+		arg.TableID,
+		arg.CustomerID,
 	)
 	var i Bill
 	err := row.Scan(
@@ -46,6 +50,9 @@ func (q *Queries) CreateBill(ctx context.Context, arg CreateBillParams) (Bill, e
 		&i.OpenedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TableID,
+		&i.CustomerID,
+		&i.BalanceKobo,
 	)
 	return i, err
 }
@@ -254,7 +261,7 @@ func (q *Queries) CreateSaleReview(ctx context.Context, arg CreateSaleReviewPara
 }
 
 const getBillByID = `-- name: GetBillByID :one
-SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at FROM bills WHERE business_id = $1 AND id = $2
+SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo FROM bills WHERE business_id = $1 AND id = $2
 `
 
 type GetBillByIDParams struct {
@@ -274,6 +281,9 @@ func (q *Queries) GetBillByID(ctx context.Context, arg GetBillByIDParams) (Bill,
 		&i.OpenedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TableID,
+		&i.CustomerID,
+		&i.BalanceKobo,
 	)
 	return i, err
 }
@@ -584,7 +594,7 @@ func (q *Queries) SumSalesTotalSince(ctx context.Context, arg SumSalesTotalSince
 
 const updateBillStatus = `-- name: UpdateBillStatus :one
 UPDATE bills SET status = $3, updated_at = now() WHERE business_id = $1 AND id = $2
-RETURNING id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at
+RETURNING id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo
 `
 
 type UpdateBillStatusParams struct {
@@ -605,6 +615,9 @@ func (q *Queries) UpdateBillStatus(ctx context.Context, arg UpdateBillStatusPara
 		&i.OpenedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TableID,
+		&i.CustomerID,
+		&i.BalanceKobo,
 	)
 	return i, err
 }

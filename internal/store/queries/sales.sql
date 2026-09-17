@@ -1,6 +1,6 @@
 -- name: CreateBill :one
-INSERT INTO bills (id, business_id, location_id, status, opened_by, opened_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO bills (id, business_id, location_id, status, opened_by, opened_at, table_id, customer_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: GetBillByID :one

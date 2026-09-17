@@ -68,10 +68,6 @@ func (s *Service) CreateSale(
 	if err != nil {
 		return Sale{}, err
 	}
-	eventID, err := newID()
-	if err != nil {
-		return Sale{}, err
-	}
 	paymentID, err := newID()
 	if err != nil {
 		return Sale{}, err
@@ -95,115 +91,15 @@ func (s *Service) CreateSale(
 
 		bill, err := q.CreateBill(ctx, sqlc.CreateBillParams{
 			ID: billID, BusinessID: businessID, LocationID: locationID,
-			Status: "settled", OpenedBy: userID, OpenedAt: pgTimestamptz(occurredAt),
+			Status: BillStatusSettled, OpenedBy: userID, OpenedAt: pgTimestamptz(occurredAt),
 		})
 		if err != nil {
 			return fmt.Errorf("create bill: %w", err)
 		}
 
-		// Resolve pass first, no writes yet: every child row below (sale
-		// items, the inventory event, movements, reviews) has a foreign
-		// key back to the sales row, so that row must exist before any of
-		// them can be inserted -- which means the total it needs has to be
-		// known first.
-		type resolvedItem struct {
-			variantID     uuid.UUID
-			description   string
-			quantity      int32
-			unitPriceKobo int64
-			lineTotalKobo int64
-			reviewReason  string // "" if none
-		}
-		resolved := make([]resolvedItem, 0, len(items))
-		var totalKobo int64
-		for _, item := range items {
-			variant, err := q.GetVariantByID(ctx, sqlc.GetVariantByIDParams{BusinessID: businessID, ID: item.VariantID})
-			if err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
-					return ErrVariantNotFound
-				}
-				return fmt.Errorf("look up variant: %w", err)
-			}
-
-			lineTotal := int64(item.Quantity) * item.UnitPriceKobo
-			totalKobo += lineTotal
-
-			reviewReason := ""
-			if !variant.Active {
-				reviewReason = ReviewReasonDeactivatedVariant
-			} else if price, err := q.GetPriceAt(ctx, sqlc.GetPriceAtParams{
-				BusinessID: businessID, VariantID: item.VariantID, ValidFrom: pgTimestamptz(occurredAt),
-			}); err != nil || price.AmountKobo != item.UnitPriceKobo {
-				reviewReason = ReviewReasonPriceMismatch
-			}
-
-			resolved = append(resolved, resolvedItem{
-				variantID: item.VariantID, description: variant.Name, quantity: item.Quantity,
-				unitPriceKobo: item.UnitPriceKobo, lineTotalKobo: lineTotal, reviewReason: reviewReason,
-			})
-		}
-
-		sale, err := q.CreateSale(ctx, sqlc.CreateSaleParams{
-			ID: saleID, BusinessID: businessID, BillID: bill.ID, SellerID: sellerID,
-			IdempotencyKey: idempotencyKey, OccurredAt: pgTimestamptz(occurredAt),
-			ReceivedAt: pgTimestamptz(receivedAt), TotalKobo: totalKobo,
-		})
+		sale, err := postSaleRound(ctx, q, businessID, bill.ID, sellerID, locationID, saleID, idempotencyKey, occurredAt, receivedAt, items)
 		if err != nil {
-			return fmt.Errorf("create sale: %w", err)
-		}
-
-		if _, err := q.CreateInventoryEventForSale(ctx, sqlc.CreateInventoryEventForSaleParams{
-			ID: eventID, BusinessID: businessID, Type: "sale", ActorID: userID, SaleID: pgUUID(saleID),
-		}); err != nil {
-			return fmt.Errorf("create inventory event: %w", err)
-		}
-
-		var postedItems []SaleItem
-		var reviews []Review
-		for _, r := range resolved {
-			itemID, err := newID()
-			if err != nil {
-				return err
-			}
-			postedItem, err := q.CreateSaleItem(ctx, sqlc.CreateSaleItemParams{
-				ID: itemID, BusinessID: businessID, SaleID: saleID, VariantID: r.variantID,
-				Description: r.description, Quantity: r.quantity,
-				UnitPriceKobo: r.unitPriceKobo, LineTotalKobo: r.lineTotalKobo,
-			})
-			if err != nil {
-				return fmt.Errorf("create sale item: %w", err)
-			}
-			postedItems = append(postedItems, toSaleItem(postedItem))
-
-			movementID, err := newID()
-			if err != nil {
-				return err
-			}
-			if _, err := q.CreateInventoryMovement(ctx, sqlc.CreateInventoryMovementParams{
-				ID: movementID, BusinessID: businessID, EventID: eventID,
-				VariantID: r.variantID, LocationID: locationID, QuantityDelta: -r.quantity,
-			}); err != nil {
-				return fmt.Errorf("create inventory movement: %w", err)
-			}
-			if _, err := q.UpsertInventoryBalanceDelta(ctx, sqlc.UpsertInventoryBalanceDeltaParams{
-				BusinessID: businessID, VariantID: r.variantID, LocationID: locationID, Quantity: -r.quantity,
-			}); err != nil {
-				return fmt.Errorf("update inventory balance: %w", err)
-			}
-
-			if r.reviewReason != "" {
-				reviewID, err := newID()
-				if err != nil {
-					return err
-				}
-				created, err := q.CreateSaleReview(ctx, sqlc.CreateSaleReviewParams{
-					ID: reviewID, BusinessID: businessID, SaleID: sale.ID, SaleItemID: pgUUID(postedItem.ID), Reason: r.reviewReason,
-				})
-				if err != nil {
-					return fmt.Errorf("create sale review: %w", err)
-				}
-				reviews = append(reviews, toReview(created))
-			}
+			return err
 		}
 
 		postedPayment, err := q.CreatePayment(ctx, sqlc.CreatePaymentParams{
@@ -214,11 +110,8 @@ func (s *Service) CreateSale(
 			return fmt.Errorf("create payment: %w", err)
 		}
 
-		result = Sale{
-			ID: sale.ID, BusinessID: businessID, BillID: bill.ID, SellerID: sellerID,
-			OccurredAt: occurredAt, ReceivedAt: receivedAt, TotalKobo: totalKobo,
-			Items: postedItems, Payment: toPayment(postedPayment), Reviews: reviews,
-		}
+		sale.Payment = toPayment(postedPayment)
+		result = sale
 		return nil
 	})
 	if err != nil {
@@ -228,6 +121,135 @@ func (s *Service) CreateSale(
 		return Sale{}, err
 	}
 	return result, nil
+}
+
+// postSaleRound resolves and posts one sale round (items, inventory
+// movements, staleness reviews) onto an already-existing bill -- it does
+// not create the bill or a payment, so it is shared by CreateSale (the
+// walk-in path, which wraps a brand-new bill and an immediate payment
+// around this) and AddSaleRound (which appends a round to an already-open
+// tab, with no payment at all). Resolution happens first, no writes yet:
+// every child row below (sale items, the inventory event, movements,
+// reviews) has a foreign key back to the sales row, so that row must
+// exist before any of them can be inserted -- which means the total it
+// needs has to be known first.
+func postSaleRound(
+	ctx context.Context, q *sqlc.Queries,
+	businessID, billID, sellerID, locationID, saleID uuid.UUID,
+	idempotencyKey uuid.UUID,
+	occurredAt, receivedAt time.Time,
+	items []SaleItemInput,
+) (Sale, error) {
+	eventID, err := newID()
+	if err != nil {
+		return Sale{}, err
+	}
+
+	type resolvedItem struct {
+		variantID     uuid.UUID
+		description   string
+		quantity      int32
+		unitPriceKobo int64
+		lineTotalKobo int64
+		reviewReason  string // "" if none
+	}
+	resolved := make([]resolvedItem, 0, len(items))
+	var totalKobo int64
+	for _, item := range items {
+		variant, err := q.GetVariantWithProductNameByID(ctx, sqlc.GetVariantWithProductNameByIDParams{BusinessID: businessID, ID: item.VariantID})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Sale{}, ErrVariantNotFound
+			}
+			return Sale{}, fmt.Errorf("look up variant: %w", err)
+		}
+
+		lineTotal := int64(item.Quantity) * item.UnitPriceKobo
+		totalKobo += lineTotal
+
+		reviewReason := ""
+		if !variant.Active {
+			reviewReason = ReviewReasonDeactivatedVariant
+		} else if price, err := q.GetPriceAt(ctx, sqlc.GetPriceAtParams{
+			BusinessID: businessID, VariantID: item.VariantID, ValidFrom: pgTimestamptz(occurredAt),
+		}); err != nil || price.AmountKobo != item.UnitPriceKobo {
+			reviewReason = ReviewReasonPriceMismatch
+		}
+
+		resolved = append(resolved, resolvedItem{
+			variantID: item.VariantID, description: variant.ProductName + " — " + variant.Name, quantity: item.Quantity,
+			unitPriceKobo: item.UnitPriceKobo, lineTotalKobo: lineTotal, reviewReason: reviewReason,
+		})
+	}
+
+	sale, err := q.CreateSale(ctx, sqlc.CreateSaleParams{
+		ID: saleID, BusinessID: businessID, BillID: billID, SellerID: sellerID,
+		IdempotencyKey: idempotencyKey, OccurredAt: pgTimestamptz(occurredAt),
+		ReceivedAt: pgTimestamptz(receivedAt), TotalKobo: totalKobo,
+	})
+	if err != nil {
+		return Sale{}, fmt.Errorf("create sale: %w", err)
+	}
+
+	if _, err := q.CreateInventoryEventForSale(ctx, sqlc.CreateInventoryEventForSaleParams{
+		ID: eventID, BusinessID: businessID, Type: "sale", ActorID: sellerID, SaleID: pgUUID(saleID),
+	}); err != nil {
+		return Sale{}, fmt.Errorf("create inventory event: %w", err)
+	}
+
+	var postedItems []SaleItem
+	var reviews []Review
+	for _, r := range resolved {
+		itemID, err := newID()
+		if err != nil {
+			return Sale{}, err
+		}
+		postedItem, err := q.CreateSaleItem(ctx, sqlc.CreateSaleItemParams{
+			ID: itemID, BusinessID: businessID, SaleID: saleID, VariantID: r.variantID,
+			Description: r.description, Quantity: r.quantity,
+			UnitPriceKobo: r.unitPriceKobo, LineTotalKobo: r.lineTotalKobo,
+		})
+		if err != nil {
+			return Sale{}, fmt.Errorf("create sale item: %w", err)
+		}
+		postedItems = append(postedItems, toSaleItem(postedItem))
+
+		movementID, err := newID()
+		if err != nil {
+			return Sale{}, err
+		}
+		if _, err := q.CreateInventoryMovement(ctx, sqlc.CreateInventoryMovementParams{
+			ID: movementID, BusinessID: businessID, EventID: eventID,
+			VariantID: r.variantID, LocationID: locationID, QuantityDelta: -r.quantity,
+		}); err != nil {
+			return Sale{}, fmt.Errorf("create inventory movement: %w", err)
+		}
+		if _, err := q.UpsertInventoryBalanceDelta(ctx, sqlc.UpsertInventoryBalanceDeltaParams{
+			BusinessID: businessID, VariantID: r.variantID, LocationID: locationID, Quantity: -r.quantity,
+		}); err != nil {
+			return Sale{}, fmt.Errorf("update inventory balance: %w", err)
+		}
+
+		if r.reviewReason != "" {
+			reviewID, err := newID()
+			if err != nil {
+				return Sale{}, err
+			}
+			created, err := q.CreateSaleReview(ctx, sqlc.CreateSaleReviewParams{
+				ID: reviewID, BusinessID: businessID, SaleID: sale.ID, SaleItemID: pgUUID(postedItem.ID), Reason: r.reviewReason,
+			})
+			if err != nil {
+				return Sale{}, fmt.Errorf("create sale review: %w", err)
+			}
+			reviews = append(reviews, toReview(created))
+		}
+	}
+
+	return Sale{
+		ID: sale.ID, BusinessID: businessID, BillID: billID, LocationID: locationID, SellerID: sellerID,
+		OccurredAt: occurredAt, ReceivedAt: receivedAt, TotalKobo: totalKobo,
+		Items: postedItems, Reviews: reviews,
+	}, nil
 }
 
 // loadSaleAggregate assembles a sale with its items, payment, and reviews

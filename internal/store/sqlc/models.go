@@ -10,14 +10,27 @@ import (
 )
 
 type Bill struct {
+	ID          uuid.UUID          `json:"id"`
+	BusinessID  uuid.UUID          `json:"business_id"`
+	LocationID  uuid.UUID          `json:"location_id"`
+	Status      string             `json:"status"`
+	OpenedBy    uuid.UUID          `json:"opened_by"`
+	OpenedAt    pgtype.Timestamptz `json:"opened_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	TableID     pgtype.UUID        `json:"table_id"`
+	CustomerID  pgtype.UUID        `json:"customer_id"`
+	BalanceKobo int64              `json:"balance_kobo"`
+}
+
+type BillWriteOff struct {
 	ID         uuid.UUID          `json:"id"`
 	BusinessID uuid.UUID          `json:"business_id"`
-	LocationID uuid.UUID          `json:"location_id"`
-	Status     string             `json:"status"`
-	OpenedBy   uuid.UUID          `json:"opened_by"`
-	OpenedAt   pgtype.Timestamptz `json:"opened_at"`
+	BillID     uuid.UUID          `json:"bill_id"`
+	AmountKobo int64              `json:"amount_kobo"`
+	Reason     string             `json:"reason"`
+	ActorID    uuid.UUID          `json:"actor_id"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Business struct {
@@ -70,6 +83,17 @@ type Category struct {
 	Name       string             `json:"name"`
 	SortOrder  int32              `json:"sort_order"`
 	Active     bool               `json:"active"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Customer struct {
+	ID         uuid.UUID          `json:"id"`
+	BusinessID uuid.UUID          `json:"business_id"`
+	Name       string             `json:"name"`
+	Phone      pgtype.Text        `json:"phone"`
+	Email      pgtype.Text        `json:"email"`
+	Notes      pgtype.Text        `json:"notes"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
@@ -296,6 +320,14 @@ type StockReceiptLine struct {
 	Quantity      int32              `json:"quantity"`
 	TotalCostKobo int64              `json:"total_cost_kobo"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type Table struct {
+	ID         uuid.UUID          `json:"id"`
+	BusinessID uuid.UUID          `json:"business_id"`
+	Label      string             `json:"label"`
+	Active     bool               `json:"active"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type User struct {

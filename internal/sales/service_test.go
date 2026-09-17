@@ -93,15 +93,26 @@ func cleanupTenant(t *testing.T, pool *pgxpool.Pool, ownerID, businessID uuid.UU
 		if err == nil {
 			_, _ = tx.Exec(ctx, "SET LOCAL ROLE jbm_app")
 			_, _ = tx.Exec(ctx, "SELECT set_config('app.business_id', $1, true)", businessID.String())
+			// Order matters: a child must be deleted before anything it
+			// has a foreign key to. inventory_events.sale_id (added by
+			// migration 000019) means inventory_movements/events must go
+			// before sales, not after -- getting this backwards leaves
+			// every sale-creating test's rows (and their owning
+			// user/business, blocked transitively) permanently leaked
+			// under a non-superuser JBM_DATABASE_URL, exactly the
+			// CLAUDE.md-documented failure mode for this pattern.
 			for _, stmt := range []string{
 				"DELETE FROM sale_reviews WHERE business_id = $1",
 				"DELETE FROM sale_items WHERE business_id = $1",
-				"DELETE FROM payments WHERE business_id = $1",
-				"DELETE FROM sales WHERE business_id = $1",
-				"DELETE FROM bills WHERE business_id = $1",
-				"DELETE FROM inventory_balances WHERE business_id = $1",
 				"DELETE FROM inventory_movements WHERE business_id = $1",
 				"DELETE FROM inventory_events WHERE business_id = $1",
+				"DELETE FROM payments WHERE business_id = $1",
+				"DELETE FROM bill_write_offs WHERE business_id = $1",
+				"DELETE FROM sales WHERE business_id = $1",
+				"DELETE FROM bills WHERE business_id = $1",
+				"DELETE FROM customers WHERE business_id = $1",
+				"DELETE FROM tables WHERE business_id = $1",
+				"DELETE FROM inventory_balances WHERE business_id = $1",
 				"DELETE FROM stock_lots WHERE business_id = $1",
 				"DELETE FROM stock_receipt_lines WHERE business_id = $1",
 				"DELETE FROM stock_receipts WHERE business_id = $1",

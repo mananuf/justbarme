@@ -1,20 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { listProducts, type CatalogueProduct } from '../api/catalogue';
 import { AppBottomNav } from '../components/AppBottomNav';
+import { CartPanel, type CartLine } from '../components/CartPanel';
+import { ProductGrid, type PickableVariant } from '../components/ProductGrid';
 import { useConnectivity } from '../hooks/useConnectivity';
 import { flushPendingSales, queuePendingSale } from '../lib/salesSync';
 import { useSession } from '../lib/session';
 
 type PaymentMethod = 'cash' | 'transfer' | 'card';
-
-type CartLine = {
-  variantId: string;
-  description: string;
-  unitPriceKobo: number;
-  quantity: number;
-};
 
 function formatNaira(kobo: number): string {
   return (kobo / 100).toLocaleString();
@@ -47,12 +42,22 @@ export function Sell() {
     void flushPendingSales(selectedBusinessId, csrfToken);
   }, [isOnline, selectedBusinessId, csrfToken]);
 
-  const addOne = (variantId: string, description: string, unitPriceKobo: number) => {
+  const addOne = (variant: PickableVariant) => {
     setCart((c) => {
-      const existing = c.find((l) => l.variantId === variantId);
+      const existing = c.find((l) => l.variantId === variant.variantId);
       if (existing)
-        return c.map((l) => (l.variantId === variantId ? { ...l, quantity: l.quantity + 1 } : l));
-      return [...c, { variantId, description, unitPriceKobo, quantity: 1 }];
+        return c.map((l) =>
+          l.variantId === variant.variantId ? { ...l, quantity: l.quantity + 1 } : l,
+        );
+      return [
+        ...c,
+        {
+          variantId: variant.variantId,
+          description: variant.description,
+          unitPriceKobo: variant.priceKobo,
+          quantity: 1,
+        },
+      ];
     });
   };
 
@@ -65,7 +70,7 @@ export function Sell() {
   };
 
   const total = cart.reduce((sum, l) => sum + l.unitPriceKobo * l.quantity, 0);
-  const itemCount = cart.reduce((sum, l) => sum + l.quantity, 0);
+  const cartQuantities = Object.fromEntries(cart.map((l) => [l.variantId, l.quantity]));
 
   async function completeSale() {
     if (!selectedBusinessId || cart.length === 0) return;
@@ -99,6 +104,20 @@ export function Sell() {
     }
   }
 
+  const variants: PickableVariant[] = useMemo(
+    () =>
+      (products ?? []).flatMap((p) =>
+        p.variants
+          .filter((v) => v.active)
+          .map((v) => ({
+            variantId: v.id,
+            description: `${p.name} — ${v.name}`,
+            priceKobo: v.currentPriceKobo,
+          })),
+      ),
+    [products],
+  );
+
   if (done) {
     return (
       <div className="min-h-screen bg-jb-cream text-jb-ink flex flex-col items-center justify-center px-6 text-center pb-28">
@@ -129,20 +148,11 @@ export function Sell() {
     );
   }
 
-  const variants = (products ?? []).flatMap((p) =>
-    p.variants
-      .filter((v) => v.active)
-      .map((v) => ({
-        variantId: v.id,
-        description: `${p.name} — ${v.name}`,
-        priceKobo: v.currentPriceKobo,
-      })),
-  );
-
   return (
-    <div className="min-h-screen bg-jb-cream text-jb-ink pb-40">
-      <div className="max-w-md mx-auto px-5 pt-6">
-        <div className="flex items-center gap-4 mb-6">
+    <div className="h-screen flex flex-col bg-jb-cream text-jb-ink">
+      {/* Fixed header -- never scrolls */}
+      <div className="max-w-md mx-auto w-full px-5 pt-6 shrink-0">
+        <div className="flex items-center gap-4 mb-4">
           <Link
             to="/dashboard"
             aria-label="Back"
@@ -155,130 +165,72 @@ export function Sell() {
             <h1 className="text-lg font-medium">Walk-in sale</h1>
           </div>
         </div>
-
-        {loadError && (
-          <p role="alert" className="text-[13px] text-red-700 mb-4">
-            {loadError}
-          </p>
-        )}
-        {products === null && !loadError && (
-          <p className="text-[13px] text-jb-ink/45">Loading products…</p>
-        )}
-        {products !== null && variants.length === 0 && (
-          <p className="text-[13px] text-jb-ink/45">
-            You haven&apos;t stocked anything yet.{' '}
-            <Link to="/dashboard/stock" className="underline">
-              Add stock
-            </Link>{' '}
-            to start selling.
-          </p>
-        )}
-
-        <div className="grid grid-cols-2 gap-2.5">
-          {variants.map((v) => {
-            const inCart = cart.find((l) => l.variantId === v.variantId);
-            return (
-              <button
-                key={v.variantId}
-                onClick={() => addOne(v.variantId, v.description, v.priceKobo)}
-                className={`rounded-xl border p-4 text-left transition-colors active:scale-[0.97] ${
-                  inCart
-                    ? 'border-jb-ink bg-jb-ink text-jb-cream'
-                    : 'border-jb-ink/10 bg-white text-jb-ink'
-                }`}
-              >
-                <div className="text-[14px] font-medium">{v.description}</div>
-                <div
-                  className={`text-[11px] mt-0.5 ${inCart ? 'text-jb-cream/60' : 'text-jb-ink/45'}`}
-                >
-                  ₦{formatNaira(v.priceKobo)}
-                </div>
-                {inCart && (
-                  <div className="mt-2 text-[12px] font-medium">{inCart.quantity} in sale</div>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {cart.length > 0 && (
-          <>
-            <div className="mt-6">
-              <div className="text-[11px] text-jb-ink/45 tracking-wide mb-2">THIS SALE</div>
-              <div className="space-y-2">
-                {cart.map((line) => (
-                  <div
-                    key={line.variantId}
-                    className="flex items-center justify-between rounded-xl border border-jb-ink/10 bg-white px-4 py-3"
-                  >
-                    <div>
-                      <div className="text-[13.5px] text-jb-ink/80">{line.description}</div>
-                      <div className="text-[11px] text-jb-ink/40">
-                        ₦{formatNaira(line.unitPriceKobo)} each
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => changeQty(line.variantId, -1)}
-                        className="w-7 h-7 rounded-full border border-jb-ink/20 flex items-center justify-center text-jb-ink"
-                      >
-                        −
-                      </button>
-                      <span className="text-[14px] font-medium w-4 text-center">
-                        {line.quantity}
-                      </span>
-                      <button
-                        onClick={() => changeQty(line.variantId, 1)}
-                        className="w-7 h-7 rounded-full border border-jb-ink/20 flex items-center justify-center text-jb-ink"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-4">
-              <div className="text-[11px] text-jb-ink/45 tracking-wide mb-2">PAID BY</div>
-              <div className="flex gap-2 p-1 rounded-xl bg-jb-ink/[0.05]">
-                {(['cash', 'transfer', 'card'] as PaymentMethod[]).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => setMethod(m)}
-                    className={`flex-1 rounded-lg py-2.5 text-[13px] font-medium capitalize transition-colors ${
-                      method === m ? 'bg-white text-jb-ink shadow-sm' : 'text-jb-ink/45'
-                    }`}
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
       </div>
 
-      {cart.length > 0 && (
-        <div className="fixed bottom-[64px] inset-x-0 px-5 pb-3 bg-gradient-to-t from-jb-cream via-jb-cream to-transparent pt-6">
-          <div className="max-w-md mx-auto">
+      {/* Top half: the product picker -- scrolls independently */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="max-w-md mx-auto w-full px-5 pb-3">
+          <ProductGrid
+            variants={variants}
+            isLoading={products === null && !loadError}
+            loadError={loadError}
+            cartQuantities={cartQuantities}
+            inCartLabel="in sale"
+            onAdd={addOne}
+            emptyMessage={
+              <p className="text-[13px] text-jb-ink/45">
+                You haven&apos;t stocked anything yet.{' '}
+                <Link to="/dashboard/stock" className="underline">
+                  Add stock
+                </Link>{' '}
+                to start selling.
+              </p>
+            }
+          />
+        </div>
+      </div>
+
+      {/* Bottom half: what's been added for this customer -- its own
+          scroll region, always visible so the sale-in-progress never
+          disappears behind the product list. */}
+      <CartPanel
+        label="THIS SALE"
+        lines={cart}
+        emptyMessage="Tap a drink above to add it here."
+        onChangeQty={changeQty}
+        footer={
+          <>
+            <div className="flex gap-2 p-1 rounded-xl bg-jb-ink/[0.05] mb-2">
+              {(['cash', 'transfer', 'card'] as PaymentMethod[]).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMethod(m)}
+                  className={`flex-1 rounded-lg py-2 text-[12.5px] font-medium capitalize transition-colors ${
+                    method === m ? 'bg-white text-jb-ink shadow-sm' : 'text-jb-ink/45'
+                  }`}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center justify-between text-[12px] text-jb-ink/55 mb-2 px-1">
-              <span>
-                {itemCount} item{itemCount === 1 ? '' : 's'}
-              </span>
+              <span>Total</span>
               <span className="text-jb-ink font-medium text-[15px]">₦{formatNaira(total)}</span>
             </div>
             <button
               onClick={() => void completeSale()}
               disabled={submitting}
-              className="w-full rounded-xl bg-jb-ink text-jb-cream text-[15px] font-medium py-4 active:scale-[0.98] transition-transform disabled:opacity-40"
+              className="w-full rounded-xl bg-jb-ink text-jb-cream text-[15px] font-medium py-3.5 active:scale-[0.98] transition-transform disabled:opacity-40"
             >
               {submitting ? 'Saving…' : 'Complete Sale'}
             </button>
-          </div>
-        </div>
-      )}
+          </>
+        }
+      />
 
+      {/* Reserves room for the fixed bottom nav below, matching the
+          clearance every other app-shell page uses. */}
+      <div className="h-28 shrink-0" />
       <AppBottomNav />
     </div>
   );

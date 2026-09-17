@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { listSales, salesSummary, type Sale } from '../api/sales';
+import { listBills, type Bill } from '../api/tabs';
 import { AppBottomNav } from '../components/AppBottomNav';
 import { DashboardTour } from '../components/DashboardTour';
 import { Logo } from '../components/Logo';
@@ -62,15 +63,21 @@ export function Dashboard() {
     null,
   );
   const [recentSales, setRecentSales] = useState<Sale[] | null>(null);
+  const [outstandingBills, setOutstandingBills] = useState<Bill[] | null>(null);
 
   useEffect(() => {
     if (!selectedBusinessId) return;
     let cancelled = false;
-    void Promise.all([salesSummary(selectedBusinessId), listSales(selectedBusinessId, 4)])
-      .then(([s, sales]) => {
+    void Promise.all([
+      salesSummary(selectedBusinessId),
+      listSales(selectedBusinessId, 4),
+      listBills(selectedBusinessId, 'outstanding'),
+    ])
+      .then(([s, sales, bills]) => {
         if (cancelled) return;
         setSummary(s);
         setRecentSales(sales);
+        setOutstandingBills(bills);
       })
       .catch(() => {
         // Best-effort: the dashboard still renders fine with these cards
@@ -167,16 +174,23 @@ export function Dashboard() {
               Gordon&apos;s 75cl
             </div>
           </div>
-          <div
+          <Link
             id="bills"
-            className="rounded-xl bg-white/70 border border-jb-ink/[0.08] p-4 scroll-mt-20"
+            to="/dashboard/tabs"
+            className="rounded-xl bg-white/70 border border-jb-ink/[0.08] p-4 scroll-mt-20 active:scale-[0.98] transition-transform"
           >
             <div className="text-[11px] text-jb-ink/45">Outstanding</div>
-            <div className="text-[15px] font-medium text-jb-ink mt-1">₦11,400</div>
-            <div className="mt-2 inline-block text-[10px] px-2 py-0.5 rounded-full bg-jb-ink/[0.06] text-jb-ink/60 font-medium">
-              2 open tabs
+            <div className="text-[15px] font-medium text-jb-ink mt-1">
+              {outstandingBills
+                ? `₦${formatNaira(outstandingBills.reduce((sum, b) => sum + b.balanceKobo, 0))}`
+                : '—'}
             </div>
-          </div>
+            <div className="mt-2 inline-block text-[10px] px-2 py-0.5 rounded-full bg-jb-ink/[0.06] text-jb-ink/60 font-medium">
+              {outstandingBills
+                ? `${outstandingBills.length} open tab${outstandingBills.length === 1 ? '' : 's'}`
+                : 'Loading…'}
+            </div>
+          </Link>
         </div>
 
         <div className="mb-4">

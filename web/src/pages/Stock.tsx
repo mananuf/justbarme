@@ -14,6 +14,7 @@ import {
 } from '../api/catalogue';
 import { ApiError } from '../api/client';
 import { receiveStock } from '../api/inventory';
+import { AppBottomNav } from '../components/AppBottomNav';
 import { Logo } from '../components/Logo';
 import { getRememberedCrateSize, setRememberedCrateSize } from '../lib/stockPreferences';
 import { useSession } from '../lib/session';
@@ -519,6 +520,7 @@ export function Stock() {
           </div>
         )}
       </div>
+      <AppBottomNav />
     </div>
   );
 }

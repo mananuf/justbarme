@@ -4,7 +4,7 @@ const NAV_ITEMS = [
   { label: 'Home', href: '/dashboard', icon: 'home' },
   { label: 'Sell', href: '/dashboard/sell', icon: 'sell' },
   { label: 'Stock', href: '/dashboard/stock', icon: 'stock' },
-  { label: 'Bills', href: '/dashboard#bills', icon: 'bills' },
+  { label: 'Bills', href: '/dashboard/tabs', icon: 'bills' },
   { label: 'More', href: '/dashboard#more', icon: 'more' },
 ] as const;
 
@@ -70,8 +70,9 @@ export function AppBottomNav() {
                 ? pathname.startsWith('/dashboard/sell')
                 : item.label === 'Stock'
                   ? pathname.startsWith('/dashboard/stock')
-                  : false;
-          const isSell = item.label === 'Sell';
+                  : item.label === 'Bills'
+                    ? pathname.startsWith('/dashboard/tabs')
+                    : false;
           return (
             <Link
               key={item.label}
@@ -80,12 +81,12 @@ export function AppBottomNav() {
             >
               <div
                 className={
-                  isSell
+                  active
                     ? 'w-11 h-11 rounded-full bg-jb-ink flex items-center justify-center -mt-4 shadow-[0_6px_14px_rgba(18,26,20,0.35)]'
-                    : `w-8 h-8 rounded-lg flex items-center justify-center ${active ? 'bg-jb-ink/10' : ''}`
+                    : 'w-8 h-8 rounded-lg flex items-center justify-center'
                 }
               >
-                <Glyph icon={item.icon} active={active} onDark={isSell} />
+                <Glyph icon={item.icon} active={active} onDark={active} />
               </div>
               <span
                 className={`text-[10px] ${active ? 'text-jb-ink font-medium' : 'text-jb-ink/40'}`}

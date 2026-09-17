@@ -12,6 +12,7 @@ import { Install } from '../pages/Install';
 import { Dashboard } from '../pages/Dashboard';
 import { Sell } from '../pages/Sell';
 import { Stock } from '../pages/Stock';
+import { Tabs } from '../pages/Tabs';
 import { PlatformLogin } from '../pages/platform/PlatformLogin';
 import { PlatformDashboard } from '../pages/platform/PlatformDashboard';
 
@@ -74,6 +75,14 @@ export function App() {
           element={
             <RequireAuth requireBusiness>
               <Stock />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/dashboard/tabs"
+          element={
+            <RequireAuth requireBusiness>
+              <Tabs />
             </RequireAuth>
           }
         />

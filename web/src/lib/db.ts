@@ -1,5 +1,7 @@
 import Dexie, { type EntityTable } from 'dexie';
 
+import type { CatalogueProduct } from '../api/catalogue';
+
 // Minimal local identity cache -- docs/ARCHITECTURE.md §5.3's `auth_meta`
 // store. There is exactly one row per table, keyed by a fixed id, since a
 // device holds one identity/business/lease at a time in the MVP.
@@ -43,10 +45,24 @@ export interface PendingSale {
   createdAt: string;
 }
 
+// A device's last-known-good product catalogue for one business --
+// docs/PHASE_OFFLINE_CATALOGUE_AND_REVIEWS.md. Keyed by businessId (not a
+// fixed 'current' id, matching authMeta's own multi-membership handling)
+// since a device can belong to more than one business. Always overwritten
+// on a successful GET /products; only read back when that fetch fails, so
+// Quick Sell still works on a device that's offline the first time it
+// opens, or reloads while offline.
+export interface CachedCatalogue {
+  businessId: string;
+  products: CatalogueProduct[];
+  cachedAt: string;
+}
+
 class JustbarmeDB extends Dexie {
   authMeta!: EntityTable<CachedIdentity, 'id'>;
   device!: EntityTable<DeviceRecord, 'id'>;
   pendingSales!: EntityTable<PendingSale, 'idempotencyKey'>;
+  catalogueCache!: EntityTable<CachedCatalogue, 'businessId'>;
 
   constructor() {
     super('justbarme');
@@ -58,6 +74,12 @@ class JustbarmeDB extends Dexie {
       authMeta: 'id',
       device: 'id',
       pendingSales: 'idempotencyKey, businessId, status, createdAt',
+    });
+    this.version(3).stores({
+      authMeta: 'id',
+      device: 'id',
+      pendingSales: 'idempotencyKey, businessId, status, createdAt',
+      catalogueCache: 'businessId',
     });
   }
 }

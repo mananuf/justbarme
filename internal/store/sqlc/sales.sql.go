@@ -446,27 +446,59 @@ func (q *Queries) ListSaleItemsBySaleID(ctx context.Context, arg ListSaleItemsBy
 	return items, nil
 }
 
-const listSaleReviews = `-- name: ListSaleReviews :many
-SELECT id, business_id, sale_id, sale_item_id, reason, status, resolved_by, resolved_note, resolved_at, created_at FROM sale_reviews WHERE business_id = $1 AND status = $2 ORDER BY created_at DESC
+const listSaleReviewsDetailed = `-- name: ListSaleReviewsDetailed :many
+SELECT
+    sr.id, sr.sale_id, sr.sale_item_id, sr.reason, sr.status,
+    sr.resolved_by, sr.resolved_note, sr.resolved_at, sr.created_at,
+    s.occurred_at AS sale_occurred_at, s.seller_id,
+    si.description AS item_description, si.quantity AS item_quantity,
+    si.unit_price_kobo AS item_unit_price_kobo, si.line_total_kobo AS item_line_total_kobo
+FROM sale_reviews sr
+JOIN sales s ON s.business_id = sr.business_id AND s.id = sr.sale_id
+LEFT JOIN sale_items si ON si.business_id = sr.business_id AND si.id = sr.sale_item_id
+WHERE sr.business_id = $1 AND sr.status = $2
+ORDER BY sr.created_at DESC
 `
 
-type ListSaleReviewsParams struct {
+type ListSaleReviewsDetailedParams struct {
 	BusinessID uuid.UUID `json:"business_id"`
 	Status     string    `json:"status"`
 }
 
-func (q *Queries) ListSaleReviews(ctx context.Context, arg ListSaleReviewsParams) ([]SaleReview, error) {
-	rows, err := q.db.Query(ctx, listSaleReviews, arg.BusinessID, arg.Status)
+type ListSaleReviewsDetailedRow struct {
+	ID                uuid.UUID          `json:"id"`
+	SaleID            uuid.UUID          `json:"sale_id"`
+	SaleItemID        pgtype.UUID        `json:"sale_item_id"`
+	Reason            string             `json:"reason"`
+	Status            string             `json:"status"`
+	ResolvedBy        pgtype.UUID        `json:"resolved_by"`
+	ResolvedNote      pgtype.Text        `json:"resolved_note"`
+	ResolvedAt        pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	SaleOccurredAt    pgtype.Timestamptz `json:"sale_occurred_at"`
+	SellerID          uuid.UUID          `json:"seller_id"`
+	ItemDescription   pgtype.Text        `json:"item_description"`
+	ItemQuantity      pgtype.Int4        `json:"item_quantity"`
+	ItemUnitPriceKobo pgtype.Int8        `json:"item_unit_price_kobo"`
+	ItemLineTotalKobo pgtype.Int8        `json:"item_line_total_kobo"`
+}
+
+// Joins in the context a bare sale_reviews row can't give an owner enough
+// to act on: which sale (occurred_at, seller_id) and which item
+// (description, quantity, price). LEFT JOIN on sale_items since
+// sale_reviews.sale_item_id is nullable in schema even though every
+// review created today always populates it.
+func (q *Queries) ListSaleReviewsDetailed(ctx context.Context, arg ListSaleReviewsDetailedParams) ([]ListSaleReviewsDetailedRow, error) {
+	rows, err := q.db.Query(ctx, listSaleReviewsDetailed, arg.BusinessID, arg.Status)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []SaleReview{}
+	items := []ListSaleReviewsDetailedRow{}
 	for rows.Next() {
-		var i SaleReview
+		var i ListSaleReviewsDetailedRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.BusinessID,
 			&i.SaleID,
 			&i.SaleItemID,
 			&i.Reason,
@@ -475,6 +507,12 @@ func (q *Queries) ListSaleReviews(ctx context.Context, arg ListSaleReviewsParams
 			&i.ResolvedNote,
 			&i.ResolvedAt,
 			&i.CreatedAt,
+			&i.SaleOccurredAt,
+			&i.SellerID,
+			&i.ItemDescription,
+			&i.ItemQuantity,
+			&i.ItemUnitPriceKobo,
+			&i.ItemLineTotalKobo,
 		); err != nil {
 			return nil, err
 		}

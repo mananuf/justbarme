@@ -58,8 +58,23 @@ INSERT INTO sale_reviews (id, business_id, sale_id, sale_item_id, reason)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
--- name: ListSaleReviews :many
-SELECT * FROM sale_reviews WHERE business_id = $1 AND status = $2 ORDER BY created_at DESC;
+-- name: ListSaleReviewsDetailed :many
+-- Joins in the context a bare sale_reviews row can't give an owner enough
+-- to act on: which sale (occurred_at, seller_id) and which item
+-- (description, quantity, price). LEFT JOIN on sale_items since
+-- sale_reviews.sale_item_id is nullable in schema even though every
+-- review created today always populates it.
+SELECT
+    sr.id, sr.sale_id, sr.sale_item_id, sr.reason, sr.status,
+    sr.resolved_by, sr.resolved_note, sr.resolved_at, sr.created_at,
+    s.occurred_at AS sale_occurred_at, s.seller_id,
+    si.description AS item_description, si.quantity AS item_quantity,
+    si.unit_price_kobo AS item_unit_price_kobo, si.line_total_kobo AS item_line_total_kobo
+FROM sale_reviews sr
+JOIN sales s ON s.business_id = sr.business_id AND s.id = sr.sale_id
+LEFT JOIN sale_items si ON si.business_id = sr.business_id AND si.id = sr.sale_item_id
+WHERE sr.business_id = $1 AND sr.status = $2
+ORDER BY sr.created_at DESC;
 
 -- name: ResolveSaleReview :one
 UPDATE sale_reviews

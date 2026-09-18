@@ -14,6 +14,7 @@ afterEach(async () => {
   await db.authMeta.clear();
   await db.device.clear();
   await db.pendingSales.clear();
+  await db.catalogueCache.clear();
   // Same reasoning for jsdom's localStorage (e.g. the dashboard tour's
   // "seen" flag).
   localStorage.clear();

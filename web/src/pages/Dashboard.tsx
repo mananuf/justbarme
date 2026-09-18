@@ -264,6 +264,17 @@ export function Dashboard() {
                 <span className="text-[13px] text-jb-ink/75">Team</span>
                 <span className="text-[11px] text-jb-ink/40">Invite staff, manage access</span>
               </Link>
+              {business?.role === 'owner' && (
+                <Link
+                  to="/dashboard/reviews"
+                  className="px-4 py-3.5 flex flex-col hover:bg-jb-ink/[0.03] transition-colors"
+                >
+                  <span className="text-[13px] text-jb-ink/75">Reviews</span>
+                  <span className="text-[11px] text-jb-ink/40">
+                    Sales flagged for a stale price or deactivated item
+                  </span>
+                </Link>
+              )}
               <Link
                 to="/install"
                 className="px-4 py-3.5 flex flex-col hover:bg-jb-ink/[0.03] transition-colors"

@@ -63,11 +63,24 @@ type Payment struct {
 // time the sale posted. It never changes the sale it's attached to -- the
 // sale always posts exactly as submitted; a review is a flag for the
 // owner, never a rejection or a silent correction.
+//
+// SaleOccurredAt/SellerID/Item* are only populated by ListOpenReviews
+// (via ListSaleReviewsDetailed's join) -- enough context for an owner to
+// actually act on a review, not just a bare reason string. ResolveReview's
+// return value leaves them zero-valued; the resolve response doesn't need
+// the context a second time.
 type Review struct {
-	ID         uuid.UUID
-	SaleItemID uuid.UUID
-	Reason     string
-	Status     string
+	ID                uuid.UUID
+	SaleID            uuid.UUID
+	SaleItemID        uuid.UUID
+	Reason            string
+	Status            string
+	SaleOccurredAt    time.Time
+	SellerID          uuid.UUID
+	ItemDescription   string
+	ItemQuantity      int32
+	ItemUnitPriceKobo int64
+	ItemLineTotalKobo int64
 }
 
 // Sale is one posted walk-in sale (or, when ReversalOf is not uuid.Nil, a

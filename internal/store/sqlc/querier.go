@@ -106,7 +106,12 @@ type Querier interface {
 	ListPriceHistory(ctx context.Context, arg ListPriceHistoryParams) ([]ProductPrice, error)
 	ListProducts(ctx context.Context, businessID uuid.UUID) ([]Product, error)
 	ListSaleItemsBySaleID(ctx context.Context, arg ListSaleItemsBySaleIDParams) ([]SaleItem, error)
-	ListSaleReviews(ctx context.Context, arg ListSaleReviewsParams) ([]SaleReview, error)
+	// Joins in the context a bare sale_reviews row can't give an owner enough
+	// to act on: which sale (occurred_at, seller_id) and which item
+	// (description, quantity, price). LEFT JOIN on sale_items since
+	// sale_reviews.sale_item_id is nullable in schema even though every
+	// review created today always populates it.
+	ListSaleReviewsDetailed(ctx context.Context, arg ListSaleReviewsDetailedParams) ([]ListSaleReviewsDetailedRow, error)
 	ListSales(ctx context.Context, arg ListSalesParams) ([]Sale, error)
 	ListSalesByBillID(ctx context.Context, arg ListSalesByBillIDParams) ([]Sale, error)
 	ListTables(ctx context.Context, businessID uuid.UUID) ([]Table, error)

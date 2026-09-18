@@ -323,7 +323,11 @@ func (api *API) getBillDetail(w http.ResponseWriter, r *http.Request) {
 		tabsErrorResponse(api, w, r, err, "get bill")
 		return
 	}
-	sellerNames, err := api.resolveSellerNames(r.Context(), detail.Sales)
+	roundSellerIDs := make([]uuid.UUID, len(detail.Sales))
+	for i, round := range detail.Sales {
+		roundSellerIDs[i] = round.SellerID
+	}
+	sellerNames, err := api.resolveSellerNames(r.Context(), roundSellerIDs)
 	if err != nil {
 		api.internalErrorResponse(w, r, fmt.Errorf("resolve seller names: %w", err))
 		return
@@ -339,17 +343,22 @@ func (api *API) getBillDetail(w http.ResponseWriter, r *http.Request) {
 // Bounded by the number of distinct sellers on the bill (almost always a
 // handful), not the number of rounds, since it dedupes before looking
 // anything up.
-func (api *API) resolveSellerNames(ctx context.Context, rounds []sales.Sale) (map[uuid.UUID]string, error) {
+// resolveSellerNames looks up each distinct seller's display name --
+// bounded by the number of distinct sellers among sellerIDs, not the
+// number of rows they came from, since it dedupes before looking anything
+// up. Shared by every place a response needs to say who recorded
+// something: bill rounds, the sales list, and sale reviews.
+func (api *API) resolveSellerNames(ctx context.Context, sellerIDs []uuid.UUID) (map[uuid.UUID]string, error) {
 	names := make(map[uuid.UUID]string)
-	for _, round := range rounds {
-		if _, ok := names[round.SellerID]; ok {
+	for _, sellerID := range sellerIDs {
+		if _, ok := names[sellerID]; ok {
 			continue
 		}
-		user, err := api.identity.GetUserByID(ctx, round.SellerID)
+		user, err := api.identity.GetUserByID(ctx, sellerID)
 		if err != nil {
-			return nil, fmt.Errorf("look up seller %s: %w", round.SellerID, err)
+			return nil, fmt.Errorf("look up seller %s: %w", sellerID, err)
 		}
-		names[round.SellerID] = user.DisplayName
+		names[sellerID] = user.DisplayName
 	}
 	return names, nil
 }

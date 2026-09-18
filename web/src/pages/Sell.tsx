@@ -6,6 +6,7 @@ import { AppBottomNav } from '../components/AppBottomNav';
 import { CartPanel, type CartLine } from '../components/CartPanel';
 import { ProductGrid, type PickableVariant } from '../components/ProductGrid';
 import { useConnectivity } from '../hooks/useConnectivity';
+import { db } from '../lib/db';
 import { describeActionError } from '../lib/errors';
 import { flushPendingSales, queuePendingSale } from '../lib/salesSync';
 import { useSession } from '../lib/session';
@@ -22,6 +23,10 @@ export function Sell() {
 
   const [products, setProducts] = useState<CatalogueProduct[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // True when `products` came from IndexedDB, not a fresh fetch -- shown
+  // as an honest "may be out of date" note rather than presented as
+  // current (docs/ARCHITECTURE.md §10.7's fixed, honest sync states).
+  const [usingCachedCatalogue, setUsingCachedCatalogue] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const [done, setDone] = useState(false);
@@ -30,10 +35,25 @@ export function Sell() {
   useEffect(() => {
     if (!selectedBusinessId) return;
     listProducts(selectedBusinessId)
-      .then(setProducts)
-      .catch((err: unknown) =>
-        setLoadError(describeActionError(err, 'Could not load your products.')),
-      );
+      .then((fetched) => {
+        setProducts(fetched);
+        setUsingCachedCatalogue(false);
+        void db.catalogueCache.put({
+          businessId: selectedBusinessId,
+          products: fetched,
+          cachedAt: new Date().toISOString(),
+        });
+      })
+      .catch((err: unknown) => {
+        void db.catalogueCache.get(selectedBusinessId).then((cached) => {
+          if (cached) {
+            setProducts(cached.products);
+            setUsingCachedCatalogue(true);
+            return;
+          }
+          setLoadError(describeActionError(err, 'Could not load your products.'));
+        });
+      });
   }, [selectedBusinessId]);
 
   useEffect(() => {
@@ -171,6 +191,12 @@ export function Sell() {
       {/* Top half: the product picker -- scrolls independently */}
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-md mx-auto w-full px-5 pb-3">
+          {usingCachedCatalogue && (
+            <p className="text-[12px] text-jb-gold bg-jb-gold/10 rounded-xl px-4 py-2 mb-3">
+              Showing saved products — may be out of date. Prices and stock will refresh once
+              you&apos;re back online.
+            </p>
+          )}
           <ProductGrid
             variants={variants}
             isLoading={products === null && !loadError}

@@ -48,9 +48,18 @@ type paymentResponse struct {
 
 type reviewResponse struct {
 	ID         string `json:"id"`
+	SaleID     string `json:"sale_id"`
 	SaleItemID string `json:"sale_item_id"`
 	Reason     string `json:"reason"`
 	Status     string `json:"status"`
+	// The rest are only populated by listSaleReviews -- resolveSaleReview's
+	// response doesn't need the sale context a second time.
+	SaleOccurredAt    string `json:"sale_occurred_at,omitempty"`
+	SellerName        string `json:"seller_name,omitempty"`
+	ItemDescription   string `json:"item_description,omitempty"`
+	ItemQuantity      int32  `json:"item_quantity,omitempty"`
+	ItemUnitPriceKobo int64  `json:"item_unit_price_kobo,omitempty"`
+	ItemLineTotalKobo int64  `json:"item_line_total_kobo,omitempty"`
 }
 
 type saleResponse struct {
@@ -87,7 +96,8 @@ func toSaleResponse(s sales.Sale) saleResponse {
 	}
 	for _, r := range s.Reviews {
 		out.Reviews = append(out.Reviews, reviewResponse{
-			ID: r.ID.String(), SaleItemID: r.SaleItemID.String(), Reason: r.Reason, Status: r.Status,
+			ID: r.ID.String(), SaleID: r.SaleID.String(), SaleItemID: r.SaleItemID.String(),
+			Reason: r.Reason, Status: r.Status,
 		})
 	}
 	return out
@@ -228,7 +238,11 @@ func (api *API) listSales(w http.ResponseWriter, r *http.Request) {
 		api.internalErrorResponse(w, r, fmt.Errorf("list sales: %w", err))
 		return
 	}
-	sellerNames, err := api.resolveSellerNames(r.Context(), list)
+	saleSellerIDs := make([]uuid.UUID, len(list))
+	for i, s := range list {
+		saleSellerIDs[i] = s.SellerID
+	}
+	sellerNames, err := api.resolveSellerNames(r.Context(), saleSellerIDs)
 	if err != nil {
 		api.internalErrorResponse(w, r, fmt.Errorf("resolve seller names: %w", err))
 		return
@@ -305,9 +319,24 @@ func (api *API) listSaleReviews(w http.ResponseWriter, r *http.Request) {
 		api.internalErrorResponse(w, r, fmt.Errorf("list sale reviews: %w", err))
 		return
 	}
+	reviewSellerIDs := make([]uuid.UUID, len(list))
+	for i, rv := range list {
+		reviewSellerIDs[i] = rv.SellerID
+	}
+	sellerNames, err := api.resolveSellerNames(r.Context(), reviewSellerIDs)
+	if err != nil {
+		api.internalErrorResponse(w, r, fmt.Errorf("resolve seller names: %w", err))
+		return
+	}
 	out := make([]reviewResponse, 0, len(list))
 	for _, rv := range list {
-		out = append(out, reviewResponse{ID: rv.ID.String(), SaleItemID: rv.SaleItemID.String(), Reason: rv.Reason, Status: rv.Status})
+		out = append(out, reviewResponse{
+			ID: rv.ID.String(), SaleID: rv.SaleID.String(), SaleItemID: rv.SaleItemID.String(),
+			Reason: rv.Reason, Status: rv.Status,
+			SaleOccurredAt: rv.SaleOccurredAt.UTC().Format(time.RFC3339), SellerName: sellerNames[rv.SellerID],
+			ItemDescription: rv.ItemDescription, ItemQuantity: rv.ItemQuantity,
+			ItemUnitPriceKobo: rv.ItemUnitPriceKobo, ItemLineTotalKobo: rv.ItemLineTotalKobo,
+		})
 	}
 	if err := writeJSON(w, http.StatusOK, envelope{"data": out}, nil); err != nil {
 		api.logger.Error("write list sale reviews response", "request_id", RequestID(r.Context()), "error", err)
@@ -358,7 +387,10 @@ func (api *API) resolveSaleReview(w http.ResponseWriter, r *http.Request) {
 		salesErrorResponse(api, w, r, err, "resolve sale review")
 		return
 	}
-	out := reviewResponse{ID: review.ID.String(), SaleItemID: review.SaleItemID.String(), Reason: review.Reason, Status: review.Status}
+	out := reviewResponse{
+		ID: review.ID.String(), SaleID: review.SaleID.String(), SaleItemID: review.SaleItemID.String(),
+		Reason: review.Reason, Status: review.Status,
+	}
 	if err := writeJSON(w, http.StatusOK, envelope{"data": out}, nil); err != nil {
 		api.logger.Error("write resolve sale review response", "request_id", RequestID(r.Context()), "error", err)
 	}

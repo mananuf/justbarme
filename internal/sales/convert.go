@@ -50,7 +50,16 @@ func toPayment(p sqlc.Payment) Payment {
 }
 
 func toReview(r sqlc.SaleReview) Review {
-	return Review{ID: r.ID, SaleItemID: toUUID(r.SaleItemID), Reason: r.Reason, Status: r.Status}
+	return Review{ID: r.ID, SaleID: r.SaleID, SaleItemID: toUUID(r.SaleItemID), Reason: r.Reason, Status: r.Status}
+}
+
+func toReviewDetailed(r sqlc.ListSaleReviewsDetailedRow) Review {
+	return Review{
+		ID: r.ID, SaleID: r.SaleID, SaleItemID: toUUID(r.SaleItemID), Reason: r.Reason, Status: r.Status,
+		SaleOccurredAt: toTime(r.SaleOccurredAt), SellerID: r.SellerID,
+		ItemDescription: r.ItemDescription.String, ItemQuantity: r.ItemQuantity.Int32,
+		ItemUnitPriceKobo: r.ItemUnitPriceKobo.Int64, ItemLineTotalKobo: r.ItemLineTotalKobo.Int64,
+	}
 }
 
 func toSale(s sqlc.Sale) Sale {

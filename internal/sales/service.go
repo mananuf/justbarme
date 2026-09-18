@@ -502,13 +502,13 @@ func (s *Service) ReverseSale(ctx context.Context, userID, businessID, saleID, a
 func (s *Service) ListOpenReviews(ctx context.Context, userID, businessID uuid.UUID) ([]Review, error) {
 	var out []Review
 	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
-		rows, err := q.ListSaleReviews(ctx, sqlc.ListSaleReviewsParams{BusinessID: businessID, Status: "open"})
+		rows, err := q.ListSaleReviewsDetailed(ctx, sqlc.ListSaleReviewsDetailedParams{BusinessID: businessID, Status: "open"})
 		if err != nil {
 			return err
 		}
 		out = make([]Review, 0, len(rows))
 		for _, r := range rows {
-			out = append(out, toReview(r))
+			out = append(out, toReviewDetailed(r))
 		}
 		return nil
 	})

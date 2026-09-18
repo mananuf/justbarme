@@ -21,6 +21,6 @@ func NewConsoleProvider(logger *slog.Logger) *ConsoleProvider {
 
 func (p *ConsoleProvider) Send(_ context.Context, msg Message) error {
 	p.logger.Warn("email not actually sent (no SMTP configured, development only)",
-		"to", msg.To, "subject", msg.Subject, "body", msg.Text)
+		"to", msg.To, "subject", msg.Subject, "body", msg.Text, "has_html", msg.HTML != "")
 	return nil
 }

@@ -19,11 +19,14 @@ import (
 	"github.com/mananuf/justbarme/internal/httpapi"
 	"github.com/mananuf/justbarme/internal/identity"
 	"github.com/mananuf/justbarme/internal/inventory"
+	"github.com/mananuf/justbarme/internal/invitations"
 	"github.com/mananuf/justbarme/internal/oauth"
 	"github.com/mananuf/justbarme/internal/platformadmin"
 	"github.com/mananuf/justbarme/internal/sales"
 	"github.com/mananuf/justbarme/internal/signup"
 	"github.com/mananuf/justbarme/internal/store"
+	"github.com/mananuf/justbarme/internal/verification"
+	"github.com/mananuf/justbarme/internal/whatsapp"
 )
 
 func Run(ctx context.Context) error {
@@ -43,12 +46,17 @@ func Run(ctx context.Context) error {
 		return err
 	}
 
+	emailSvc := emailProvider(cfg, logger)
+	whatsappSvc := whatsappProvider(cfg, logger)
+
 	identitySvc := identity.New(pool, cfg.Argon2)
 	catalogueSvc := catalogue.New(pool)
 	inventorySvc := inventory.New(pool)
 	salesSvc := sales.New(pool)
 	platformAdminSvc := platformadmin.New(pool, cfg.Argon2)
-	signupSvc := signup.New(pool, cfg.Argon2, identitySvc, emailProvider(cfg, logger), cfg.Signup.OTPTTL)
+	signupSvc := signup.New(pool, cfg.Argon2, identitySvc, emailSvc, whatsappSvc, cfg.Signup.OTPTTL)
+	invitationsSvc := invitations.New(pool, identitySvc, emailSvc, whatsappSvc, cfg.PublicBaseURL)
+	verificationSvc := verification.New(pool, identitySvc, emailSvc, whatsappSvc)
 	oauthSvc := googleOAuthService(cfg, pool, identitySvc, logger)
 
 	handler := httpapi.NewHandler(httpapi.Dependencies{
@@ -62,6 +70,8 @@ func Run(ctx context.Context) error {
 		Sales:         salesSvc,
 		PlatformAdmin: platformAdminSvc,
 		Signup:        signupSvc,
+		Invitations:   invitationsSvc,
+		Verification:  verificationSvc,
 		OAuth:         oauthSvc,
 		Config:        cfg,
 	})
@@ -120,6 +130,25 @@ func emailProvider(cfg config.Config, logger *slog.Logger) email.Provider {
 	logger.Warn("no SMTP credentials configured; signup codes will only be logged, not emailed",
 		"note", "set JBM_SMTP_USERNAME/PASSWORD/FROM to send real email")
 	return email.NewConsoleProvider(logger)
+}
+
+// whatsappProvider mirrors emailProvider exactly: a real Zavu provider,
+// wrapped with retry/backoff, when configured, or a console-logging one
+// outside production when it isn't. config.Load already refuses to start
+// in production without Zavu credentials.
+func whatsappProvider(cfg config.Config, logger *slog.Logger) whatsapp.Provider {
+	if cfg.Zavu.Configured() {
+		zavu := whatsapp.NewZavuProvider(whatsapp.ZavuConfig{
+			APIKey: cfg.Zavu.APIKey, SenderID: cfg.Zavu.SenderID,
+		})
+		return whatsapp.WithRetry(zavu, whatsapp.RetryConfig{
+			MaxAttempts: int(cfg.Zavu.MaxSendAttempts),
+			BaseDelay:   cfg.Zavu.RetryBaseDelay,
+		})
+	}
+	logger.Warn("no Zavu credentials configured; WhatsApp messages will only be logged, not sent",
+		"note", "set JBM_ZAVU_API_KEY/SENDER_ID to send real WhatsApp messages")
+	return whatsapp.NewConsoleProvider(logger)
 }
 
 // googleOAuthService returns nil when JBM_GOOGLE_OAUTH_CLIENT_ID is unset --

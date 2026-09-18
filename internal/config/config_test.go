@@ -36,6 +36,12 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.SMTP.MaxSendAttempts != 3 || cfg.SMTP.RetryBaseDelay != 500*time.Millisecond {
 		t.Fatalf("unexpected SMTP retry defaults: %+v", cfg.SMTP)
 	}
+	if cfg.Zavu.Configured() {
+		t.Fatalf("unexpected Zavu defaults: %+v", cfg.Zavu)
+	}
+	if cfg.Zavu.MaxSendAttempts != 3 || cfg.Zavu.RetryBaseDelay != 500*time.Millisecond {
+		t.Fatalf("unexpected Zavu retry defaults: %+v", cfg.Zavu)
+	}
 	if cfg.Signup.OTPTTL != 10*time.Minute {
 		t.Fatalf("unexpected signup OTP TTL default: %v", cfg.Signup.OTPTTL)
 	}
@@ -104,6 +110,8 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 		{name: "smtp max send attempts zero", key: "JBM_SMTP_MAX_SEND_ATTEMPTS", value: "0", message: "positive integer"},
 		{name: "smtp max send attempts non-numeric", key: "JBM_SMTP_MAX_SEND_ATTEMPTS", value: "many", message: "positive integer"},
 		{name: "smtp retry base delay without unit", key: "JBM_SMTP_RETRY_BASE_DELAY", value: "500", message: "positive duration"},
+		{name: "zavu max send attempts zero", key: "JBM_ZAVU_MAX_SEND_ATTEMPTS", value: "0", message: "positive integer"},
+		{name: "zavu retry base delay without unit", key: "JBM_ZAVU_RETRY_BASE_DELAY", value: "500", message: "positive duration"},
 		{name: "zero argon2 memory", key: "JBM_ARGON2_MEMORY_KIB", value: "0", message: "positive integer"},
 		{name: "non-numeric argon2 iterations", key: "JBM_ARGON2_ITERATIONS", value: "many", message: "positive integer"},
 		{name: "argon2 parallelism too large", key: "JBM_ARGON2_PARALLELISM", value: "300", message: "no greater than 255"},
@@ -207,7 +215,7 @@ func TestLoadProductionRequiresHardenedConfiguration(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected production defaults to be rejected")
 		}
-		for _, want := range []string{"JBM_OFFLINE_SIGNING_PRIVATE_KEY", "JBM_PUBLIC_BASE_URL must be an https URL", "JBM_SMTP_USERNAME"} {
+		for _, want := range []string{"JBM_OFFLINE_SIGNING_PRIVATE_KEY", "JBM_PUBLIC_BASE_URL must be an https URL", "JBM_SMTP_USERNAME", "JBM_ZAVU_API_KEY"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("load() error = %v, want it to mention %q", err, want)
 			}
@@ -225,6 +233,8 @@ func TestLoadProductionRequiresHardenedConfiguration(t *testing.T) {
 			"JBM_SMTP_USERNAME":               "signup@justbarme.app",
 			"JBM_SMTP_PASSWORD":               "app-password",
 			"JBM_SMTP_FROM":                   "justbarme <signup@justbarme.app>",
+			"JBM_ZAVU_API_KEY":                "zv_live_test",
+			"JBM_ZAVU_SENDER_ID":              "sender-123",
 		}
 		if _, err := load(mapLookup(values)); err != nil {
 			t.Fatalf("load() error = %v", err)

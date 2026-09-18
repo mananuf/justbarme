@@ -1,8 +1,9 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { apiRequest, ApiError } from '../../api/client';
+import { apiRequest } from '../../api/client';
 import { Logo } from '../../components/Logo';
+import { describeActionError } from '../../lib/errors';
 import { usePlatformSession } from '../../lib/platformSession';
 
 interface PlatformBusiness {
@@ -88,8 +89,8 @@ export function PlatformDashboard() {
     try {
       const data = await apiRequest<PlatformBusiness[]>('/api/v1/platform/businesses');
       setBusinesses(data);
-    } catch {
-      setLoadError('Could not load businesses.');
+    } catch (err) {
+      setLoadError(describeActionError(err, 'Could not load businesses.'));
     }
   }, []);
 
@@ -134,7 +135,7 @@ export function PlatformDashboard() {
       setPendingAction(null);
       void loadAuditLog();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Could not complete this action.');
+      setActionError(describeActionError(err, 'Could not complete this action.'));
     } finally {
       setActionSubmitting(false);
     }

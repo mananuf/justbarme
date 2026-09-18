@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { listProducts, type CatalogueProduct } from '../api/catalogue';
-import { ApiError } from '../api/client';
 import {
   addSaleRound,
   closeBill,
@@ -26,6 +25,7 @@ import { AppBottomNav } from '../components/AppBottomNav';
 import { CartPanel, type CartLine } from '../components/CartPanel';
 import { ProductGrid, type PickableVariant } from '../components/ProductGrid';
 import { useConnectivity } from '../hooks/useConnectivity';
+import { describeActionError } from '../lib/errors';
 import { useSession } from '../lib/session';
 
 type PaymentMethod = 'cash' | 'transfer' | 'card';
@@ -97,7 +97,7 @@ export function Tabs() {
     if (!selectedBusinessId) return;
     listBills(selectedBusinessId)
       .then(setBills)
-      .catch(() => setLoadError('Could not load tabs. Check your connection and try again.'));
+      .catch((err: unknown) => setLoadError(describeActionError(err, 'Could not load tabs.')));
   };
 
   useEffect(() => {
@@ -133,8 +133,8 @@ export function Tabs() {
       try {
         const detail = await getBillDetail(activeBillId, selectedBusinessId);
         if (!cancelled) setBillDetails((d) => ({ ...d, [activeBillId]: detail }));
-      } catch {
-        if (!cancelled) setActionError('Could not load this tab.');
+      } catch (err) {
+        if (!cancelled) setActionError(describeActionError(err, 'Could not load this tab.'));
       }
     })();
     return () => {
@@ -178,7 +178,7 @@ export function Tabs() {
       refreshBills();
       setSelectedBillId(bill.id);
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Could not open the tab.');
+      setActionError(describeActionError(err, 'Could not open the tab.'));
     } finally {
       setBusy(false);
     }
@@ -193,7 +193,7 @@ export function Tabs() {
       setTables((t) => [...t, table]);
       await handleOpenTab(table.id, undefined);
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Could not create the table.');
+      setActionError(describeActionError(err, 'Could not create the table.'));
       setBusy(false);
     }
   }
@@ -211,7 +211,7 @@ export function Tabs() {
       setCustomers((c) => [...c, customer]);
       await handleOpenTab(undefined, customer.id);
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Could not create the customer.');
+      setActionError(describeActionError(err, 'Could not create the customer.'));
       setBusy(false);
     }
   }
@@ -263,7 +263,7 @@ export function Tabs() {
       await refreshBillDetail(billId);
       refreshBills();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Could not update this item.');
+      setActionError(describeActionError(err, 'Could not update this item.'));
     } finally {
       setBusy(false);
     }
@@ -281,7 +281,7 @@ export function Tabs() {
       await refreshBillDetail(billId);
       refreshBills();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Could not record this payment.');
+      setActionError(describeActionError(err, 'Could not record this payment.'));
     } finally {
       setBusy(false);
     }
@@ -296,7 +296,7 @@ export function Tabs() {
       await refreshBillDetail(billId);
       refreshBills();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Could not close this tab.');
+      setActionError(describeActionError(err, 'Could not close this tab.'));
     } finally {
       setBusy(false);
     }
@@ -311,7 +311,7 @@ export function Tabs() {
       await refreshBillDetail(billId);
       refreshBills();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Could not void this tab.');
+      setActionError(describeActionError(err, 'Could not void this tab.'));
     } finally {
       setBusy(false);
     }
@@ -331,7 +331,7 @@ export function Tabs() {
       await refreshBillDetail(billId);
       refreshBills();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Could not write off this balance.');
+      setActionError(describeActionError(err, 'Could not write off this balance.'));
     } finally {
       setBusy(false);
     }
@@ -741,6 +741,11 @@ export function Tabs() {
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-[11px] text-jb-ink/40">
                         {new Date(round.occurredAt).toLocaleTimeString()}
+                        {round.sellerName && (
+                          <span className="ml-1.5 font-semibold text-jb-ink/60">
+                            {round.sellerName}
+                          </span>
+                        )}
                         {round.totalKobo < 0 && (
                           <span className="ml-2 text-[10px] uppercase tracking-wide text-jb-ink/35">
                             Correction

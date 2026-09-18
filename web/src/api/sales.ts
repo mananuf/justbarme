@@ -31,6 +31,10 @@ export interface Sale {
   reversalOf: string | null;
   items: SaleItem[];
   payment: { amountKobo: number; method: string };
+  // Whoever recorded this sale -- "" if the lookup somehow came back empty;
+  // never absent. Dashboard.tsx shows it in the recent-activity feed so a
+  // multi-staff shift can tell whose sale is whose.
+  sellerName: string;
 }
 
 interface RawSaleItem {
@@ -49,6 +53,7 @@ interface RawSale {
   reversal_of?: string;
   items?: RawSaleItem[];
   payment: { amount_kobo: number; method: string };
+  seller_name?: string;
 }
 
 function toSale(raw: RawSale): Sale {
@@ -66,6 +71,7 @@ function toSale(raw: RawSale): Sale {
       lineTotalKobo: i.line_total_kobo,
     })),
     payment: { amountKobo: raw.payment.amount_kobo, method: raw.payment.method },
+    sellerName: raw.seller_name ?? '',
   };
 }
 

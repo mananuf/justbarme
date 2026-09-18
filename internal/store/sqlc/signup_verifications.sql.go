@@ -22,7 +22,7 @@ func (q *Queries) DeleteSignupVerification(ctx context.Context, id uuid.UUID) er
 }
 
 const getSignupVerificationByEmail = `-- name: GetSignupVerificationByEmail :one
-SELECT id, email, display_name, password_hash, otp_hash, attempts, expires_at, created_at, updated_at FROM signup_verifications WHERE lower(email) = lower($1)
+SELECT id, email, display_name, password_hash, otp_hash, attempts, expires_at, created_at, updated_at, phone, channel FROM signup_verifications WHERE lower(email) = lower($1)
 `
 
 func (q *Queries) GetSignupVerificationByEmail(ctx context.Context, email string) (SignupVerification, error) {
@@ -38,6 +38,31 @@ func (q *Queries) GetSignupVerificationByEmail(ctx context.Context, email string
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Phone,
+		&i.Channel,
+	)
+	return i, err
+}
+
+const getSignupVerificationByPhone = `-- name: GetSignupVerificationByPhone :one
+SELECT id, email, display_name, password_hash, otp_hash, attempts, expires_at, created_at, updated_at, phone, channel FROM signup_verifications WHERE phone = $1
+`
+
+func (q *Queries) GetSignupVerificationByPhone(ctx context.Context, phone pgtype.Text) (SignupVerification, error) {
+	row := q.db.QueryRow(ctx, getSignupVerificationByPhone, phone)
+	var i SignupVerification
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayName,
+		&i.PasswordHash,
+		&i.OtpHash,
+		&i.Attempts,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Phone,
+		&i.Channel,
 	)
 	return i, err
 }
@@ -51,9 +76,9 @@ func (q *Queries) IncrementSignupVerificationAttempts(ctx context.Context, id uu
 	return err
 }
 
-const upsertSignupVerification = `-- name: UpsertSignupVerification :one
-INSERT INTO signup_verifications (id, email, display_name, password_hash, otp_hash, attempts, expires_at)
-VALUES ($1, $2, $3, $4, $5, 0, $6)
+const upsertSignupVerificationByEmail = `-- name: UpsertSignupVerificationByEmail :one
+INSERT INTO signup_verifications (id, email, phone, channel, display_name, password_hash, otp_hash, attempts, expires_at)
+VALUES ($1, $2, NULL, 'email', $3, $4, $5, 0, $6)
 ON CONFLICT (lower(email)) DO UPDATE
     SET display_name = EXCLUDED.display_name,
         password_hash = EXCLUDED.password_hash,
@@ -61,20 +86,20 @@ ON CONFLICT (lower(email)) DO UPDATE
         attempts = 0,
         expires_at = EXCLUDED.expires_at,
         updated_at = now()
-RETURNING id, email, display_name, password_hash, otp_hash, attempts, expires_at, created_at, updated_at
+RETURNING id, email, display_name, password_hash, otp_hash, attempts, expires_at, created_at, updated_at, phone, channel
 `
 
-type UpsertSignupVerificationParams struct {
+type UpsertSignupVerificationByEmailParams struct {
 	ID           uuid.UUID          `json:"id"`
-	Email        string             `json:"email"`
+	Email        pgtype.Text        `json:"email"`
 	DisplayName  string             `json:"display_name"`
 	PasswordHash string             `json:"password_hash"`
 	OtpHash      string             `json:"otp_hash"`
 	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
 }
 
-func (q *Queries) UpsertSignupVerification(ctx context.Context, arg UpsertSignupVerificationParams) (SignupVerification, error) {
-	row := q.db.QueryRow(ctx, upsertSignupVerification,
+func (q *Queries) UpsertSignupVerificationByEmail(ctx context.Context, arg UpsertSignupVerificationByEmailParams) (SignupVerification, error) {
+	row := q.db.QueryRow(ctx, upsertSignupVerificationByEmail,
 		arg.ID,
 		arg.Email,
 		arg.DisplayName,
@@ -93,6 +118,56 @@ func (q *Queries) UpsertSignupVerification(ctx context.Context, arg UpsertSignup
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Phone,
+		&i.Channel,
+	)
+	return i, err
+}
+
+const upsertSignupVerificationByPhone = `-- name: UpsertSignupVerificationByPhone :one
+INSERT INTO signup_verifications (id, email, phone, channel, display_name, password_hash, otp_hash, attempts, expires_at)
+VALUES ($1, NULL, $2, 'whatsapp', $3, $4, $5, 0, $6)
+ON CONFLICT (phone) WHERE phone IS NOT NULL DO UPDATE
+    SET display_name = EXCLUDED.display_name,
+        password_hash = EXCLUDED.password_hash,
+        otp_hash = EXCLUDED.otp_hash,
+        attempts = 0,
+        expires_at = EXCLUDED.expires_at,
+        updated_at = now()
+RETURNING id, email, display_name, password_hash, otp_hash, attempts, expires_at, created_at, updated_at, phone, channel
+`
+
+type UpsertSignupVerificationByPhoneParams struct {
+	ID           uuid.UUID          `json:"id"`
+	Phone        pgtype.Text        `json:"phone"`
+	DisplayName  string             `json:"display_name"`
+	PasswordHash string             `json:"password_hash"`
+	OtpHash      string             `json:"otp_hash"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+}
+
+func (q *Queries) UpsertSignupVerificationByPhone(ctx context.Context, arg UpsertSignupVerificationByPhoneParams) (SignupVerification, error) {
+	row := q.db.QueryRow(ctx, upsertSignupVerificationByPhone,
+		arg.ID,
+		arg.Phone,
+		arg.DisplayName,
+		arg.PasswordHash,
+		arg.OtpHash,
+		arg.ExpiresAt,
+	)
+	var i SignupVerification
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayName,
+		&i.PasswordHash,
+		&i.OtpHash,
+		&i.Attempts,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Phone,
+		&i.Channel,
 	)
 	return i, err
 }

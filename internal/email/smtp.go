@@ -78,9 +78,32 @@ func (p *SMTPProvider) Send(_ context.Context, msg Message) error {
 	return client.Quit()
 }
 
+// mimeBoundary separates the plain-text and HTML parts of a
+// multipart/alternative message. Fixed rather than generated per-send: the
+// content it delimits is always this codebase's own templates plus
+// operator-entered text (an OTP code, a business name, an invite link),
+// never arbitrary external input, so the chance of an accidental
+// collision is negligible and not worth the extra machinery.
+const mimeBoundary = "justbarme-boundary-7f3a9c2e1d"
+
 func buildMessage(from string, msg Message) []byte {
+	if msg.HTML == "" {
+		return fmt.Appendf(nil,
+			"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\n\r\n%s",
+			from, msg.To, msg.Subject, msg.Text,
+		)
+	}
+	// multipart/alternative with the plain-text part first: per RFC 2046,
+	// a client renders the LAST part it understands, so text comes first
+	// and HTML (richer, preferred when supported) comes last.
 	return fmt.Appendf(nil,
-		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\n\r\n%s",
-		from, msg.To, msg.Subject, msg.Text,
+		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"%s\"\r\n\r\n"+
+			"--%s\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\n\r\n%s\r\n"+
+			"--%s\r\nContent-Type: text/html; charset=\"UTF-8\"\r\n\r\n%s\r\n"+
+			"--%s--\r\n",
+		from, msg.To, msg.Subject, mimeBoundary,
+		mimeBoundary, msg.Text,
+		mimeBoundary, msg.HTML,
+		mimeBoundary,
 	)
 }

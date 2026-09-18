@@ -28,6 +28,10 @@ export interface BillRound {
   id: string;
   occurredAt: string;
   totalKobo: number;
+  // Whoever recorded this round -- shown next to the timestamp so more
+  // than one staff member working the same tab can tell their own rounds
+  // apart. "" if the lookup somehow came back empty; never absent.
+  sellerName: string;
   items: {
     variantId: string;
     description: string;
@@ -90,6 +94,7 @@ interface RawRound {
   id: string;
   occurred_at: string;
   total_kobo: number;
+  seller_name?: string;
   items?: RawSaleItem[];
 }
 
@@ -137,6 +142,7 @@ function toBillDetail(b: RawBillDetail): BillDetail {
       id: s.id,
       occurredAt: s.occurred_at,
       totalKobo: s.total_kobo,
+      sellerName: s.seller_name ?? '',
       items: (s.items ?? []).map((i) => ({
         variantId: i.variant_id,
         description: i.description,
@@ -251,6 +257,7 @@ export async function addSaleRound(
     id: raw.id,
     occurredAt: raw.occurred_at,
     totalKobo: raw.total_kobo,
+    sellerName: raw.seller_name ?? '',
     items: (raw.items ?? []).map((i) => ({
       variantId: i.variant_id,
       description: i.description,
@@ -291,6 +298,7 @@ export async function removeBillItem(
     id: raw.id,
     occurredAt: raw.occurred_at,
     totalKobo: raw.total_kobo,
+    sellerName: raw.seller_name ?? '',
     items: (raw.items ?? []).map((i) => ({
       variantId: i.variant_id,
       description: i.description,

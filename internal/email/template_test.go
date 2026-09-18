@@ -63,3 +63,60 @@ func TestMustNewTemplatePanicsOnInvalidSyntax(t *testing.T) {
 	}()
 	email.MustNewTemplate("bad", "{{.Unterminated", "body")
 }
+
+func TestNewTemplateLeavesHTMLEmpty(t *testing.T) {
+	tmpl := email.MustNewTemplate("text_only", "Subject", "Body {{.Name}}")
+	msg, err := tmpl.Render("a@example.com", struct{ Name string }{Name: "Ada"})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if msg.HTML != "" {
+		t.Fatalf("expected a text-only Template to leave Message.HTML empty, got %q", msg.HTML)
+	}
+}
+
+func TestHTMLTemplateRenderPopulatesHTML(t *testing.T) {
+	tmpl, err := email.NewHTMLTemplate("welcome",
+		"Welcome, {{.Name}}",
+		"Hi {{.Name}}, your business is ready.",
+		"<p>Hi <strong>{{.Name}}</strong>, your business is ready.</p>",
+	)
+	if err != nil {
+		t.Fatalf("NewHTMLTemplate: %v", err)
+	}
+
+	msg, err := tmpl.Render("owner@example.com", struct{ Name string }{Name: "Ada"})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(msg.Text, "Hi Ada,") {
+		t.Fatalf("unexpected text body: %q", msg.Text)
+	}
+	if !strings.Contains(msg.HTML, "<strong>Ada</strong>") {
+		t.Fatalf("unexpected html body: %q", msg.HTML)
+	}
+}
+
+func TestMustNewHTMLTemplatePanicsOnInvalidHTMLSyntax(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected MustNewHTMLTemplate to panic when the html source is malformed")
+		}
+	}()
+	email.MustNewHTMLTemplate("bad", "subject", "body", "{{.Unterminated")
+}
+
+func TestLayoutWrapsContentInSharedShell(t *testing.T) {
+	html, err := email.Layout(email.LayoutData{
+		Preheader: "Your code is on its way",
+		Content:   "<h1>Hi Ada</h1>",
+	})
+	if err != nil {
+		t.Fatalf("Layout: %v", err)
+	}
+	for _, want := range []string{"Your code is on its way", "<h1>Hi Ada</h1>", "JUSTBARME"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("expected layout output to contain %q, got:\n%s", want, html)
+		}
+	}
+}

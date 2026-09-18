@@ -8,9 +8,11 @@ import (
 
 var (
 	ErrEmailTaken           = errors.New("email is already registered")
+	ErrPhoneTaken           = errors.New("phone is already registered")
 	ErrInvalidCredentials   = errors.New("invalid email or password")
 	ErrUserNotFound         = errors.New("user not found")
 	ErrMembershipNotFound   = errors.New("membership not found")
+	ErrAlreadyMember        = errors.New("user is already a member of this business")
 	ErrMembershipNotActive  = errors.New("membership is not active")
 	ErrBusinessNotFound     = errors.New("business not found")
 	ErrSessionNotFound      = errors.New("session not found or expired")

@@ -14,7 +14,12 @@ function jsonResponse(status: number, body: unknown) {
 
 const UNAUTHENTICATED = () =>
   jsonResponse(401, {
-    error: { code: 'AUTHENTICATION_REQUIRED', message: 'You must be signed in to do that.', request_id: '', details: {} },
+    error: {
+      code: 'AUTHENTICATION_REQUIRED',
+      message: 'You must be signed in to do that.',
+      request_id: '',
+      details: {},
+    },
   });
 
 const ME_OK = () =>
@@ -65,6 +70,7 @@ function renderApp(path = '/') {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
 });
 
@@ -98,16 +104,23 @@ describe('authenticated routes', () => {
   it('redirects /onboarding to /login when signed out', async () => {
     stubFetch({ '/api/v1/me': UNAUTHENTICATED });
     renderApp('/onboarding');
-    await waitFor(() => expect(screen.getByRole('heading', { name: /welcome back/i })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: /welcome back/i })).toBeInTheDocument(),
+    );
   });
 
   it('renders /onboarding step 1 for a signed-in user with no business yet', async () => {
     stubFetch({ '/api/v1/me': ME_OK_NO_BUSINESS });
     renderApp('/onboarding');
-    await waitFor(() => expect(screen.getByRole('heading', { name: /create your business/i })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: /create your business/i })).toBeInTheDocument(),
+    );
   });
 
   it('redirects /onboarding to /dashboard for a user who already has a business', async () => {
+    // Dashboard's greeting is time-of-day-based -- pin the clock so this
+    // test's "good evening" expectation isn't at the mercy of when it runs.
+    vi.setSystemTime(new Date('2026-01-01T19:00:00'));
     stubFetch({ '/api/v1/me': ME_OK, '/api/v1/health/ready': HEALTH_READY });
     renderApp('/onboarding');
     await waitFor(() =>
@@ -119,7 +132,9 @@ describe('authenticated routes', () => {
     stubFetch({ '/api/v1/me': ME_OK });
     renderApp('/install');
     await waitFor(() =>
-      expect(screen.getByRole('heading', { name: /install justbarme on your phone/i })).toBeInTheDocument(),
+      expect(
+        screen.getByRole('heading', { name: /install justbarme on your phone/i }),
+      ).toBeInTheDocument(),
     );
   });
 });
@@ -149,7 +164,9 @@ describe('signup', () => {
     await user.type(screen.getByLabelText(/^password$/i), 'correcthorse123');
     await user.click(screen.getByRole('button', { name: /continue/i }));
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: /check your email/i })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: /check your email/i })).toBeInTheDocument(),
+    );
 
     await user.type(screen.getByLabelText(/verification code/i), '123456');
     await user.click(screen.getByRole('button', { name: /verify and continue/i }));
@@ -165,7 +182,12 @@ describe('signup', () => {
       '/api/v1/me': UNAUTHENTICATED,
       '/api/v1/auth/signup/start': () =>
         jsonResponse(409, {
-          error: { code: 'EMAIL_ALREADY_REGISTERED', message: 'taken', request_id: '', details: {} },
+          error: {
+            code: 'EMAIL_ALREADY_REGISTERED',
+            message: 'taken',
+            request_id: '',
+            details: {},
+          },
         }),
     });
     renderApp('/signup');
@@ -186,18 +208,29 @@ describe('dashboard tour', () => {
     stubFetch({ '/api/v1/me': ME_OK, '/api/v1/health/ready': HEALTH_READY });
     renderApp('/dashboard');
 
-    await waitFor(() => expect(screen.getByRole('dialog', { name: /dashboard walkthrough/i })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole('dialog', { name: /dashboard walkthrough/i })).toBeInTheDocument(),
+    );
     await user.click(screen.getByRole('button', { name: /skip tour/i }));
-    expect(screen.queryByRole('dialog', { name: /dashboard walkthrough/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('dialog', { name: /dashboard walkthrough/i }),
+    ).not.toBeInTheDocument();
   });
 
   it('does not show again once already seen', async () => {
+    // Dashboard's greeting is time-of-day-based -- pin the clock so this
+    // test's "good evening" expectation isn't at the mercy of when it runs.
+    vi.setSystemTime(new Date('2026-01-01T19:00:00'));
     localStorage.setItem('jb_dashboard_tour_seen', 'true');
     stubFetch({ '/api/v1/me': ME_OK, '/api/v1/health/ready': HEALTH_READY });
     renderApp('/dashboard');
 
-    await waitFor(() => expect(screen.getByRole('heading', { name: /good evening/i })).toBeInTheDocument());
-    expect(screen.queryByRole('dialog', { name: /dashboard walkthrough/i })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: /good evening/i })).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole('dialog', { name: /dashboard walkthrough/i }),
+    ).not.toBeInTheDocument();
   });
 });
 

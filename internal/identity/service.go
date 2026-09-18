@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -67,7 +68,7 @@ func (s *Service) CreateUserWithHashedPassword(ctx context.Context, email, phone
 	err = store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
 		row, err := q.CreateUser(ctx, sqlc.CreateUserParams{
 			ID:           id,
-			Email:        email,
+			Email:        pgText(email),
 			Phone:        pgText(phone),
 			DisplayName:  displayName,
 			PasswordHash: pgText(passwordHash),
@@ -140,20 +141,67 @@ func (s *Service) EmailIsRegistered(ctx context.Context, email string) (bool, er
 	return false, fmt.Errorf("look up user by email: %w", err)
 }
 
-// Authenticate verifies email and password, returning ErrInvalidCredentials
-// for either an unknown email, a wrong password, or a suspended account —
-// deliberately the same error in every case, so a caller can never learn
-// which one occurred (docs/API_CONTRACT.md §8: "one generic
-// invalid-credentials response").
-func (s *Service) Authenticate(ctx context.Context, email, password string) (User, error) {
+// PhoneIsRegistered reports whether phone already belongs to a real,
+// completed account -- the phone-channel counterpart of EmailIsRegistered.
+func (s *Service) PhoneIsRegistered(ctx context.Context, phone string) (bool, error) {
+	err := store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+		_, err := q.GetUserByPhone(ctx, pgText(phone))
+		return err
+	})
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return false, fmt.Errorf("look up user by phone: %w", err)
+}
+
+// GetUserByPhone looks up a user by phone, for a caller that already knows
+// (e.g. via PhoneIsRegistered, or an invitation match) that a real account
+// should exist. Returns ErrUserNotFound if none does.
+func (s *Service) GetUserByPhone(ctx context.Context, phone string) (User, error) {
 	var found sqlc.User
 	err := store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
-		row, err := q.GetUserByEmail(ctx, email)
+		row, err := q.GetUserByPhone(ctx, pgText(phone))
 		if err != nil {
 			return err
 		}
 		found = row
 		return nil
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, ErrUserNotFound
+		}
+		return User{}, fmt.Errorf("look up user by phone: %w", err)
+	}
+	return toUser(found), nil
+}
+
+// looksLikeEmail is the same identifier-format detection docs/PHASE_
+// INVITATIONS_WHATSAPP.md settled on for a login identifier that could be
+// either an email or a phone number -- an email always contains '@',
+// which E.164 phone numbers never do.
+func looksLikeEmail(identifier string) bool {
+	return strings.Contains(identifier, "@")
+}
+
+// Authenticate verifies identifier (an email or a phone number, detected
+// by format) and password, returning ErrInvalidCredentials for an unknown
+// identifier, a wrong password, or a suspended account — deliberately the
+// same error in every case, so a caller can never learn which one occurred
+// (docs/API_CONTRACT.md §8: "one generic invalid-credentials response").
+func (s *Service) Authenticate(ctx context.Context, identifier, password string) (User, error) {
+	var found sqlc.User
+	err := store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+		var err error
+		if looksLikeEmail(identifier) {
+			found, err = q.GetUserByEmail(ctx, identifier)
+		} else {
+			found, err = q.GetUserByPhone(ctx, pgText(identifier))
+		}
+		return err
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -167,6 +215,52 @@ func (s *Service) Authenticate(ctx context.Context, email, password string) (Use
 		return User{}, ErrInvalidCredentials
 	}
 	return toUser(found), nil
+}
+
+// AddPhoneToUser attaches phone to an already-existing user -- called only
+// after internal/verification confirms the user actually controls it
+// (docs/PHASE_INVITATIONS_WHATSAPP.md's verify-before-link rule: never
+// trust a match alone). Returns ErrPhoneTaken if another account already
+// has it.
+func (s *Service) AddPhoneToUser(ctx context.Context, userID uuid.UUID, phone string) (User, error) {
+	var updated sqlc.User
+	err := store.WithApp(ctx, s.pool, userID, func(ctx context.Context, q *sqlc.Queries) error {
+		row, err := q.SetUserPhone(ctx, sqlc.SetUserPhoneParams{ID: userID, Phone: pgText(phone)})
+		if err != nil {
+			return err
+		}
+		updated = row
+		return nil
+	})
+	if err != nil {
+		if pgErrorCode(err) == pgUniqueViolation {
+			return User{}, ErrPhoneTaken
+		}
+		return User{}, fmt.Errorf("add phone to user: %w", err)
+	}
+	return toUser(updated), nil
+}
+
+// AddEmailToUser attaches email to an already-existing user -- the email
+// counterpart of AddPhoneToUser, same verify-before-link precondition.
+// Returns ErrEmailTaken if another account already has it.
+func (s *Service) AddEmailToUser(ctx context.Context, userID uuid.UUID, email string) (User, error) {
+	var updated sqlc.User
+	err := store.WithApp(ctx, s.pool, userID, func(ctx context.Context, q *sqlc.Queries) error {
+		row, err := q.SetUserEmail(ctx, sqlc.SetUserEmailParams{ID: userID, Email: pgText(email)})
+		if err != nil {
+			return err
+		}
+		updated = row
+		return nil
+	})
+	if err != nil {
+		if pgErrorCode(err) == pgUniqueViolation {
+			return User{}, ErrEmailTaken
+		}
+		return User{}, fmt.Errorf("add email to user: %w", err)
+	}
+	return toUser(updated), nil
 }
 
 func (s *Service) GetUserByID(ctx context.Context, userID uuid.UUID) (User, error) {
@@ -231,6 +325,43 @@ func (s *Service) CreateBusinessWithOwner(ctx context.Context, ownerUserID uuid.
 		return Business{}, Membership{}, Location{}, err
 	}
 	return toBusiness(business), toMembership(membership, business.Name), toLocation(location), nil
+}
+
+// AddMembership adds userID to an already-existing business with role --
+// unlike CreateBusinessWithOwner, this never creates the business itself.
+// For internal/invitations: an accepted invitation attaches its role to
+// whichever user completed signup/login, without creating a second
+// business. Returns ErrAlreadyMember if userID already has a membership
+// (active or not) for businessID.
+func (s *Service) AddMembership(ctx context.Context, businessID, userID uuid.UUID, role string) (Membership, error) {
+	var (
+		business   sqlc.Business
+		membership sqlc.BusinessMembership
+	)
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		var err error
+		business, err = q.GetBusinessByID(ctx, businessID)
+		if err != nil {
+			return fmt.Errorf("look up business: %w", err)
+		}
+		membership, err = q.CreateMembership(ctx, sqlc.CreateMembershipParams{
+			BusinessID: businessID, UserID: userID, Role: role,
+		})
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Membership{}, ErrBusinessNotFound
+		}
+		if pgErrorCode(err) == pgUniqueViolation {
+			return Membership{}, ErrAlreadyMember
+		}
+		return Membership{}, fmt.Errorf("add membership: %w", err)
+	}
+	return toMembership(membership, business.Name), nil
 }
 
 // GetMembership looks up userID's membership in businessID. It returns

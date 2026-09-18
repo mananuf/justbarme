@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-import { ApiError } from '../api/client';
+import { describeActionError } from '../lib/errors';
 import { useSession } from '../lib/session';
 
 const GIS_SCRIPT_SRC = 'https://accounts.google.com/gsi/client';
@@ -80,11 +80,7 @@ export function GoogleSignInButton({ onSuccess, onError }: GoogleSignInButtonPro
                 await continueWithGoogle(response.credential);
                 onSuccess();
               } catch (err) {
-                onError(
-                  err instanceof ApiError
-                    ? err.message
-                    : 'Could not reach justbarme. Check your connection and try again.',
-                );
+                onError(describeActionError(err, 'Could not reach justbarme.'));
               }
             })();
           },

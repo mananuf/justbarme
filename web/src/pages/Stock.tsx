@@ -12,10 +12,10 @@ import {
   type CatalogueProduct,
   type CatalogueTemplate,
 } from '../api/catalogue';
-import { ApiError } from '../api/client';
 import { receiveStock } from '../api/inventory';
 import { AppBottomNav } from '../components/AppBottomNav';
 import { Logo } from '../components/Logo';
+import { describeActionError } from '../lib/errors';
 import { getRememberedCrateSize, setRememberedCrateSize } from '../lib/stockPreferences';
 import { useSession } from '../lib/session';
 
@@ -92,8 +92,8 @@ export function Stock() {
       ]);
       setOwnProducts(products);
       setTemplates(templateList);
-    } catch {
-      setLoadError('Could not load your products. Check your connection and try again.');
+    } catch (err) {
+      setLoadError(describeActionError(err, 'Could not load your products.'));
     }
   }, [selectedBusinessId]);
 
@@ -195,11 +195,7 @@ export function Stock() {
       setPhase('receive');
       void loadCatalogue();
     } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : 'Could not save this product. Check your connection and try again.',
-      );
+      setError(describeActionError(err, 'Could not save this product.'));
     } finally {
       setSubmitting(false);
     }
@@ -238,11 +234,7 @@ export function Stock() {
       setPhase('done');
       void loadCatalogue();
     } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : 'Could not save this receipt. Check your connection and try again.',
-      );
+      setError(describeActionError(err, 'Could not save this receipt.'));
     } finally {
       setSubmitting(false);
     }

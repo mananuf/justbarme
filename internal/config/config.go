@@ -96,6 +96,28 @@ func (s SMTP) Configured() bool {
 	return s.Username != "" && s.Password != "" && s.From != ""
 }
 
+// Zavu configures the WhatsApp messaging relay (internal/whatsapp,
+// docs/PHASE_INVITATIONS_WHATSAPP.md) used to deliver invitations and
+// WhatsApp-channel signup OTPs. Enforced in production the same way SMTP
+// is -- see Configured and this file's production checks -- with
+// whatsapp.ConsoleProvider as the dev-only fallback (internal/app.
+// whatsappProvider).
+type Zavu struct {
+	APIKey          string
+	SenderID        string
+	WebhookSecret   string
+	MaxSendAttempts int32
+	RetryBaseDelay  time.Duration
+}
+
+// Configured reports whether real Zavu credentials are present. When
+// false, internal/app falls back to whatsapp.ConsoleProvider outside
+// production (config.Load itself refuses to start in production without
+// them).
+func (z Zavu) Configured() bool {
+	return z.APIKey != "" && z.SenderID != ""
+}
+
 // Signup configures the public account-signup flow (internal/signup).
 type Signup struct {
 	OTPTTL time.Duration
@@ -120,6 +142,7 @@ type Config struct {
 	Argon2          Argon2
 	OfflineLease    OfflineLease
 	SMTP            SMTP
+	Zavu            Zavu
 	Signup          Signup
 	GoogleOAuth     GoogleOAuth
 	PublicBaseURL   string
@@ -168,6 +191,10 @@ func load(lookup lookupEnv) (Config, error) {
 		SMTP: SMTP{
 			Host:            "smtp.gmail.com",
 			Port:            "587",
+			MaxSendAttempts: 3,
+			RetryBaseDelay:  500 * time.Millisecond,
+		},
+		Zavu: Zavu{
 			MaxSendAttempts: 3,
 			RetryBaseDelay:  500 * time.Millisecond,
 		},
@@ -244,6 +271,15 @@ func load(lookup lookupEnv) (Config, error) {
 	}
 	parseInt32(lookup, "JBM_SMTP_MAX_SEND_ATTEMPTS", &cfg.SMTP.MaxSendAttempts, false, &problems)
 	parseDuration(lookup, "JBM_SMTP_RETRY_BASE_DELAY", &cfg.SMTP.RetryBaseDelay, &problems)
+
+	cfg.Zavu.APIKey = stringValue(lookup, "JBM_ZAVU_API_KEY", cfg.Zavu.APIKey)
+	cfg.Zavu.SenderID = stringValue(lookup, "JBM_ZAVU_SENDER_ID", cfg.Zavu.SenderID)
+	cfg.Zavu.WebhookSecret = stringValue(lookup, "JBM_ZAVU_WEBHOOK_SECRET", cfg.Zavu.WebhookSecret)
+	if cfg.Env == Production && !cfg.Zavu.Configured() {
+		problems = append(problems, "JBM_ZAVU_API_KEY and JBM_ZAVU_SENDER_ID are required in production")
+	}
+	parseInt32(lookup, "JBM_ZAVU_MAX_SEND_ATTEMPTS", &cfg.Zavu.MaxSendAttempts, false, &problems)
+	parseDuration(lookup, "JBM_ZAVU_RETRY_BASE_DELAY", &cfg.Zavu.RetryBaseDelay, &problems)
 
 	parseDuration(lookup, "JBM_SIGNUP_OTP_TTL", &cfg.Signup.OTPTTL, &problems)
 

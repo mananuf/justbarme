@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -92,10 +93,12 @@ type billDetailResponse struct {
 	WriteOffs []writeOffResponse `json:"write_offs,omitempty"`
 }
 
-func toBillDetailResponse(d sales.BillDetail) billDetailResponse {
+func toBillDetailResponse(d sales.BillDetail, sellerNames map[uuid.UUID]string) billDetailResponse {
 	out := billDetailResponse{billResponse: toBillResponse(d.Bill)}
 	for _, s := range d.Sales {
-		out.Sales = append(out.Sales, toSaleResponse(s))
+		sr := toSaleResponse(s)
+		sr.SellerName = sellerNames[s.SellerID]
+		out.Sales = append(out.Sales, sr)
 	}
 	for _, p := range d.Payments {
 		out.Payments = append(out.Payments, paymentResponse{AmountKobo: p.AmountKobo, Method: p.Method})
@@ -320,9 +323,35 @@ func (api *API) getBillDetail(w http.ResponseWriter, r *http.Request) {
 		tabsErrorResponse(api, w, r, err, "get bill")
 		return
 	}
-	if err := writeJSON(w, http.StatusOK, envelope{"data": toBillDetailResponse(detail)}, nil); err != nil {
+	sellerNames, err := api.resolveSellerNames(r.Context(), detail.Sales)
+	if err != nil {
+		api.internalErrorResponse(w, r, fmt.Errorf("resolve seller names: %w", err))
+		return
+	}
+	if err := writeJSON(w, http.StatusOK, envelope{"data": toBillDetailResponse(detail, sellerNames)}, nil); err != nil {
 		api.logger.Error("write get bill response", "request_id", RequestID(r.Context()), "error", err)
 	}
+}
+
+// resolveSellerNames looks up each distinct seller's display name for a
+// bill's rounds -- Tabs.tsx shows who recorded which round so more than
+// one staff member working the same tab can tell their own rounds apart.
+// Bounded by the number of distinct sellers on the bill (almost always a
+// handful), not the number of rounds, since it dedupes before looking
+// anything up.
+func (api *API) resolveSellerNames(ctx context.Context, rounds []sales.Sale) (map[uuid.UUID]string, error) {
+	names := make(map[uuid.UUID]string)
+	for _, round := range rounds {
+		if _, ok := names[round.SellerID]; ok {
+			continue
+		}
+		user, err := api.identity.GetUserByID(ctx, round.SellerID)
+		if err != nil {
+			return nil, fmt.Errorf("look up seller %s: %w", round.SellerID, err)
+		}
+		names[round.SellerID] = user.DisplayName
+	}
+	return names, nil
 }
 
 // addSaleRound implements POST /api/v1/bills/{bill_id}/rounds

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
-import { ApiError } from '../api/client';
+import { ApiError, OfflineError } from '../api/client';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { Logo } from '../components/Logo';
 import { useSession } from '../lib/session';
@@ -11,7 +11,7 @@ export function Login() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,14 +31,16 @@ export function Login() {
     setSubmitting(true);
     setError(null);
     try {
-      await login(email, password);
+      await login(identifier, password);
       goPostSignIn();
     } catch (err) {
-      if (err instanceof ApiError) {
+      if (err instanceof OfflineError) {
+        setError(err.message);
+      } else if (err instanceof ApiError) {
         if (err.code === 'RATE_LIMITED') {
           setError('Too many attempts. Please wait a moment and try again.');
         } else {
-          setError('Incorrect email or password.');
+          setError('Incorrect email/phone or password.');
         }
       } else {
         setError('Could not reach justbarme. Check your connection and try again.');
@@ -70,14 +72,16 @@ export function Login() {
           <p className="text-[13px] text-jb-ink/45 mb-8">Sign in to run your bar.</p>
 
           <label className="block mb-4">
-            <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">Email</span>
+            <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">
+              Email or WhatsApp number
+            </span>
             <input
-              type="email"
+              type="text"
               autoComplete="username"
               required
-              placeholder="ada@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              placeholder="ada@example.com or 0803 123 4567"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
               className="w-full rounded-xl border border-jb-ink/15 bg-white px-4 py-3.5 text-[15px] text-jb-ink placeholder:text-jb-ink/30 focus:outline-none focus:border-jb-ink/40 transition-colors"
             />
           </label>
@@ -104,7 +108,7 @@ export function Login() {
           <div className="mt-auto pt-6">
             <button
               type="submit"
-              disabled={submitting || !email || !password}
+              disabled={submitting || !identifier || !password}
               className="w-full rounded-xl bg-jb-ink text-jb-cream text-[15px] font-medium py-4 hover:bg-jb-green transition-colors active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100"
             >
               {submitting ? 'Signing in…' : 'Sign in'}

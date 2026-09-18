@@ -7,12 +7,14 @@ import { PlatformSessionProvider } from '../lib/platformSession';
 import { Landing } from '../pages/Landing';
 import { Login } from '../pages/Login';
 import { SignUp } from '../pages/SignUp';
+import { InviteAccept } from '../pages/InviteAccept';
 import { Onboarding } from '../pages/Onboarding';
 import { Install } from '../pages/Install';
 import { Dashboard } from '../pages/Dashboard';
 import { Sell } from '../pages/Sell';
 import { Stock } from '../pages/Stock';
 import { Tabs } from '../pages/Tabs';
+import { Team } from '../pages/Team';
 import { PlatformLogin } from '../pages/platform/PlatformLogin';
 import { PlatformDashboard } from '../pages/platform/PlatformDashboard';
 
@@ -38,6 +40,7 @@ export function App() {
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<SignUp />} />
+        <Route path="/invite/:token" element={<InviteAccept />} />
         <Route
           path="/onboarding"
           element={
@@ -83,6 +86,14 @@ export function App() {
           element={
             <RequireAuth requireBusiness>
               <Tabs />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/dashboard/team"
+          element={
+            <RequireAuth requireBusiness>
+              <Team />
             </RequireAuth>
           }
         />

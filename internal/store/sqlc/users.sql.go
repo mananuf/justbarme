@@ -20,7 +20,7 @@ RETURNING id, email, phone, display_name, password_hash, status, created_at, upd
 
 type CreateUserParams struct {
 	ID           uuid.UUID   `json:"id"`
-	Email        string      `json:"email"`
+	Email        pgtype.Text `json:"email"`
 	Phone        pgtype.Text `json:"phone"`
 	DisplayName  string      `json:"display_name"`
 	PasswordHash pgtype.Text `json:"password_hash"`
@@ -74,6 +74,76 @@ SELECT id, email, phone, display_name, password_hash, status, created_at, update
 
 func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 	row := q.db.QueryRow(ctx, getUserByID, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Phone,
+		&i.DisplayName,
+		&i.PasswordHash,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getUserByPhone = `-- name: GetUserByPhone :one
+SELECT id, email, phone, display_name, password_hash, status, created_at, updated_at FROM users WHERE phone = $1
+`
+
+func (q *Queries) GetUserByPhone(ctx context.Context, phone pgtype.Text) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByPhone, phone)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Phone,
+		&i.DisplayName,
+		&i.PasswordHash,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setUserEmail = `-- name: SetUserEmail :one
+UPDATE users SET email = $2, updated_at = now() WHERE id = $1 RETURNING id, email, phone, display_name, password_hash, status, created_at, updated_at
+`
+
+type SetUserEmailParams struct {
+	ID    uuid.UUID   `json:"id"`
+	Email pgtype.Text `json:"email"`
+}
+
+func (q *Queries) SetUserEmail(ctx context.Context, arg SetUserEmailParams) (User, error) {
+	row := q.db.QueryRow(ctx, setUserEmail, arg.ID, arg.Email)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Phone,
+		&i.DisplayName,
+		&i.PasswordHash,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setUserPhone = `-- name: SetUserPhone :one
+UPDATE users SET phone = $2, updated_at = now() WHERE id = $1 RETURNING id, email, phone, display_name, password_hash, status, created_at, updated_at
+`
+
+type SetUserPhoneParams struct {
+	ID    uuid.UUID   `json:"id"`
+	Phone pgtype.Text `json:"phone"`
+}
+
+func (q *Queries) SetUserPhone(ctx context.Context, arg SetUserPhoneParams) (User, error) {
+	row := q.db.QueryRow(ctx, setUserPhone, arg.ID, arg.Phone)
 	var i User
 	err := row.Scan(
 		&i.ID,

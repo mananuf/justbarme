@@ -113,6 +113,18 @@ type Device struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type IdentityVerification struct {
+	ID         uuid.UUID          `json:"id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	Channel    string             `json:"channel"`
+	Identifier string             `json:"identifier"`
+	OtpHash    string             `json:"otp_hash"`
+	Purpose    string             `json:"purpose"`
+	Attempts   int32              `json:"attempts"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
 type InventoryBalance struct {
 	BusinessID uuid.UUID          `json:"business_id"`
 	VariantID  uuid.UUID          `json:"variant_id"`
@@ -140,6 +152,22 @@ type InventoryMovement struct {
 	LocationID    uuid.UUID          `json:"location_id"`
 	QuantityDelta int32              `json:"quantity_delta"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type Invitation struct {
+	ID         uuid.UUID          `json:"id"`
+	BusinessID uuid.UUID          `json:"business_id"`
+	InvitedBy  uuid.UUID          `json:"invited_by"`
+	Phone      pgtype.Text        `json:"phone"`
+	Email      pgtype.Text        `json:"email"`
+	Role       string             `json:"role"`
+	TokenHash  string             `json:"token_hash"`
+	Status     string             `json:"status"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	AcceptedBy pgtype.UUID        `json:"accepted_by"`
+	AcceptedAt pgtype.Timestamptz `json:"accepted_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Location struct {
@@ -281,7 +309,7 @@ type Session struct {
 
 type SignupVerification struct {
 	ID           uuid.UUID          `json:"id"`
-	Email        string             `json:"email"`
+	Email        pgtype.Text        `json:"email"`
 	DisplayName  string             `json:"display_name"`
 	PasswordHash string             `json:"password_hash"`
 	OtpHash      string             `json:"otp_hash"`
@@ -289,6 +317,8 @@ type SignupVerification struct {
 	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	Phone        pgtype.Text        `json:"phone"`
+	Channel      string             `json:"channel"`
 }
 
 type StockLot struct {
@@ -332,7 +362,7 @@ type Table struct {
 
 type User struct {
 	ID           uuid.UUID          `json:"id"`
-	Email        string             `json:"email"`
+	Email        pgtype.Text        `json:"email"`
 	Phone        pgtype.Text        `json:"phone"`
 	DisplayName  string             `json:"display_name"`
 	PasswordHash pgtype.Text        `json:"password_hash"`

@@ -6,6 +6,7 @@ import { AppBottomNav } from '../components/AppBottomNav';
 import { CartPanel, type CartLine } from '../components/CartPanel';
 import { ProductGrid, type PickableVariant } from '../components/ProductGrid';
 import { useConnectivity } from '../hooks/useConnectivity';
+import { describeActionError } from '../lib/errors';
 import { flushPendingSales, queuePendingSale } from '../lib/salesSync';
 import { useSession } from '../lib/session';
 
@@ -30,8 +31,8 @@ export function Sell() {
     if (!selectedBusinessId) return;
     listProducts(selectedBusinessId)
       .then(setProducts)
-      .catch(() =>
-        setLoadError('Could not load your products. Check your connection and try again.'),
+      .catch((err: unknown) =>
+        setLoadError(describeActionError(err, 'Could not load your products.')),
       );
   }, [selectedBusinessId]);
 

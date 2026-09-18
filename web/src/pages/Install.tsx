@@ -9,6 +9,7 @@ import {
   getOrCreateDeviceRecord,
   saveEnrollment,
 } from '../lib/device';
+import { describeActionError } from '../lib/errors';
 import { checkLease } from '../lib/lease';
 import { useSession } from '../lib/session';
 
@@ -184,7 +185,10 @@ export function Install() {
         } else if (err instanceof ApiError && err.code === 'CONFLICT') {
           setEnrollStatus({ kind: 'error', message: 'This device is already enrolled elsewhere.' });
         } else {
-          setEnrollStatus({ kind: 'error', message: 'Could not set up offline access right now.' });
+          setEnrollStatus({
+            kind: 'error',
+            message: describeActionError(err, 'Could not set up offline access right now.'),
+          });
         }
       }
     }

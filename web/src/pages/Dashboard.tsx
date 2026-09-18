@@ -22,6 +22,16 @@ function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
+// Based on the device's own local time (this is a greeting on someone's own
+// phone, not a financial boundary like GET /sales/summary's business-
+// timezone "today" -- no need to fetch the business's timezone for this).
+function timeBasedGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
 type LeaseStatus = { kind: 'none' } | { kind: 'valid'; expiresAt: string } | { kind: 'expired' };
 
 function useLeaseStatus(): LeaseStatus {
@@ -108,7 +118,8 @@ export function Dashboard() {
                 {business?.businessName ?? 'justbarme'}
               </div>
               <h1 className="text-xl font-medium">
-                Good evening{user ? `, ${user.name.split(' ')[0]}` : ''} 👋
+                {timeBasedGreeting()}
+                {user ? `, ${user.name.split(' ')[0]}` : ''} 👋
               </h1>
             </div>
           </div>
@@ -207,7 +218,14 @@ export function Dashboard() {
               >
                 <div>
                   <div className="text-[13px] text-jb-ink/80">
-                    {sale.reversalOf ? 'Reversed a sale' : 'Recorded a sale'}
+                    {sale.sellerName ? (
+                      <>
+                        <span className="font-semibold">{sale.sellerName}</span>{' '}
+                        {sale.reversalOf ? 'reversed' : 'recorded'} a sale
+                      </>
+                    ) : (
+                      `${sale.reversalOf ? 'Reversed' : 'Recorded'} a sale`
+                    )}
                   </div>
                   <div className="text-[11px] text-jb-ink/40">{formatTime(sale.occurredAt)}</div>
                 </div>
@@ -240,6 +258,13 @@ export function Dashboard() {
                 </div>
               ))}
               <Link
+                to="/dashboard/team"
+                className="px-4 py-3.5 flex flex-col hover:bg-jb-ink/[0.03] transition-colors"
+              >
+                <span className="text-[13px] text-jb-ink/75">Team</span>
+                <span className="text-[11px] text-jb-ink/40">Invite staff, manage access</span>
+              </Link>
+              <Link
                 to="/install"
                 className="px-4 py-3.5 flex flex-col hover:bg-jb-ink/[0.03] transition-colors"
               >
@@ -255,7 +280,7 @@ export function Dashboard() {
                 className="w-full text-left px-4 py-3.5 flex flex-col hover:bg-jb-ink/[0.03] transition-colors"
               >
                 <span className="text-[13px] text-jb-ink/75">Sign out</span>
-                <span className="text-[11px] text-jb-ink/40">{user?.email}</span>
+                <span className="text-[11px] text-jb-ink/40">{user?.email || user?.phone}</span>
               </button>
             </div>
           )}

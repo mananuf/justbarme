@@ -8,9 +8,11 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
+	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (Invitation, error)
 	CloseCurrentPrice(ctx context.Context, arg CloseCurrentPriceParams) error
 	CreateBill(ctx context.Context, arg CreateBillParams) (Bill, error)
 	CreateBillWriteOff(ctx context.Context, arg CreateBillWriteOffParams) (BillWriteOff, error)
@@ -19,9 +21,11 @@ type Querier interface {
 	CreateCustomer(ctx context.Context, arg CreateCustomerParams) (Customer, error)
 	CreateDefaultLocation(ctx context.Context, arg CreateDefaultLocationParams) (Location, error)
 	CreateDevice(ctx context.Context, arg CreateDeviceParams) (Device, error)
+	CreateIdentityVerification(ctx context.Context, arg CreateIdentityVerificationParams) (IdentityVerification, error)
 	CreateInventoryEvent(ctx context.Context, arg CreateInventoryEventParams) (InventoryEvent, error)
 	CreateInventoryEventForSale(ctx context.Context, arg CreateInventoryEventForSaleParams) (InventoryEvent, error)
 	CreateInventoryMovement(ctx context.Context, arg CreateInventoryMovementParams) (InventoryMovement, error)
+	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (Invitation, error)
 	CreateMembership(ctx context.Context, arg CreateMembershipParams) (BusinessMembership, error)
 	CreatePayment(ctx context.Context, arg CreatePaymentParams) (Payment, error)
 	CreatePlatformAuditEntry(ctx context.Context, arg CreatePlatformAuditEntryParams) (PlatformAuditLog, error)
@@ -40,6 +44,7 @@ type Querier interface {
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	CreateUserIdentity(ctx context.Context, arg CreateUserIdentityParams) (UserIdentity, error)
 	CreateVariant(ctx context.Context, arg CreateVariantParams) (ProductVariant, error)
+	DeleteIdentityVerification(ctx context.Context, id uuid.UUID) error
 	DeleteSignupVerification(ctx context.Context, id uuid.UUID) error
 	GetActivePlatformSessionByTokenHash(ctx context.Context, tokenHash string) (PlatformSession, error)
 	GetActiveSessionByTokenHash(ctx context.Context, tokenHash string) (Session, error)
@@ -52,6 +57,11 @@ type Querier interface {
 	GetCustomerByID(ctx context.Context, arg GetCustomerByIDParams) (Customer, error)
 	GetDefaultLocation(ctx context.Context, businessID uuid.UUID) (Location, error)
 	GetDeviceByID(ctx context.Context, arg GetDeviceByIDParams) (Device, error)
+	GetIdentityVerificationByID(ctx context.Context, id uuid.UUID) (IdentityVerification, error)
+	GetInvitationByID(ctx context.Context, arg GetInvitationByIDParams) (Invitation, error)
+	// The public, unauthenticated lookup -- the hashed token is itself the
+	// access control (invitations carries no RLS; see migration 000021).
+	GetInvitationByTokenHash(ctx context.Context, tokenHash string) (Invitation, error)
 	GetLocationByID(ctx context.Context, arg GetLocationByIDParams) (Location, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (BusinessMembership, error)
 	GetPaymentByID(ctx context.Context, arg GetPaymentByIDParams) (Payment, error)
@@ -64,9 +74,11 @@ type Querier interface {
 	GetSaleByID(ctx context.Context, arg GetSaleByIDParams) (Sale, error)
 	GetSaleByIdempotencyKey(ctx context.Context, arg GetSaleByIdempotencyKeyParams) (Sale, error)
 	GetSignupVerificationByEmail(ctx context.Context, email string) (SignupVerification, error)
+	GetSignupVerificationByPhone(ctx context.Context, phone pgtype.Text) (SignupVerification, error)
 	GetTableByID(ctx context.Context, arg GetTableByIDParams) (Table, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
+	GetUserByPhone(ctx context.Context, phone pgtype.Text) (User, error)
 	GetUserIdentity(ctx context.Context, arg GetUserIdentityParams) (UserIdentity, error)
 	GetVariantByID(ctx context.Context, arg GetVariantByIDParams) (ProductVariant, error)
 	// Joins in the owning product's name for callers that need a full
@@ -74,6 +86,7 @@ type Querier interface {
 	// recording what was actually sold) -- product_variants.name alone is
 	// just the variant's own name ("50cl Bottle"), never the product name.
 	GetVariantWithProductNameByID(ctx context.Context, arg GetVariantWithProductNameByIDParams) (GetVariantWithProductNameByIDRow, error)
+	IncrementIdentityVerificationAttempts(ctx context.Context, id uuid.UUID) error
 	IncrementSignupVerificationAttempts(ctx context.Context, id uuid.UUID) error
 	ListAllBusinesses(ctx context.Context) ([]Business, error)
 	ListCatalogueTemplateVariantsByTemplateIDs(ctx context.Context, templateIds []uuid.UUID) ([]CatalogueTemplateVariant, error)
@@ -84,6 +97,7 @@ type Querier interface {
 	ListCustomers(ctx context.Context, businessID uuid.UUID) ([]Customer, error)
 	ListDevicesForBusiness(ctx context.Context, businessID uuid.UUID) ([]Device, error)
 	ListInventoryBalances(ctx context.Context, businessID uuid.UUID) ([]InventoryBalance, error)
+	ListInvitationsByBusiness(ctx context.Context, businessID uuid.UUID) ([]Invitation, error)
 	ListMembershipsForUser(ctx context.Context, userID uuid.UUID) ([]ListMembershipsForUserRow, error)
 	ListOpenBills(ctx context.Context, businessID uuid.UUID) ([]Bill, error)
 	ListOutstandingBills(ctx context.Context, businessID uuid.UUID) ([]Bill, error)
@@ -101,9 +115,12 @@ type Querier interface {
 	ListWriteOffsByBillID(ctx context.Context, arg ListWriteOffsByBillIDParams) ([]BillWriteOff, error)
 	ResolveSaleReview(ctx context.Context, arg ResolveSaleReviewParams) (SaleReview, error)
 	RevokeDevice(ctx context.Context, arg RevokeDeviceParams) (Device, error)
+	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (Invitation, error)
 	RevokePlatformSession(ctx context.Context, arg RevokePlatformSessionParams) (int64, error)
 	RevokeSession(ctx context.Context, arg RevokeSessionParams) (int64, error)
 	SetBusinessStatus(ctx context.Context, arg SetBusinessStatusParams) (Business, error)
+	SetUserEmail(ctx context.Context, arg SetUserEmailParams) (User, error)
+	SetUserPhone(ctx context.Context, arg SetUserPhoneParams) (User, error)
 	// Net quantity of one variant currently on a bill, across every round
 	// posted so far (a removal round's negative quantity nets against the
 	// rounds that added it) -- the cap RemoveBillItem enforces so you can
@@ -132,7 +149,8 @@ type Querier interface {
 	UpsertCatalogueTemplate(ctx context.Context, arg UpsertCatalogueTemplateParams) (CatalogueTemplate, error)
 	UpsertCatalogueTemplateVariant(ctx context.Context, arg UpsertCatalogueTemplateVariantParams) (CatalogueTemplateVariant, error)
 	UpsertInventoryBalanceDelta(ctx context.Context, arg UpsertInventoryBalanceDeltaParams) (InventoryBalance, error)
-	UpsertSignupVerification(ctx context.Context, arg UpsertSignupVerificationParams) (SignupVerification, error)
+	UpsertSignupVerificationByEmail(ctx context.Context, arg UpsertSignupVerificationByEmailParams) (SignupVerification, error)
+	UpsertSignupVerificationByPhone(ctx context.Context, arg UpsertSignupVerificationByPhoneParams) (SignupVerification, error)
 }
 
 var _ Querier = (*Queries)(nil)

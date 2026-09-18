@@ -1,24 +1,30 @@
 import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
-import { ApiError } from '../api/client';
+import { ApiError, OfflineError } from '../api/client';
+import { EmailIcon, WhatsAppIcon } from '../components/ChannelIcon';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { Logo } from '../components/Logo';
+import { PhoneInput } from '../components/PhoneInput';
+import type { Channel } from '../lib/session';
 import { useSession } from '../lib/session';
 
 type Step = 'details' | 'code';
 
 // Public signup: anyone can create an account here, unlike Login which only
-// signs in an account someone else already set up. Two steps -- email is
-// verified with a one-time code before the account actually exists (see
-// internal/signup) -- but presented as one continuous flow, not a
-// multi-page wizard, since it's a handful of seconds between them.
+// signs in an account someone else already set up. Two steps -- the chosen
+// channel (email or WhatsApp) is verified with a one-time code before the
+// account actually exists (see internal/signup) -- but presented as one
+// continuous flow, not a multi-page wizard, since it's a handful of
+// seconds between them. Email is the signup default, WhatsApp the
+// alternative (docs/PHASE_INVITATIONS_WHATSAPP.md).
 export function SignUp() {
   const { startSignup, verifySignup, memberships } = useSession();
   const navigate = useNavigate();
 
   const [step, setStep] = useState<Step>('details');
-  const [email, setEmail] = useState('');
+  const [channel, setChannel] = useState<Channel>('email');
+  const [identifier, setIdentifier] = useState('');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
@@ -41,7 +47,7 @@ export function SignUp() {
     setSubmitting(true);
     setError(null);
     try {
-      await startSignup(email, name, password);
+      await startSignup(channel, identifier, name, password);
       setStep('code');
       setTimeout(() => codeInputRef.current?.focus(), 0);
     } catch (err) {
@@ -56,7 +62,7 @@ export function SignUp() {
     setSubmitting(true);
     setError(null);
     try {
-      await verifySignup(email, code);
+      await verifySignup(channel, identifier, code);
       // A brand-new account never has a business yet -- straight into
       // onboarding, same destination Login sends a business-less account to.
       void navigate('/onboarding', { replace: true });
@@ -72,7 +78,7 @@ export function SignUp() {
     setError(null);
     setResent(false);
     try {
-      await startSignup(email, name, password);
+      await startSignup(channel, identifier, name, password);
       setResent(true);
     } catch (err) {
       setError(describeError(err, 'start'));
@@ -118,17 +124,56 @@ export function SignUp() {
               />
             </label>
 
+            <div className="flex gap-2 mb-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setChannel('email');
+                  setIdentifier('');
+                }}
+                className={`flex-1 flex items-center justify-center gap-1.5 rounded-xl border py-2.5 text-[13px] font-medium transition-colors ${
+                  channel === 'email'
+                    ? 'border-jb-ink bg-jb-ink text-jb-cream'
+                    : 'border-jb-ink/15 bg-white text-jb-ink/60'
+                }`}
+              >
+                <EmailIcon className="w-4 h-4" />
+                Email
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setChannel('whatsapp');
+                  setIdentifier('');
+                }}
+                className={`flex-1 flex items-center justify-center gap-1.5 rounded-xl border py-2.5 text-[13px] font-medium transition-colors ${
+                  channel === 'whatsapp'
+                    ? 'border-jb-ink bg-jb-ink text-jb-cream'
+                    : 'border-jb-ink/15 bg-white text-jb-ink/60'
+                }`}
+              >
+                <WhatsAppIcon className="w-4 h-4" />
+                WhatsApp
+              </button>
+            </div>
+
             <label className="block mb-4">
-              <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">Email</span>
-              <input
-                type="email"
-                autoComplete="username"
-                required
-                placeholder="ada@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-xl border border-jb-ink/15 bg-white px-4 py-3.5 text-[15px] text-jb-ink placeholder:text-jb-ink/30 focus:outline-none focus:border-jb-ink/40 transition-colors"
-              />
+              <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">
+                {channel === 'email' ? 'Email' : 'WhatsApp number'}
+              </span>
+              {channel === 'email' ? (
+                <input
+                  type="email"
+                  autoComplete="username"
+                  required
+                  placeholder="ada@example.com"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  className="w-full rounded-xl border border-jb-ink/15 bg-white px-4 py-3.5 text-[15px] text-jb-ink placeholder:text-jb-ink/30 focus:outline-none focus:border-jb-ink/40 transition-colors"
+                />
+              ) : (
+                <PhoneInput required onChange={setIdentifier} />
+              )}
             </label>
 
             <label className="block mb-4">
@@ -154,7 +199,7 @@ export function SignUp() {
             <div className="mt-auto pt-6">
               <button
                 type="submit"
-                disabled={submitting || !email || !name || password.length < 8}
+                disabled={submitting || !identifier || !name || password.length < 8}
                 className="w-full rounded-xl bg-jb-ink text-jb-cream text-[15px] font-medium py-4 hover:bg-jb-green transition-colors active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100"
               >
                 {submitting ? 'Sending code…' : 'Continue'}
@@ -183,10 +228,10 @@ export function SignUp() {
               className="text-2xl font-light tracking-tight mb-1.5"
               style={{ fontFamily: 'var(--font-display)' }}
             >
-              Check your email
+              {channel === 'email' ? 'Check your email' : 'Check WhatsApp'}
             </h1>
             <p className="text-[13px] text-jb-ink/45 mb-8">
-              We sent a 6-digit code to <span className="text-jb-ink/70">{email}</span>.
+              We sent a 6-digit code to <span className="text-jb-ink/70">{identifier}</span>.
             </p>
 
             <label className="block mb-4">
@@ -241,9 +286,12 @@ export function SignUp() {
 }
 
 function describeError(err: unknown, phase: 'start' | 'verify'): string {
+  if (err instanceof OfflineError) return err.message;
   if (err instanceof ApiError) {
     if (err.code === 'EMAIL_ALREADY_REGISTERED')
       return 'This email is already registered. Sign in instead.';
+    if (err.code === 'PHONE_ALREADY_REGISTERED')
+      return 'This phone number is already registered. Sign in instead.';
     if (err.code === 'RATE_LIMITED')
       return 'Too many attempts. Please wait a moment and try again.';
     if (err.code === 'INVALID_CODE')

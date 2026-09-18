@@ -9,6 +9,7 @@ export interface CachedIdentity {
   userId: string;
   name: string;
   email: string;
+  phone: string;
   memberships: { businessId: string; businessName: string; role: string }[];
   selectedBusinessId: string | null;
   cachedAt: string;

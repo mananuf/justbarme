@@ -2,8 +2,9 @@ import { useState } from 'react';
 import type { InputHTMLAttributes, ButtonHTMLAttributes } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 
-import { apiRequest, ApiError } from '../api/client';
+import { apiRequest } from '../api/client';
 import { Logo } from '../components/Logo';
+import { describeActionError } from '../lib/errors';
 import { useSession } from '../lib/session';
 
 const TOTAL_STEPS = 2;
@@ -99,11 +100,7 @@ export function Onboarding() {
       });
       setStep(2);
     } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : 'Could not reach justbarme. Check your connection and try again.',
-      );
+      setError(describeActionError(err, 'Could not reach justbarme.'));
     } finally {
       setSubmitting(false);
     }

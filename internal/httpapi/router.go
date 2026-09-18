@@ -14,10 +14,12 @@ import (
 	"github.com/mananuf/justbarme/internal/config"
 	"github.com/mananuf/justbarme/internal/identity"
 	"github.com/mananuf/justbarme/internal/inventory"
+	"github.com/mananuf/justbarme/internal/invitations"
 	"github.com/mananuf/justbarme/internal/oauth"
 	"github.com/mananuf/justbarme/internal/platformadmin"
 	"github.com/mananuf/justbarme/internal/sales"
 	"github.com/mananuf/justbarme/internal/signup"
+	"github.com/mananuf/justbarme/internal/verification"
 )
 
 type DatabasePinger interface {
@@ -35,6 +37,8 @@ type Dependencies struct {
 	Sales         *sales.Service
 	PlatformAdmin *platformadmin.Service
 	Signup        *signup.Service
+	Invitations   *invitations.Service
+	Verification  *verification.Service
 	// OAuth is nil when Google sign-in isn't configured (see
 	// internal/app.googleOAuthService) -- NewHandler only registers
 	// POST /auth/google when it's set.
@@ -48,14 +52,17 @@ type API struct {
 	healthTimeout time.Duration
 	version       string
 
-	identity      *identity.Service
-	catalogue     *catalogue.Service
-	inventory     *inventory.Service
-	sales         *sales.Service
-	platformAdmin *platformadmin.Service
-	signup        *signup.Service
-	oauth         *oauth.Service
-	env           string
+	identity          *identity.Service
+	catalogue         *catalogue.Service
+	inventory         *inventory.Service
+	sales             *sales.Service
+	platformAdmin     *platformadmin.Service
+	signup            *signup.Service
+	invitations       *invitations.Service
+	verification      *verification.Service
+	oauth             *oauth.Service
+	env               string
+	zavuWebhookSecret string
 
 	sessionTTL               time.Duration
 	sessionCookieSecure      bool
@@ -70,6 +77,12 @@ type API struct {
 	signupStartIPLimiter     *auth.Limiter
 	signupVerifyEmailLimiter *auth.Limiter
 	signupVerifyIPLimiter    *auth.Limiter
+
+	invitationCreateBusinessLimiter   *auth.Limiter
+	invitationCreateIPLimiter         *auth.Limiter
+	invitationLookupIPLimiter         *auth.Limiter
+	invitationAcceptIdentifierLimiter *auth.Limiter
+	invitationAcceptIPLimiter         *auth.Limiter
 
 	googleSignInIPLimiter *auth.Limiter
 }
@@ -91,14 +104,17 @@ func NewHandler(deps Dependencies) http.Handler {
 		healthTimeout: deps.HealthTimeout,
 		version:       deps.Version,
 
-		identity:      deps.Identity,
-		catalogue:     deps.Catalogue,
-		inventory:     deps.Inventory,
-		sales:         deps.Sales,
-		platformAdmin: deps.PlatformAdmin,
-		signup:        deps.Signup,
-		oauth:         deps.OAuth,
-		env:           deps.Config.Env,
+		identity:          deps.Identity,
+		catalogue:         deps.Catalogue,
+		inventory:         deps.Inventory,
+		sales:             deps.Sales,
+		platformAdmin:     deps.PlatformAdmin,
+		signup:            deps.Signup,
+		invitations:       deps.Invitations,
+		verification:      deps.Verification,
+		oauth:             deps.OAuth,
+		env:               deps.Config.Env,
+		zavuWebhookSecret: deps.Config.Zavu.WebhookSecret,
 
 		sessionTTL:               deps.Config.Session.TTL,
 		sessionCookieSecure:      deps.Config.Session.CookieSecure,
@@ -128,6 +144,19 @@ func NewHandler(deps Dependencies) http.Handler {
 		signupVerifyEmailLimiter: auth.NewLimiter(10, 15*time.Minute),
 		signupVerifyIPLimiter:    auth.NewLimiter(30, 15*time.Minute),
 
+		// Invitations (docs/PHASE_INVITATIONS_WHATSAPP.md §8): creation is
+		// looser than signup-start's 3/hour-per-email since one owner
+		// legitimately inviting several staff in a burst (a shift
+		// changeover, a new location) isn't abuse. Lookup/accept mirror
+		// signup-verify's exact numbers -- the per-row attempt lockout in
+		// internal/verification/internal/signup is the real brute-force
+		// defense; these are the same coarser, second-layer shape.
+		invitationCreateBusinessLimiter:   auth.NewLimiter(10, time.Hour),
+		invitationCreateIPLimiter:         auth.NewLimiter(30, time.Hour),
+		invitationLookupIPLimiter:         auth.NewLimiter(30, 15*time.Minute),
+		invitationAcceptIdentifierLimiter: auth.NewLimiter(10, 15*time.Minute),
+		invitationAcceptIPLimiter:         auth.NewLimiter(30, 15*time.Minute),
+
 		// Cryptographic ID-token verification isn't guessable the way a
 		// 6-digit OTP is, so this only needs to bound wasted verification
 		// work from garbage tokens, not defend against brute-forcing --
@@ -155,6 +184,14 @@ func NewHandler(deps Dependencies) http.Handler {
 			router.Post("/auth/google", api.googleSignIn)
 		}
 
+		// Public: an invitee has no session and no business context yet --
+		// the hashed token itself is the access control (see migration
+		// 000021's reasoning for why invitations carries no RLS).
+		router.Get("/invitations/{token}", api.getInvitationByToken)
+		router.Post("/invitations/{token}/accept", api.acceptInvitationAsNewUser)
+
+		router.Post("/webhooks/zavu", api.zavuWebhook)
+
 		router.Group(func(router chi.Router) {
 			router.Use(api.requireAuth)
 			router.Use(api.requireCSRF)
@@ -164,10 +201,25 @@ func NewHandler(deps Dependencies) http.Handler {
 			router.Post("/businesses", api.createBusiness)
 			router.Get("/catalogue-templates", api.listCatalogueTemplates)
 
+			// Authenticated but deliberately not business-scoped: accepting
+			// an invitation to a DIFFERENT business than whichever one is
+			// currently selected must not require that business already
+			// being the active tenant context, and identity verification
+			// (docs/PHASE_INVITATIONS_WHATSAPP.md's verify-before-link) is
+			// a user-level action, not a business-level one.
+			router.Post("/invitations/{token}/link", api.linkInvitationToExistingUser)
+			router.Post("/identity-verifications/{verification_id}/confirm", api.confirmIdentityVerification)
+			router.Post("/me/identifiers", api.startAddIdentifier)
+
 			router.Group(func(router chi.Router) {
 				router.Use(api.requireBusinessContext)
 
 				router.Get("/business", api.getBusiness)
+
+				router.Post("/invitations", api.createInvitation)
+				router.Get("/invitations", api.listInvitations)
+				router.Post("/invitations/{invitation_id}/revoke", api.revokeInvitation)
+
 				router.Post("/devices/enroll", api.enrollDevice)
 				router.Get("/devices", api.listDevices)
 				router.Delete("/devices/{device_id}", api.revokeDevice)

@@ -32,7 +32,7 @@ func toTime(t pgtype.Timestamptz) time.Time {
 func toUser(u sqlc.User) User {
 	return User{
 		ID:          u.ID,
-		Email:       u.Email,
+		Email:       toText(u.Email),
 		Phone:       toText(u.Phone),
 		DisplayName: u.DisplayName,
 		Status:      u.Status,

@@ -62,6 +62,13 @@ type saleResponse struct {
 	Items      []saleItemResponse `json:"items,omitempty"`
 	Payment    paymentResponse    `json:"payment"`
 	Reviews    []reviewResponse   `json:"reviews,omitempty"`
+	SellerID   string             `json:"seller_id"`
+	// SellerName is only populated on the bill-detail path
+	// (toBillDetailResponse in tabs_handlers.go) -- resolving it costs an
+	// extra identity lookup per distinct seller, worth it there since
+	// Tabs.tsx shows who recorded which round on a shared tab, but not
+	// needed by any other sale-returning endpoint today.
+	SellerName string `json:"seller_name,omitempty"`
 }
 
 func toSaleResponse(s sales.Sale) saleResponse {
@@ -70,6 +77,7 @@ func toSaleResponse(s sales.Sale) saleResponse {
 		ReceivedAt: s.ReceivedAt.UTC().Format(time.RFC3339), TotalKobo: s.TotalKobo,
 		ReversalOf: uuidOrNil(s.ReversalOf),
 		Payment:    paymentResponse{AmountKobo: s.Payment.AmountKobo, Method: s.Payment.Method},
+		SellerID:   s.SellerID.String(),
 	}
 	for _, i := range s.Items {
 		out.Items = append(out.Items, saleItemResponse{
@@ -220,9 +228,16 @@ func (api *API) listSales(w http.ResponseWriter, r *http.Request) {
 		api.internalErrorResponse(w, r, fmt.Errorf("list sales: %w", err))
 		return
 	}
+	sellerNames, err := api.resolveSellerNames(r.Context(), list)
+	if err != nil {
+		api.internalErrorResponse(w, r, fmt.Errorf("resolve seller names: %w", err))
+		return
+	}
 	out := make([]saleResponse, 0, len(list))
 	for _, s := range list {
-		out = append(out, toSaleResponse(s))
+		sr := toSaleResponse(s)
+		sr.SellerName = sellerNames[s.SellerID]
+		out = append(out, sr)
 	}
 	if err := writeJSON(w, http.StatusOK, envelope{"data": out}, nil); err != nil {
 		api.logger.Error("write list sales response", "request_id", RequestID(r.Context()), "error", err)

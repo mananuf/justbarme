@@ -12,14 +12,18 @@ import (
 )
 
 type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	// Identifier is either an email address or a phone number --
+	// identity.Service.Authenticate detects which by format (docs/PHASE_
+	// INVITATIONS_WHATSAPP.md's dual-identity design: either logs in).
+	Identifier string `json:"identifier"`
+	Password   string `json:"password"`
 }
 
 type userResponse struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
-	Email string `json:"email"`
+	Email string `json:"email,omitempty"`
+	Phone string `json:"phone,omitempty"`
 }
 
 type membershipResponse struct {
@@ -41,24 +45,25 @@ func (api *API) login(w http.ResponseWriter, r *http.Request) {
 		api.badRequestResponse(w, r, err.Error())
 		return
 	}
-	req.Email = strings.TrimSpace(req.Email)
+	req.Identifier = strings.TrimSpace(req.Identifier)
 
 	v := validator.New()
-	v.Check(req.Email != "", "email", "must be provided")
+	v.Check(req.Identifier != "", "identifier", "must be provided")
 	v.Check(req.Password != "", "password", "must be provided")
 	if !v.IsValid() {
 		api.validationFailedResponse(w, r, v.Errors)
 		return
 	}
 
-	// Rate-limited per email so a single account cannot be brute-forced,
-	// independent of how many source addresses an attacker rotates through.
-	if !api.loginLimiter.Allow(strings.ToLower(req.Email)) {
+	// Rate-limited per identifier so a single account cannot be
+	// brute-forced, independent of how many source addresses an attacker
+	// rotates through.
+	if !api.loginLimiter.Allow(strings.ToLower(req.Identifier)) {
 		api.rateLimitedResponse(w, r)
 		return
 	}
 
-	user, err := api.identity.Authenticate(r.Context(), req.Email, req.Password)
+	user, err := api.identity.Authenticate(r.Context(), req.Identifier, req.Password)
 	if err != nil {
 		if errors.Is(err, identity.ErrInvalidCredentials) {
 			api.invalidCredentialsResponse(w, r)
@@ -152,7 +157,7 @@ func (api *API) writeSessionPayload(w http.ResponseWriter, r *http.Request, stat
 	}
 
 	payload := envelope{"data": sessionResponse{
-		User:        userResponse{ID: user.ID.String(), Name: user.DisplayName, Email: user.Email},
+		User:        userResponse{ID: user.ID.String(), Name: user.DisplayName, Email: user.Email, Phone: user.Phone},
 		Memberships: active,
 		CSRFToken:   csrfToken,
 	}}

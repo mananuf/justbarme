@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 
-import { ApiError } from '../../api/client';
+import { ApiError, OfflineError } from '../../api/client';
 import { Logo } from '../../components/Logo';
 import { usePlatformSession } from '../../lib/platformSession';
 
@@ -30,7 +30,9 @@ export function PlatformLogin() {
       await login(email, password);
       void navigate('/platform', { replace: true });
     } catch (err) {
-      if (err instanceof ApiError) {
+      if (err instanceof OfflineError) {
+        setError(err.message);
+      } else if (err instanceof ApiError) {
         if (err.code === 'RATE_LIMITED') {
           setError('Too many attempts. Please wait before trying again.');
         } else {
@@ -52,10 +54,15 @@ export function PlatformLogin() {
           <span className="font-pixel text-[10px] tracking-[0.2em]">JUSTBARME PLATFORM</span>
         </div>
 
-        <h1 className="text-2xl font-light tracking-tight mb-1.5" style={{ fontFamily: 'var(--font-display)' }}>
+        <h1
+          className="text-2xl font-light tracking-tight mb-1.5"
+          style={{ fontFamily: 'var(--font-display)' }}
+        >
           Platform admin
         </h1>
-        <p className="text-[13px] text-jb-cream/45 mb-8">Internal access only. Every action here is logged.</p>
+        <p className="text-[13px] text-jb-cream/45 mb-8">
+          Internal access only. Every action here is logged.
+        </p>
 
         <form onSubmit={(e) => void handleSubmit(e)}>
           <label className="block mb-4">

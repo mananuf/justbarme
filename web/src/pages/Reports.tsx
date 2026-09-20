@@ -1,0 +1,365 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+
+import {
+  reportExpenses,
+  reportProducts,
+  reportSales,
+  reportStaffSales,
+  reportStock,
+  type ExpensesByCategory,
+  type ProductQuantity,
+  type SalesDay,
+  type StaffSales,
+  type StockDiscrepancy,
+} from '../api/reports';
+import { listBills, type Bill } from '../api/tabs';
+import { TimeGranularityView } from '../components/TimeGranularityView';
+import { useConnectivity } from '../hooks/useConnectivity';
+import { describeActionError } from '../lib/errors';
+import type { DayValue } from '../lib/timeBuckets';
+import { useSession } from '../lib/session';
+
+function formatNaira(kobo: number): string {
+  return (kobo / 100).toLocaleString();
+}
+
+type ReportKey = 'sales' | 'products' | 'staff' | 'expenses' | 'stock' | 'outstanding';
+
+const REPORT_TABS: { key: ReportKey; label: string }[] = [
+  { key: 'sales', label: 'Sales' },
+  { key: 'products', label: 'Products' },
+  { key: 'staff', label: 'Staff' },
+  { key: 'expenses', label: 'Expenses' },
+  { key: 'stock', label: 'Stock' },
+  { key: 'outstanding', label: 'Outstanding' },
+];
+
+// Owner-facing reports (docs/PHASE_EXPENSES_DASHBOARD_ACTIVITY_REPORTS.md
+// §5): Sales gets a daily-revenue heatmap (the one other genuinely
+// daily-continuous dataset besides Activity's); everything else is a
+// ranked table/bar list, deliberately not a heatmap -- categorical/ranked
+// data reads better sorted than gridded. Outstanding reuses the existing
+// GET /bills?status=outstanding data, no new report call.
+export function Reports() {
+  const { selectedBusinessId } = useSession();
+  const isOnline = useConnectivity();
+  const [tab, setTab] = useState<ReportKey>('sales');
+  const [error, setError] = useState<string | null>(null);
+
+  const range = useMemo(() => {
+    const end = new Date();
+    const start = new Date();
+    start.setUTCDate(start.getUTCDate() - 29); // last 30 days
+    return { startAt: start.toISOString(), endAt: end.toISOString() };
+  }, []);
+
+  // Sales alone fetches a full year -- its heatmap needs enough history
+  // for a real Week/Month/Year drill-down (docs/PHASE_EXPENSES_DASHBOARD_
+  // ACTIVITY_REPORTS.md's day/week/month/year explorer); every other tab
+  // stays a simple 30-day range.
+  const salesRange = useMemo(() => {
+    const end = new Date();
+    const start = new Date();
+    start.setUTCDate(start.getUTCDate() - 364);
+    return { startAt: start.toISOString(), endAt: end.toISOString() };
+  }, []);
+
+  const [salesDays, setSalesDays] = useState<SalesDay[] | null>(null);
+  const [products, setProducts] = useState<ProductQuantity[] | null>(null);
+  const [staffSales, setStaffSales] = useState<StaffSales[] | null>(null);
+  const [expensesByCategory, setExpensesByCategory] = useState<ExpensesByCategory[] | null>(null);
+  const [discrepancies, setDiscrepancies] = useState<StockDiscrepancy[] | null>(null);
+  const [outstandingBills, setOutstandingBills] = useState<Bill[] | null>(null);
+
+  useEffect(() => {
+    if (!selectedBusinessId) return;
+    const { startAt, endAt } = range;
+    switch (tab) {
+      case 'sales':
+        reportSales(selectedBusinessId, salesRange.startAt, salesRange.endAt)
+          .then((d) => {
+            setSalesDays(d);
+            setError(null);
+          })
+          .catch((err: unknown) =>
+            setError(describeActionError(err, 'Could not load the sales report.')),
+          );
+        break;
+      case 'products':
+        reportProducts(selectedBusinessId, startAt, endAt)
+          .then((d) => {
+            setProducts(d);
+            setError(null);
+          })
+          .catch((err: unknown) =>
+            setError(describeActionError(err, 'Could not load the products report.')),
+          );
+        break;
+      case 'staff':
+        reportStaffSales(selectedBusinessId, startAt, endAt)
+          .then((d) => {
+            setStaffSales(d);
+            setError(null);
+          })
+          .catch((err: unknown) =>
+            setError(describeActionError(err, 'Could not load the staff report.')),
+          );
+        break;
+      case 'expenses':
+        reportExpenses(selectedBusinessId, startAt, endAt)
+          .then((d) => {
+            setExpensesByCategory(d);
+            setError(null);
+          })
+          .catch((err: unknown) =>
+            setError(describeActionError(err, 'Could not load the expenses report.')),
+          );
+        break;
+      case 'stock':
+        reportStock(selectedBusinessId, startAt, endAt)
+          .then((d) => {
+            setDiscrepancies(d);
+            setError(null);
+          })
+          .catch((err: unknown) =>
+            setError(describeActionError(err, 'Could not load the stock report.')),
+          );
+        break;
+      case 'outstanding':
+        listBills(selectedBusinessId, 'outstanding')
+          .then((d) => {
+            setOutstandingBills(d);
+            setError(null);
+          })
+          .catch((err: unknown) =>
+            setError(describeActionError(err, 'Could not load outstanding bills.')),
+          );
+        break;
+    }
+  }, [selectedBusinessId, tab, range, salesRange]);
+
+  const salesDailyValues: DayValue[] = useMemo(
+    () => (salesDays ?? []).map((d) => ({ day: d.day, value: d.totalKobo })),
+    [salesDays],
+  );
+
+  // The heatmap/drill-down above answers "when" at a glance; this list is
+  // the same "recent detail below the picture" the Activity page's feed
+  // gives its own heatmap -- capped to the last 30 days (salesDays itself
+  // covers a full year, for the heatmap's Week/Month/Year views) so it
+  // doesn't turn into a 365-row wall.
+  const recentSalesDays = useMemo(() => {
+    if (!salesDays) return [];
+    const cutoff = new Date();
+    cutoff.setUTCDate(cutoff.getUTCDate() - 29);
+    const cutoffDay = cutoff.toISOString().slice(0, 10);
+    return salesDays
+      .filter((d) => d.day >= cutoffDay)
+      .slice()
+      .reverse();
+  }, [salesDays]);
+
+  const maxExpense = Math.max(1, ...(expensesByCategory ?? []).map((c) => c.totalKobo));
+  const maxProduct = Math.max(1, ...(products ?? []).map((p) => p.unitsSold));
+
+  return (
+    <div className="min-h-screen bg-jb-cream text-jb-ink pb-16">
+      <div className="max-w-md mx-auto px-5 pt-6">
+        <div className="flex items-center gap-2.5 mb-6">
+          <Link
+            to="/dashboard"
+            aria-label="Back to dashboard"
+            className="text-jb-ink/40 hover:text-jb-ink text-lg leading-none"
+          >
+            ←
+          </Link>
+          <h1 className="text-lg font-medium">Reports</h1>
+        </div>
+
+        {!isOnline && (
+          <p className="text-[12px] text-jb-ink/40 mb-3">
+            Offline — figures shown are from your last successful load, may be out of date.
+          </p>
+        )}
+
+        <div className="flex flex-wrap gap-2 mb-5">
+          {REPORT_TABS.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`px-3.5 py-2 rounded-full text-[13px] border transition-colors ${
+                tab === t.key
+                  ? 'bg-jb-ink text-jb-cream border-jb-ink'
+                  : 'border-jb-ink/15 text-jb-ink/60 bg-white'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {error && <p className="text-[13px] text-red-700 mb-3">{error}</p>}
+        {tab !== 'sales' && <p className="text-[11px] text-jb-ink/40 mb-3">Last 30 days</p>}
+
+        {tab === 'sales' &&
+          (salesDays === null ? (
+            <p className="text-[13px] text-jb-ink/40 px-1">Loading…</p>
+          ) : (
+            <div>
+              <TimeGranularityView
+                dailyData={salesDailyValues}
+                defaultRangeDays={119}
+                formatValue={(v) => `₦${formatNaira(v)}`}
+              />
+              <p className="text-[11px] text-jb-ink/40 mb-2 mt-5">Last 30 days</p>
+              <div className="rounded-xl border border-jb-ink/10 bg-white/60 divide-y divide-jb-ink/[0.06] overflow-hidden">
+                {recentSalesDays.length === 0 && (
+                  <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">No sales in this range.</p>
+                )}
+                {recentSalesDays.map((d) => (
+                  <div key={d.day} className="px-4 py-3 flex items-center justify-between">
+                    <span className="text-[13px] text-jb-ink/70">
+                      {new Date(d.day + 'T00:00:00Z').toLocaleDateString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                    </span>
+                    <span className="text-[13px] text-jb-ink/80">
+                      ₦{formatNaira(d.totalKobo)} · {d.saleCount} sale{d.saleCount === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+        {tab === 'products' && (
+          <div className="rounded-xl border border-jb-ink/10 bg-white/60 divide-y divide-jb-ink/[0.06] overflow-hidden">
+            {products === null && (
+              <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">Loading…</p>
+            )}
+            {products !== null && products.length === 0 && (
+              <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">No units sold in this range.</p>
+            )}
+            {(products ?? []).map((p) => (
+              <div key={p.variantId} className="px-4 py-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[13px] text-jb-ink/80">
+                    {p.productName} — {p.variantName}
+                  </span>
+                  <span className="text-[13px] text-jb-ink/60">{p.unitsSold}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-jb-ink/[0.06] overflow-hidden">
+                  <div
+                    className="h-full bg-jb-green-dark rounded-full"
+                    style={{ width: `${(p.unitsSold / maxProduct) * 100}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {tab === 'staff' && (
+          <div className="rounded-xl border border-jb-ink/10 bg-white/60 divide-y divide-jb-ink/[0.06] overflow-hidden">
+            {staffSales === null && (
+              <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">Loading…</p>
+            )}
+            {staffSales !== null && staffSales.length === 0 && (
+              <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">No sales in this range.</p>
+            )}
+            {(staffSales ?? []).map((s) => (
+              <div key={s.sellerId} className="px-4 py-3.5 flex items-center justify-between">
+                <span className="text-[13px] text-jb-ink/80">{s.sellerName || 'Unknown'}</span>
+                <span className="text-[13px] text-jb-ink/60">
+                  ₦{formatNaira(s.totalKobo)} · {s.saleCount} sale{s.saleCount === 1 ? '' : 's'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {tab === 'expenses' && (
+          <div className="rounded-xl border border-jb-ink/10 bg-white/60 divide-y divide-jb-ink/[0.06] overflow-hidden">
+            {expensesByCategory === null && (
+              <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">Loading…</p>
+            )}
+            {expensesByCategory !== null && expensesByCategory.length === 0 && (
+              <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">No expenses in this range.</p>
+            )}
+            {(expensesByCategory ?? []).map((c) => (
+              <div key={c.categoryId} className="px-4 py-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[13px] text-jb-ink/80">{c.categoryName}</span>
+                  <span className="text-[13px] text-jb-ink/60">₦{formatNaira(c.totalKobo)}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-jb-ink/[0.06] overflow-hidden">
+                  <div
+                    className="h-full bg-jb-gold rounded-full"
+                    style={{ width: `${(c.totalKobo / maxExpense) * 100}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {tab === 'stock' && (
+          <div className="rounded-xl border border-jb-ink/10 bg-white/60 divide-y divide-jb-ink/[0.06] overflow-hidden">
+            {discrepancies === null && (
+              <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">Loading…</p>
+            )}
+            {discrepancies !== null && discrepancies.length === 0 && (
+              <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">
+                No discrepancies in this range.
+              </p>
+            )}
+            {(discrepancies ?? []).map((d) => (
+              <div key={d.id} className="px-4 py-3.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[13px] text-jb-ink/80">
+                    {d.productName} — {d.variantName}
+                  </span>
+                  <span
+                    className={`text-[13px] font-medium ${d.variance < 0 ? 'text-red-700/80' : 'text-jb-green-dark'}`}
+                  >
+                    {d.variance > 0 ? '+' : ''}
+                    {d.variance}
+                  </span>
+                </div>
+                <div className="text-[11px] text-jb-ink/40 mt-0.5">
+                  Expected {d.expectedQuantity}, counted {d.physicalQuantity}
+                  {d.isStale && ' · stale'} · {d.countedByName || 'Unknown'}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {tab === 'outstanding' && (
+          <div className="rounded-xl border border-jb-ink/10 bg-white/60 divide-y divide-jb-ink/[0.06] overflow-hidden">
+            {outstandingBills === null && (
+              <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">Loading…</p>
+            )}
+            {outstandingBills !== null && outstandingBills.length === 0 && (
+              <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">No outstanding bills.</p>
+            )}
+            {(outstandingBills ?? []).map((b) => (
+              <div key={b.id} className="px-4 py-3.5 flex items-center justify-between">
+                <span className="text-[13px] text-jb-ink/80">
+                  Opened{' '}
+                  {new Date(b.openedAt).toLocaleDateString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                  })}
+                </span>
+                <span className="text-[13px] text-jb-ink/60">₦{formatNaira(b.balanceKobo)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

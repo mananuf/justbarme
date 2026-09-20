@@ -9,14 +9,17 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/mananuf/justbarme/internal/activity"
 	"github.com/mananuf/justbarme/internal/auth"
 	"github.com/mananuf/justbarme/internal/catalogue"
 	"github.com/mananuf/justbarme/internal/config"
+	"github.com/mananuf/justbarme/internal/expenses"
 	"github.com/mananuf/justbarme/internal/identity"
 	"github.com/mananuf/justbarme/internal/inventory"
 	"github.com/mananuf/justbarme/internal/invitations"
 	"github.com/mananuf/justbarme/internal/oauth"
 	"github.com/mananuf/justbarme/internal/platformadmin"
+	"github.com/mananuf/justbarme/internal/reports"
 	"github.com/mananuf/justbarme/internal/sales"
 	"github.com/mananuf/justbarme/internal/signup"
 	"github.com/mananuf/justbarme/internal/verification"
@@ -35,6 +38,9 @@ type Dependencies struct {
 	Catalogue     *catalogue.Service
 	Inventory     *inventory.Service
 	Sales         *sales.Service
+	Expenses      *expenses.Service
+	Activity      *activity.Service
+	Reports       *reports.Service
 	PlatformAdmin *platformadmin.Service
 	Signup        *signup.Service
 	Invitations   *invitations.Service
@@ -56,6 +62,9 @@ type API struct {
 	catalogue         *catalogue.Service
 	inventory         *inventory.Service
 	sales             *sales.Service
+	expenses          *expenses.Service
+	activity          *activity.Service
+	reports           *reports.Service
 	platformAdmin     *platformadmin.Service
 	signup            *signup.Service
 	invitations       *invitations.Service
@@ -108,6 +117,9 @@ func NewHandler(deps Dependencies) http.Handler {
 		catalogue:         deps.Catalogue,
 		inventory:         deps.Inventory,
 		sales:             deps.Sales,
+		expenses:          deps.Expenses,
+		activity:          deps.Activity,
+		reports:           deps.Reports,
 		platformAdmin:     deps.PlatformAdmin,
 		signup:            deps.Signup,
 		invitations:       deps.Invitations,
@@ -259,6 +271,23 @@ func NewHandler(deps Dependencies) http.Handler {
 				router.Post("/sales/{sale_id}/reverse", api.reverseSale)
 				router.Get("/sale-reviews", api.listSaleReviews)
 				router.Post("/sale-reviews/{review_id}/resolve", api.resolveSaleReview)
+
+				router.Get("/expense-categories", api.listExpenseCategories)
+				router.Post("/expense-categories", api.createExpenseCategory)
+				router.Post("/expenses", api.recordExpense)
+				router.Get("/expenses", api.listExpenses)
+				router.Post("/expenses/{expense_id}/reverse", api.reverseExpense)
+
+				router.Get("/activity", api.listActivity)
+				router.Get("/activity/heatmap", api.activityHeatmap)
+
+				router.Get("/reports/sales", api.reportSales)
+				router.Get("/reports/products", api.reportProducts)
+				router.Get("/reports/staff-sales", api.reportStaffSales)
+				router.Get("/reports/expenses", api.reportExpenses)
+				router.Get("/reports/stock", api.reportStock)
+
+				router.Get("/dashboard", api.getDashboard)
 
 				router.Get("/tables", api.listTables)
 				router.Post("/tables", api.createTable)

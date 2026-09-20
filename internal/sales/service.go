@@ -382,6 +382,25 @@ func (s *Service) SumSalesTotalSince(ctx context.Context, userID, businessID uui
 	return total, count, nil
 }
 
+// SumItemsSoldSince returns total units sold since since (inclusive),
+// excluding a reversal's compensating negative-quantity lines -- backs
+// the dashboard's "items sold" figure.
+func (s *Service) SumItemsSoldSince(ctx context.Context, userID, businessID uuid.UUID, since time.Time) (int64, error) {
+	var units int64
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		u, err := q.SumItemsSoldSince(ctx, sqlc.SumItemsSoldSinceParams{BusinessID: businessID, OccurredAt: pgTimestamptz(since)})
+		if err != nil {
+			return err
+		}
+		units = u
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("sum items sold: %w", err)
+	}
+	return units, nil
+}
+
 // ReverseSale posts a new sale that exactly negates saleID -- opposite-sign
 // items, a compensating positive inventory movement per item (putting
 // stock back), and a negative-amount payment (a refund) -- rather than

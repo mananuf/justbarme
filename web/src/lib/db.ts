@@ -89,6 +89,22 @@ export interface PendingAdjustmentRequest {
   createdAt: string;
 }
 
+// A staff-recorded expense, written here before any network call --
+// expenses:record is offline-safe (internal/tenancy/capabilities.go's
+// offlineSafeCapabilities), same "queue first" discipline as every other
+// pending* table here.
+export interface PendingExpense {
+  idempotencyKey: string;
+  businessId: string;
+  categoryId: string;
+  description: string;
+  amountKobo: number;
+  paymentMethod: 'cash' | 'transfer' | 'card';
+  occurredAt: string;
+  status: 'pending' | 'synced';
+  createdAt: string;
+}
+
 class JustbarmeDB extends Dexie {
   authMeta!: EntityTable<CachedIdentity, 'id'>;
   device!: EntityTable<DeviceRecord, 'id'>;
@@ -96,6 +112,7 @@ class JustbarmeDB extends Dexie {
   catalogueCache!: EntityTable<CachedCatalogue, 'businessId'>;
   pendingStockCounts!: EntityTable<PendingStockCount, 'idempotencyKey'>;
   pendingAdjustmentRequests!: EntityTable<PendingAdjustmentRequest, 'idempotencyKey'>;
+  pendingExpenses!: EntityTable<PendingExpense, 'idempotencyKey'>;
 
   constructor() {
     super('justbarme');
@@ -121,6 +138,15 @@ class JustbarmeDB extends Dexie {
       catalogueCache: 'businessId',
       pendingStockCounts: 'idempotencyKey, businessId, status, createdAt',
       pendingAdjustmentRequests: 'idempotencyKey, businessId, status, createdAt',
+    });
+    this.version(5).stores({
+      authMeta: 'id',
+      device: 'id',
+      pendingSales: 'idempotencyKey, businessId, status, createdAt',
+      catalogueCache: 'businessId',
+      pendingStockCounts: 'idempotencyKey, businessId, status, createdAt',
+      pendingAdjustmentRequests: 'idempotencyKey, businessId, status, createdAt',
+      pendingExpenses: 'idempotencyKey, businessId, status, createdAt',
     });
   }
 }

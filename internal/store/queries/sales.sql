@@ -33,6 +33,15 @@ SELECT
     COUNT(*) FILTER (WHERE reversal_of_sale_id IS NULL)::bigint AS count
     FROM sales WHERE business_id = $1 AND occurred_at >= $2;
 
+-- name: SumItemsSoldSince :one
+-- Backs the dashboard's "items sold" figure -- excludes a reversal's
+-- compensating negative-quantity lines, same reasoning
+-- SumSalesTotalSince already applies to its own sale count.
+SELECT COALESCE(SUM(si.quantity) FILTER (WHERE si.quantity > 0), 0)::bigint AS units
+FROM sale_items si
+JOIN sales s ON s.business_id = si.business_id AND s.id = si.sale_id
+WHERE si.business_id = $1 AND s.occurred_at >= $2;
+
 -- name: CreateSaleItem :one
 INSERT INTO sale_items (id, business_id, sale_id, variant_id, description, quantity, unit_price_kobo, line_total_kobo)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)

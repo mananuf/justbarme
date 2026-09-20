@@ -25,7 +25,7 @@ export function StatusBadge({ status }: { status: ServiceHealth }) {
   return (
     <span
       role="status"
-      className="inline-flex items-center gap-1.5 text-[11px] text-jb-ink/50 bg-white/70 rounded-full px-3 py-1.5 border border-jb-ink/10"
+      className="inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] text-jb-ink/50 bg-white/70 rounded-full px-3 py-1.5 border border-jb-ink/10"
     >
       <span className="relative flex h-2 w-2">
         {pulse[status] && (

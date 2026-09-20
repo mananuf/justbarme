@@ -15,6 +15,19 @@ type Querier interface {
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (Invitation, error)
 	ApproveInventoryAdjustmentRequest(ctx context.Context, arg ApproveInventoryAdjustmentRequestParams) (InventoryAdjustmentRequest, error)
 	CloseCurrentPrice(ctx context.Context, arg CloseCurrentPriceParams) error
+	CountApprovedAdjustmentsByDay(ctx context.Context, arg CountApprovedAdjustmentsByDayParams) ([]CountApprovedAdjustmentsByDayRow, error)
+	CountExpensesByDay(ctx context.Context, arg CountExpensesByDayParams) ([]CountExpensesByDayRow, error)
+	// The Activity page's GitHub-style daily heatmap needs a per-day count
+	// across all four activity sources combined. A single UNION-inside-a-CTE
+	// query feeding a GROUP BY/date_trunc aggregate reliably tripped sqlc's
+	// static analyzer (a real limitation of the tool, not a Postgres
+	// correctness issue -- the same UNION shape runs fine as a plain, non-
+	// aggregated SELECT in ListActivity above). Four separate, single-table
+	// day-count queries, merged into one day->count map in Go
+	// (internal/activity), sidestep it entirely and are individually simpler
+	// to read besides.
+	CountSalesByDay(ctx context.Context, arg CountSalesByDayParams) ([]CountSalesByDayRow, error)
+	CountStockReceiptsByDay(ctx context.Context, arg CountStockReceiptsByDayParams) ([]CountStockReceiptsByDayRow, error)
 	CreateBill(ctx context.Context, arg CreateBillParams) (Bill, error)
 	CreateBillWriteOff(ctx context.Context, arg CreateBillWriteOffParams) (BillWriteOff, error)
 	CreateBusiness(ctx context.Context, arg CreateBusinessParams) (Business, error)
@@ -22,6 +35,8 @@ type Querier interface {
 	CreateCustomer(ctx context.Context, arg CreateCustomerParams) (Customer, error)
 	CreateDefaultLocation(ctx context.Context, arg CreateDefaultLocationParams) (Location, error)
 	CreateDevice(ctx context.Context, arg CreateDeviceParams) (Device, error)
+	CreateExpense(ctx context.Context, arg CreateExpenseParams) (Expense, error)
+	CreateExpenseCategory(ctx context.Context, arg CreateExpenseCategoryParams) (ExpenseCategory, error)
 	CreateIdentityVerification(ctx context.Context, arg CreateIdentityVerificationParams) (IdentityVerification, error)
 	CreateInventoryAdjustmentRequest(ctx context.Context, arg CreateInventoryAdjustmentRequestParams) (InventoryAdjustmentRequest, error)
 	CreateInventoryEvent(ctx context.Context, arg CreateInventoryEventParams) (InventoryEvent, error)
@@ -63,6 +78,9 @@ type Querier interface {
 	GetCustomerByID(ctx context.Context, arg GetCustomerByIDParams) (Customer, error)
 	GetDefaultLocation(ctx context.Context, businessID uuid.UUID) (Location, error)
 	GetDeviceByID(ctx context.Context, arg GetDeviceByIDParams) (Device, error)
+	GetExpenseByID(ctx context.Context, arg GetExpenseByIDParams) (Expense, error)
+	GetExpenseByIdempotencyKey(ctx context.Context, arg GetExpenseByIdempotencyKeyParams) (Expense, error)
+	GetExpenseCategoryByName(ctx context.Context, arg GetExpenseCategoryByNameParams) (ExpenseCategory, error)
 	GetIdentityVerificationByID(ctx context.Context, id uuid.UUID) (IdentityVerification, error)
 	GetInventoryAdjustmentRequestByIdempotencyKey(ctx context.Context, arg GetInventoryAdjustmentRequestByIdempotencyKeyParams) (InventoryAdjustmentRequest, error)
 	// Used to compare a stock count's submitted expected_quantity against the
@@ -82,6 +100,7 @@ type Querier interface {
 	GetPlatformStaffByID(ctx context.Context, id uuid.UUID) (PlatformStaff, error)
 	GetPriceAt(ctx context.Context, arg GetPriceAtParams) (ProductPrice, error)
 	GetProductByID(ctx context.Context, arg GetProductByIDParams) (Product, error)
+	GetReversalOfExpense(ctx context.Context, arg GetReversalOfExpenseParams) (Expense, error)
 	GetReversalOfPayment(ctx context.Context, arg GetReversalOfPaymentParams) (Payment, error)
 	GetReversalOfSale(ctx context.Context, arg GetReversalOfSaleParams) (Sale, error)
 	GetSaleByID(ctx context.Context, arg GetSaleByIDParams) (Sale, error)
@@ -102,6 +121,22 @@ type Querier interface {
 	GetVariantWithProductNameByID(ctx context.Context, arg GetVariantWithProductNameByIDParams) (GetVariantWithProductNameByIDRow, error)
 	IncrementIdentityVerificationAttempts(ctx context.Context, id uuid.UUID) error
 	IncrementSignupVerificationAttempts(ctx context.Context, id uuid.UUID) error
+	// Unified activity feed (docs/PHASE_EXPENSES_DASHBOARD_ACTIVITY_REPORTS.md
+	// §3): a query-time UNION ALL across every domain's own already-posted
+	// records, not a new activity_events writer table -- deliberately, same
+	// reasoning that kept this codebase off the generic review_cases table
+	// and the generic Phase 4 sync protocol. amount_kobo is framed as cash
+	// impact (positive = money in, negative = money out) rather than each
+	// table's own storage sign convention -- a sale's total_kobo is already
+	// money-in-positive, but an expense's amount_kobo (positive = money out
+	// by storage convention, negative for its reversal) is flipped here so
+	// every row in this feed means the same thing. Every branch aliases its
+	// table and qualifies every column (even business_id) explicitly --
+	// sqlc's static analyzer otherwise reports a false-positive "business_id
+	// is ambiguous" on a UNION ALL of several tables that all happen to carry
+	// that column, even though each branch's own FROM is unambiguous under
+	// real Postgres.
+	ListActivity(ctx context.Context, arg ListActivityParams) ([]ListActivityRow, error)
 	ListAllBusinesses(ctx context.Context) ([]Business, error)
 	ListCatalogueTemplateVariantsByTemplateIDs(ctx context.Context, templateIds []uuid.UUID) ([]CatalogueTemplateVariant, error)
 	ListCatalogueTemplates(ctx context.Context) ([]CatalogueTemplate, error)
@@ -110,6 +145,8 @@ type Querier interface {
 	ListCurrentPricesByBusiness(ctx context.Context, businessID uuid.UUID) ([]ProductPrice, error)
 	ListCustomers(ctx context.Context, businessID uuid.UUID) ([]Customer, error)
 	ListDevicesForBusiness(ctx context.Context, businessID uuid.UUID) ([]Device, error)
+	ListExpenseCategories(ctx context.Context, businessID uuid.UUID) ([]ExpenseCategory, error)
+	ListExpensesDetailed(ctx context.Context, arg ListExpensesDetailedParams) ([]ListExpensesDetailedRow, error)
 	ListInventoryBalances(ctx context.Context, businessID uuid.UUID) ([]InventoryBalance, error)
 	// Stock history (docs/PHASE_INVENTORY_COUNTS_AND_ADJUSTMENTS.md §3): a
 	// flat, chronological, human-readable feed for one variant -- joins in
@@ -124,6 +161,9 @@ type Querier interface {
 	ListPendingInventoryAdjustmentRequestsDetailed(ctx context.Context, businessID uuid.UUID) ([]ListPendingInventoryAdjustmentRequestsDetailedRow, error)
 	ListPlatformAuditLog(ctx context.Context, limit int32) ([]PlatformAuditLog, error)
 	ListPriceHistory(ctx context.Context, arg ListPriceHistoryParams) ([]ProductPrice, error)
+	// "Units sold" excludes a reversal's compensating negative-quantity lines
+	// -- same reasoning SumSalesTotalSince already applies to sale counts.
+	ListProductQuantitiesSold(ctx context.Context, arg ListProductQuantitiesSoldParams) ([]ListProductQuantitiesSoldRow, error)
 	ListProducts(ctx context.Context, businessID uuid.UUID) ([]Product, error)
 	ListSaleItemsBySaleID(ctx context.Context, arg ListSaleItemsBySaleIDParams) ([]SaleItem, error)
 	// Joins in the context a bare sale_reviews row can't give an owner enough
@@ -134,7 +174,12 @@ type Querier interface {
 	ListSaleReviewsDetailed(ctx context.Context, arg ListSaleReviewsDetailedParams) ([]ListSaleReviewsDetailedRow, error)
 	ListSales(ctx context.Context, arg ListSalesParams) ([]Sale, error)
 	ListSalesByBillID(ctx context.Context, arg ListSalesByBillIDParams) ([]Sale, error)
+	ListStaffSales(ctx context.Context, arg ListStaffSalesParams) ([]ListStaffSalesRow, error)
 	ListStockCountLines(ctx context.Context, arg ListStockCountLinesParams) ([]StockCountLine, error)
+	// Reuses Phase 7's own data directly (docs/PHASE_EXPENSES_DASHBOARD_
+	// ACTIVITY_REPORTS.md §3) -- no new schema. A count line's date is its
+	// parent count's started_at, since a line itself carries no timestamp.
+	ListStockDiscrepancies(ctx context.Context, arg ListStockDiscrepanciesParams) ([]ListStockDiscrepanciesRow, error)
 	ListTables(ctx context.Context, businessID uuid.UUID) ([]Table, error)
 	ListVariantsByBusiness(ctx context.Context, businessID uuid.UUID) ([]ProductVariant, error)
 	ListVariantsByProduct(ctx context.Context, arg ListVariantsByProductParams) ([]ProductVariant, error)
@@ -154,7 +199,21 @@ type Querier interface {
 	// rounds that added it) -- the cap RemoveBillItem enforces so you can
 	// never remove more than is actually there.
 	SumBillItemQuantityByVariant(ctx context.Context, arg SumBillItemQuantityByVariantParams) (int32, error)
+	SumExpensesByCategory(ctx context.Context, arg SumExpensesByCategoryParams) ([]SumExpensesByCategoryRow, error)
+	// Mirrors SumSalesTotalSince exactly: total nets every row including
+	// reversals (a reversal's amount_kobo is negative by construction, same
+	// sign convention as sales.total_kobo); count excludes reversal rows.
+	SumExpensesTotalSince(ctx context.Context, arg SumExpensesTotalSinceParams) (SumExpensesTotalSinceRow, error)
+	// Backs the dashboard's "items sold" figure -- excludes a reversal's
+	// compensating negative-quantity lines, same reasoning
+	// SumSalesTotalSince already applies to its own sale count.
+	SumItemsSoldSince(ctx context.Context, arg SumItemsSoldSinceParams) (int64, error)
 	SumPaymentsByBillID(ctx context.Context, arg SumPaymentsByBillIDParams) (int64, error)
+	// Backs the Sales report's daily-revenue heatmap (docs/PHASE_EXPENSES_
+	// DASHBOARD_ACTIVITY_REPORTS.md §5). Bucketed in the business's own
+	// timezone (AT TIME ZONE), not UTC or the caller's -- same reasoning as
+	// salesSummary's "today" boundary.
+	SumSalesByDay(ctx context.Context, arg SumSalesByDayParams) ([]SumSalesByDayRow, error)
 	SumSalesTotalByBillID(ctx context.Context, arg SumSalesTotalByBillIDParams) (int64, error)
 	// total nets every row including reversals (a reversal's total_kobo is
 	// negative by construction -- see migration 000019); count deliberately

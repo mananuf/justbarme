@@ -603,6 +603,28 @@ func (q *Queries) ResolveSaleReview(ctx context.Context, arg ResolveSaleReviewPa
 	return i, err
 }
 
+const sumItemsSoldSince = `-- name: SumItemsSoldSince :one
+SELECT COALESCE(SUM(si.quantity) FILTER (WHERE si.quantity > 0), 0)::bigint AS units
+FROM sale_items si
+JOIN sales s ON s.business_id = si.business_id AND s.id = si.sale_id
+WHERE si.business_id = $1 AND s.occurred_at >= $2
+`
+
+type SumItemsSoldSinceParams struct {
+	BusinessID uuid.UUID          `json:"business_id"`
+	OccurredAt pgtype.Timestamptz `json:"occurred_at"`
+}
+
+// Backs the dashboard's "items sold" figure -- excludes a reversal's
+// compensating negative-quantity lines, same reasoning
+// SumSalesTotalSince already applies to its own sale count.
+func (q *Queries) SumItemsSoldSince(ctx context.Context, arg SumItemsSoldSinceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, sumItemsSoldSince, arg.BusinessID, arg.OccurredAt)
+	var units int64
+	err := row.Scan(&units)
+	return units, err
+}
+
 const sumSalesTotalSince = `-- name: SumSalesTotalSince :one
 SELECT
     COALESCE(SUM(total_kobo), 0)::bigint AS total,

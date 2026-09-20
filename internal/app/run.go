@@ -13,15 +13,18 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mananuf/justbarme/internal/activity"
 	"github.com/mananuf/justbarme/internal/catalogue"
 	"github.com/mananuf/justbarme/internal/config"
 	"github.com/mananuf/justbarme/internal/email"
+	"github.com/mananuf/justbarme/internal/expenses"
 	"github.com/mananuf/justbarme/internal/httpapi"
 	"github.com/mananuf/justbarme/internal/identity"
 	"github.com/mananuf/justbarme/internal/inventory"
 	"github.com/mananuf/justbarme/internal/invitations"
 	"github.com/mananuf/justbarme/internal/oauth"
 	"github.com/mananuf/justbarme/internal/platformadmin"
+	"github.com/mananuf/justbarme/internal/reports"
 	"github.com/mananuf/justbarme/internal/sales"
 	"github.com/mananuf/justbarme/internal/signup"
 	"github.com/mananuf/justbarme/internal/store"
@@ -53,6 +56,9 @@ func Run(ctx context.Context) error {
 	catalogueSvc := catalogue.New(pool)
 	inventorySvc := inventory.New(pool)
 	salesSvc := sales.New(pool)
+	expensesSvc := expenses.New(pool)
+	activitySvc := activity.New(pool)
+	reportsSvc := reports.New(pool)
 	platformAdminSvc := platformadmin.New(pool, cfg.Argon2)
 	signupSvc := signup.New(pool, cfg.Argon2, identitySvc, emailSvc, whatsappSvc, cfg.Signup.OTPTTL)
 	invitationsSvc := invitations.New(pool, identitySvc, emailSvc, whatsappSvc, cfg.PublicBaseURL)
@@ -68,6 +74,9 @@ func Run(ctx context.Context) error {
 		Catalogue:     catalogueSvc,
 		Inventory:     inventorySvc,
 		Sales:         salesSvc,
+		Expenses:      expensesSvc,
+		Activity:      activitySvc,
+		Reports:       reportsSvc,
 		PlatformAdmin: platformAdminSvc,
 		Signup:        signupSvc,
 		Invitations:   invitationsSvc,

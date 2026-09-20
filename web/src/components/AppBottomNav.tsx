@@ -8,6 +8,18 @@ const NAV_ITEMS = [
   { label: 'More', href: '/dashboard#more', icon: 'more' },
 ] as const;
 
+// Every page the More accordion links to -- landing on any of these (not
+// just the accordion being open on /dashboard itself) should show "More"
+// as the active tab, the same way "Sell" stays active for the whole
+// /dashboard/sell subtree.
+const MORE_PATHS = [
+  '/dashboard/team',
+  '/dashboard/reviews',
+  '/dashboard/expenses',
+  '/dashboard/activity',
+  '/dashboard/reports',
+];
+
 function Glyph({ icon, active, onDark }: { icon: string; active?: boolean; onDark?: boolean }) {
   const stroke = onDark ? '#F4F1E8' : active ? '#16201A' : 'rgba(22,32,26,0.45)';
   const common = {
@@ -72,7 +84,9 @@ export function AppBottomNav() {
                   ? pathname.startsWith('/dashboard/stock')
                   : item.label === 'Bills'
                     ? pathname.startsWith('/dashboard/tabs')
-                    : false;
+                    : item.label === 'More'
+                      ? MORE_PATHS.some((p) => pathname.startsWith(p))
+                      : false;
           return (
             <Link
               key={item.label}

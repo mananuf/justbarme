@@ -113,6 +113,30 @@ type Device struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Expense struct {
+	ID                  uuid.UUID          `json:"id"`
+	BusinessID          uuid.UUID          `json:"business_id"`
+	LocationID          uuid.UUID          `json:"location_id"`
+	CategoryID          uuid.UUID          `json:"category_id"`
+	Description         string             `json:"description"`
+	AmountKobo          int64              `json:"amount_kobo"`
+	PaymentMethod       string             `json:"payment_method"`
+	RecordedBy          uuid.UUID          `json:"recorded_by"`
+	IdempotencyKey      uuid.UUID          `json:"idempotency_key"`
+	OccurredAt          pgtype.Timestamptz `json:"occurred_at"`
+	ReversalOfExpenseID pgtype.UUID        `json:"reversal_of_expense_id"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+}
+
+type ExpenseCategory struct {
+	ID         uuid.UUID          `json:"id"`
+	BusinessID uuid.UUID          `json:"business_id"`
+	Name       string             `json:"name"`
+	Active     bool               `json:"active"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type IdentityVerification struct {
 	ID         uuid.UUID          `json:"id"`
 	UserID     uuid.UUID          `json:"user_id"`

@@ -16,6 +16,9 @@ import { Stock } from '../pages/Stock';
 import { Tabs } from '../pages/Tabs';
 import { Team } from '../pages/Team';
 import { Reviews } from '../pages/Reviews';
+import { Expenses } from '../pages/Expenses';
+import { Activity } from '../pages/Activity';
+import { Reports } from '../pages/Reports';
 import { PlatformLogin } from '../pages/platform/PlatformLogin';
 import { PlatformDashboard } from '../pages/platform/PlatformDashboard';
 
@@ -103,6 +106,30 @@ export function App() {
           element={
             <RequireAuth requireBusiness>
               <Reviews />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/dashboard/expenses"
+          element={
+            <RequireAuth requireBusiness>
+              <Expenses />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/dashboard/activity"
+          element={
+            <RequireAuth requireBusiness>
+              <Activity />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/dashboard/reports"
+          element={
+            <RequireAuth requireBusiness>
+              <Reports />
             </RequireAuth>
           }
         />

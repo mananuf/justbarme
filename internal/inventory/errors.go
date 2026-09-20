@@ -7,8 +7,11 @@ import (
 )
 
 var (
-	ErrNoLines         = errors.New("a stock receipt must include at least one line")
-	ErrVariantNotFound = errors.New("product variant not found")
+	ErrNoLines                   = errors.New("a stock receipt must include at least one line")
+	ErrVariantNotFound           = errors.New("product variant not found")
+	ErrNoCountLines              = errors.New("a stock count must include at least one line")
+	ErrAdjustmentRequestNotFound = errors.New("adjustment request not found or already decided")
+	ErrInventoryReviewNotFound   = errors.New("inventory review not found or already resolved")
 )
 
 // pgErrorCode reports err's Postgres SQLSTATE code, if any. Duplicated
@@ -23,4 +26,7 @@ func pgErrorCode(err error) string {
 	return ""
 }
 
-const pgForeignKeyViolation = "23503"
+const (
+	pgForeignKeyViolation = "23503"
+	pgUniqueViolation     = "23505"
+)

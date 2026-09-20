@@ -224,10 +224,31 @@ func postSaleRound(
 		}); err != nil {
 			return Sale{}, fmt.Errorf("create inventory movement: %w", err)
 		}
-		if _, err := q.UpsertInventoryBalanceDelta(ctx, sqlc.UpsertInventoryBalanceDeltaParams{
+		balance, err := q.UpsertInventoryBalanceDelta(ctx, sqlc.UpsertInventoryBalanceDeltaParams{
 			BusinessID: businessID, VariantID: r.variantID, LocationID: locationID, Quantity: -r.quantity,
-		}); err != nil {
+		})
+		if err != nil {
 			return Sale{}, fmt.Errorf("update inventory balance: %w", err)
+		}
+		// A real, offline-capable oversell is never rejected -- the sale
+		// always posts as submitted (docs/ARCHITECTURE.md §8.5) -- but a
+		// negative resulting balance is exactly what a negative_inventory
+		// review exists to surface. internal/inventory owns this table's
+		// domain meaning; this package writes to it directly via the
+		// shared sqlc layer rather than depending on internal/inventory as
+		// a Go package, the same established pattern already used for
+		// inventory_movements/inventory_balances here.
+		if balance.Quantity < 0 {
+			negReviewID, err := newID()
+			if err != nil {
+				return Sale{}, err
+			}
+			if _, err := q.CreateInventoryReview(ctx, sqlc.CreateInventoryReviewParams{
+				ID: negReviewID, BusinessID: businessID, Type: "negative_inventory",
+				VariantID: r.variantID, LocationID: locationID, RelatedMovementID: pgUUID(movementID),
+			}); err != nil {
+				return Sale{}, fmt.Errorf("create negative-inventory review: %w", err)
+			}
 		}
 
 		if r.reviewReason != "" {

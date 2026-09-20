@@ -46,3 +46,114 @@ type Receipt struct {
 	ReceivedAt time.Time
 	Lines      []ReceiptLineResult
 }
+
+// Adjustment reason categories -- docs/PHASE_INVENTORY_COUNTS_AND_
+// ADJUSTMENTS.md §3: complimentary/broken/spoiled/staff-use consumption
+// all share this one pipeline rather than a separate "consumption event"
+// concept; the category plus the required note is what keeps "what
+// happened" unambiguous.
+const (
+	AdjustmentReasonComplimentary   = "complimentary"
+	AdjustmentReasonBroken          = "broken"
+	AdjustmentReasonSpoiled         = "spoiled"
+	AdjustmentReasonStaffUse        = "staff_use"
+	AdjustmentReasonManual          = "manual"
+	AdjustmentReasonCountCorrection = "count_correction"
+)
+
+const (
+	AdjustmentStatusPending  = "pending"
+	AdjustmentStatusApproved = "approved"
+	AdjustmentStatusRejected = "rejected"
+)
+
+const (
+	ReviewTypeNegativeInventory = "negative_inventory"
+	ReviewTypeStaleStockCount   = "stale_stock_count"
+)
+
+// StockCountLineInput is the caller-submitted side of one counted variant.
+// ExpectedQuantity is what the counting device believed the balance was
+// (a live fetch, or web/src/lib/db.ts's catalogueCache if it was offline)
+// -- staleness is decided by comparing this against the server's live
+// balance at processing time, never by comparing timestamps.
+type StockCountLineInput struct {
+	VariantID        uuid.UUID
+	ExpectedQuantity int32
+	PhysicalQuantity int32
+}
+
+// StockCountLineResult is one processed count line, with Variance and
+// IsStale as the server actually determined them.
+type StockCountLineResult struct {
+	ID               uuid.UUID
+	VariantID        uuid.UUID
+	ExpectedQuantity int32
+	PhysicalQuantity int32
+	Variance         int32
+	IsStale          bool
+}
+
+// StockCount is one posted physical count and its lines. A non-stale line
+// with a nonzero variance produces a pending AdjustmentRequest
+// (ReasonCategory=AdjustmentReasonCountCorrection); a stale line produces
+// an open InventoryReview (ReviewTypeStaleStockCount) instead of guessing.
+type StockCount struct {
+	ID         uuid.UUID
+	BusinessID uuid.UUID
+	LocationID uuid.UUID
+	CountedBy  uuid.UUID
+	StartedAt  time.Time
+	Lines      []StockCountLineResult
+}
+
+// AdjustmentRequest is any signed inventory change that isn't a receipt or
+// a sale. Staff may create one (pending); only an Owner may approve
+// (posting the real movement) or reject (posting nothing) it.
+// VariantName/ProductName are only populated by ListPendingAdjustmentRequests.
+type AdjustmentRequest struct {
+	ID                uuid.UUID
+	LocationID        uuid.UUID
+	VariantID         uuid.UUID
+	RequestedBy       uuid.UUID
+	QuantityDelta     int32
+	ReasonCategory    string
+	ReasonNote        string
+	SourceCountLineID uuid.UUID // uuid.Nil if not sourced from a count line
+	Status            string
+	CreatedAt         time.Time
+	VariantName       string
+	ProductName       string
+}
+
+// InventoryReview flags a negative balance or a stale count for an owner
+// to look at -- it never changes the movement/count it's attached to.
+// VariantName/ProductName/Count* are only populated by ListOpenReviews.
+type InventoryReview struct {
+	ID                    uuid.UUID
+	Type                  string
+	VariantID             uuid.UUID
+	LocationID            uuid.UUID
+	RelatedMovementID     uuid.UUID
+	RelatedCountLineID    uuid.UUID
+	Status                string
+	CreatedAt             time.Time
+	VariantName           string
+	ProductName           string
+	CountExpectedQuantity int32
+	CountPhysicalQuantity int32
+}
+
+// MovementHistoryEntry is one row of a variant's stock history -- a plain
+// signed quantity change plus enough context (event type, and for
+// adjustments the reason) to read as a real explanation, not just a number.
+type MovementHistoryEntry struct {
+	ID                       uuid.UUID
+	QuantityDelta            int32
+	CreatedAt                time.Time
+	EventType                string
+	ActorID                  uuid.UUID
+	AdjustmentReasonCategory string
+	AdjustmentReasonNote     string
+	AdjustmentDecidedBy      uuid.UUID
+}

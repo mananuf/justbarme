@@ -12,10 +12,106 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const approveInventoryAdjustmentRequest = `-- name: ApproveInventoryAdjustmentRequest :one
+UPDATE inventory_adjustment_requests
+    SET status = 'approved', decided_by = $3, decided_at = now(), resolution_note = $4
+    WHERE business_id = $1 AND id = $2 AND status = 'pending'
+RETURNING id, business_id, location_id, variant_id, requested_by, idempotency_key, quantity_delta, reason_category, reason_note, source_count_line_id, status, decided_by, decided_at, resolution_note, created_at
+`
+
+type ApproveInventoryAdjustmentRequestParams struct {
+	BusinessID     uuid.UUID   `json:"business_id"`
+	ID             uuid.UUID   `json:"id"`
+	DecidedBy      pgtype.UUID `json:"decided_by"`
+	ResolutionNote pgtype.Text `json:"resolution_note"`
+}
+
+func (q *Queries) ApproveInventoryAdjustmentRequest(ctx context.Context, arg ApproveInventoryAdjustmentRequestParams) (InventoryAdjustmentRequest, error) {
+	row := q.db.QueryRow(ctx, approveInventoryAdjustmentRequest,
+		arg.BusinessID,
+		arg.ID,
+		arg.DecidedBy,
+		arg.ResolutionNote,
+	)
+	var i InventoryAdjustmentRequest
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.LocationID,
+		&i.VariantID,
+		&i.RequestedBy,
+		&i.IdempotencyKey,
+		&i.QuantityDelta,
+		&i.ReasonCategory,
+		&i.ReasonNote,
+		&i.SourceCountLineID,
+		&i.Status,
+		&i.DecidedBy,
+		&i.DecidedAt,
+		&i.ResolutionNote,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createInventoryAdjustmentRequest = `-- name: CreateInventoryAdjustmentRequest :one
+INSERT INTO inventory_adjustment_requests
+    (id, business_id, location_id, variant_id, requested_by, idempotency_key, quantity_delta, reason_category, reason_note, source_count_line_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING id, business_id, location_id, variant_id, requested_by, idempotency_key, quantity_delta, reason_category, reason_note, source_count_line_id, status, decided_by, decided_at, resolution_note, created_at
+`
+
+type CreateInventoryAdjustmentRequestParams struct {
+	ID                uuid.UUID   `json:"id"`
+	BusinessID        uuid.UUID   `json:"business_id"`
+	LocationID        uuid.UUID   `json:"location_id"`
+	VariantID         uuid.UUID   `json:"variant_id"`
+	RequestedBy       uuid.UUID   `json:"requested_by"`
+	IdempotencyKey    uuid.UUID   `json:"idempotency_key"`
+	QuantityDelta     int32       `json:"quantity_delta"`
+	ReasonCategory    string      `json:"reason_category"`
+	ReasonNote        string      `json:"reason_note"`
+	SourceCountLineID pgtype.UUID `json:"source_count_line_id"`
+}
+
+func (q *Queries) CreateInventoryAdjustmentRequest(ctx context.Context, arg CreateInventoryAdjustmentRequestParams) (InventoryAdjustmentRequest, error) {
+	row := q.db.QueryRow(ctx, createInventoryAdjustmentRequest,
+		arg.ID,
+		arg.BusinessID,
+		arg.LocationID,
+		arg.VariantID,
+		arg.RequestedBy,
+		arg.IdempotencyKey,
+		arg.QuantityDelta,
+		arg.ReasonCategory,
+		arg.ReasonNote,
+		arg.SourceCountLineID,
+	)
+	var i InventoryAdjustmentRequest
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.LocationID,
+		&i.VariantID,
+		&i.RequestedBy,
+		&i.IdempotencyKey,
+		&i.QuantityDelta,
+		&i.ReasonCategory,
+		&i.ReasonNote,
+		&i.SourceCountLineID,
+		&i.Status,
+		&i.DecidedBy,
+		&i.DecidedAt,
+		&i.ResolutionNote,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createInventoryEvent = `-- name: CreateInventoryEvent :one
 INSERT INTO inventory_events (id, business_id, type, actor_id, receipt_id)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, business_id, type, actor_id, receipt_id, occurred_at, created_at, sale_id
+RETURNING id, business_id, type, actor_id, receipt_id, occurred_at, created_at, sale_id, adjustment_request_id
 `
 
 type CreateInventoryEventParams struct {
@@ -44,6 +140,42 @@ func (q *Queries) CreateInventoryEvent(ctx context.Context, arg CreateInventoryE
 		&i.OccurredAt,
 		&i.CreatedAt,
 		&i.SaleID,
+		&i.AdjustmentRequestID,
+	)
+	return i, err
+}
+
+const createInventoryEventForAdjustment = `-- name: CreateInventoryEventForAdjustment :one
+INSERT INTO inventory_events (id, business_id, type, actor_id, adjustment_request_id)
+VALUES ($1, $2, 'adjustment', $3, $4)
+RETURNING id, business_id, type, actor_id, receipt_id, occurred_at, created_at, sale_id, adjustment_request_id
+`
+
+type CreateInventoryEventForAdjustmentParams struct {
+	ID                  uuid.UUID   `json:"id"`
+	BusinessID          uuid.UUID   `json:"business_id"`
+	ActorID             uuid.UUID   `json:"actor_id"`
+	AdjustmentRequestID pgtype.UUID `json:"adjustment_request_id"`
+}
+
+func (q *Queries) CreateInventoryEventForAdjustment(ctx context.Context, arg CreateInventoryEventForAdjustmentParams) (InventoryEvent, error) {
+	row := q.db.QueryRow(ctx, createInventoryEventForAdjustment,
+		arg.ID,
+		arg.BusinessID,
+		arg.ActorID,
+		arg.AdjustmentRequestID,
+	)
+	var i InventoryEvent
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.Type,
+		&i.ActorID,
+		&i.ReceiptID,
+		&i.OccurredAt,
+		&i.CreatedAt,
+		&i.SaleID,
+		&i.AdjustmentRequestID,
 	)
 	return i, err
 }
@@ -80,6 +212,130 @@ func (q *Queries) CreateInventoryMovement(ctx context.Context, arg CreateInvento
 		&i.VariantID,
 		&i.LocationID,
 		&i.QuantityDelta,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createInventoryReview = `-- name: CreateInventoryReview :one
+INSERT INTO inventory_reviews (id, business_id, type, variant_id, location_id, related_movement_id, related_count_line_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, business_id, type, variant_id, location_id, related_movement_id, related_count_line_id, status, resolved_by, resolved_note, resolved_at, created_at
+`
+
+type CreateInventoryReviewParams struct {
+	ID                 uuid.UUID   `json:"id"`
+	BusinessID         uuid.UUID   `json:"business_id"`
+	Type               string      `json:"type"`
+	VariantID          uuid.UUID   `json:"variant_id"`
+	LocationID         uuid.UUID   `json:"location_id"`
+	RelatedMovementID  pgtype.UUID `json:"related_movement_id"`
+	RelatedCountLineID pgtype.UUID `json:"related_count_line_id"`
+}
+
+func (q *Queries) CreateInventoryReview(ctx context.Context, arg CreateInventoryReviewParams) (InventoryReview, error) {
+	row := q.db.QueryRow(ctx, createInventoryReview,
+		arg.ID,
+		arg.BusinessID,
+		arg.Type,
+		arg.VariantID,
+		arg.LocationID,
+		arg.RelatedMovementID,
+		arg.RelatedCountLineID,
+	)
+	var i InventoryReview
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.Type,
+		&i.VariantID,
+		&i.LocationID,
+		&i.RelatedMovementID,
+		&i.RelatedCountLineID,
+		&i.Status,
+		&i.ResolvedBy,
+		&i.ResolvedNote,
+		&i.ResolvedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createStockCount = `-- name: CreateStockCount :one
+INSERT INTO stock_counts (id, business_id, location_id, counted_by, idempotency_key, started_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, business_id, location_id, counted_by, idempotency_key, started_at, created_at
+`
+
+type CreateStockCountParams struct {
+	ID             uuid.UUID          `json:"id"`
+	BusinessID     uuid.UUID          `json:"business_id"`
+	LocationID     uuid.UUID          `json:"location_id"`
+	CountedBy      uuid.UUID          `json:"counted_by"`
+	IdempotencyKey uuid.UUID          `json:"idempotency_key"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+}
+
+func (q *Queries) CreateStockCount(ctx context.Context, arg CreateStockCountParams) (StockCount, error) {
+	row := q.db.QueryRow(ctx, createStockCount,
+		arg.ID,
+		arg.BusinessID,
+		arg.LocationID,
+		arg.CountedBy,
+		arg.IdempotencyKey,
+		arg.StartedAt,
+	)
+	var i StockCount
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.LocationID,
+		&i.CountedBy,
+		&i.IdempotencyKey,
+		&i.StartedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createStockCountLine = `-- name: CreateStockCountLine :one
+INSERT INTO stock_count_lines (id, business_id, count_id, variant_id, expected_quantity, physical_quantity, variance, is_stale)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, business_id, count_id, variant_id, expected_quantity, physical_quantity, variance, is_stale, created_at
+`
+
+type CreateStockCountLineParams struct {
+	ID               uuid.UUID `json:"id"`
+	BusinessID       uuid.UUID `json:"business_id"`
+	CountID          uuid.UUID `json:"count_id"`
+	VariantID        uuid.UUID `json:"variant_id"`
+	ExpectedQuantity int32     `json:"expected_quantity"`
+	PhysicalQuantity int32     `json:"physical_quantity"`
+	Variance         int32     `json:"variance"`
+	IsStale          bool      `json:"is_stale"`
+}
+
+func (q *Queries) CreateStockCountLine(ctx context.Context, arg CreateStockCountLineParams) (StockCountLine, error) {
+	row := q.db.QueryRow(ctx, createStockCountLine,
+		arg.ID,
+		arg.BusinessID,
+		arg.CountID,
+		arg.VariantID,
+		arg.ExpectedQuantity,
+		arg.PhysicalQuantity,
+		arg.Variance,
+		arg.IsStale,
+	)
+	var i StockCountLine
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.CountID,
+		&i.VariantID,
+		&i.ExpectedQuantity,
+		&i.PhysicalQuantity,
+		&i.Variance,
+		&i.IsStale,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -199,6 +455,87 @@ func (q *Queries) CreateStockReceiptLine(ctx context.Context, arg CreateStockRec
 	return i, err
 }
 
+const getInventoryAdjustmentRequestByIdempotencyKey = `-- name: GetInventoryAdjustmentRequestByIdempotencyKey :one
+SELECT id, business_id, location_id, variant_id, requested_by, idempotency_key, quantity_delta, reason_category, reason_note, source_count_line_id, status, decided_by, decided_at, resolution_note, created_at FROM inventory_adjustment_requests WHERE business_id = $1 AND idempotency_key = $2
+`
+
+type GetInventoryAdjustmentRequestByIdempotencyKeyParams struct {
+	BusinessID     uuid.UUID `json:"business_id"`
+	IdempotencyKey uuid.UUID `json:"idempotency_key"`
+}
+
+func (q *Queries) GetInventoryAdjustmentRequestByIdempotencyKey(ctx context.Context, arg GetInventoryAdjustmentRequestByIdempotencyKeyParams) (InventoryAdjustmentRequest, error) {
+	row := q.db.QueryRow(ctx, getInventoryAdjustmentRequestByIdempotencyKey, arg.BusinessID, arg.IdempotencyKey)
+	var i InventoryAdjustmentRequest
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.LocationID,
+		&i.VariantID,
+		&i.RequestedBy,
+		&i.IdempotencyKey,
+		&i.QuantityDelta,
+		&i.ReasonCategory,
+		&i.ReasonNote,
+		&i.SourceCountLineID,
+		&i.Status,
+		&i.DecidedBy,
+		&i.DecidedAt,
+		&i.ResolutionNote,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getInventoryBalance = `-- name: GetInventoryBalance :one
+SELECT COALESCE(
+    (SELECT quantity FROM inventory_balances WHERE business_id = $1 AND variant_id = $2 AND location_id = $3),
+    0
+)::int AS quantity
+`
+
+type GetInventoryBalanceParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	VariantID  uuid.UUID `json:"variant_id"`
+	LocationID uuid.UUID `json:"location_id"`
+}
+
+// Used to compare a stock count's submitted expected_quantity against the
+// live truth at processing time (docs/PHASE_INVENTORY_COUNTS_AND_
+// ADJUSTMENTS.md: staleness is a value comparison, not a timestamp one).
+// COALESCE to 0 -- a variant with no movements yet simply has no row, not
+// an error (same convention internal/inventory.Service.GetBalances uses).
+func (q *Queries) GetInventoryBalance(ctx context.Context, arg GetInventoryBalanceParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getInventoryBalance, arg.BusinessID, arg.VariantID, arg.LocationID)
+	var quantity int32
+	err := row.Scan(&quantity)
+	return quantity, err
+}
+
+const getStockCountByIdempotencyKey = `-- name: GetStockCountByIdempotencyKey :one
+SELECT id, business_id, location_id, counted_by, idempotency_key, started_at, created_at FROM stock_counts WHERE business_id = $1 AND idempotency_key = $2
+`
+
+type GetStockCountByIdempotencyKeyParams struct {
+	BusinessID     uuid.UUID `json:"business_id"`
+	IdempotencyKey uuid.UUID `json:"idempotency_key"`
+}
+
+func (q *Queries) GetStockCountByIdempotencyKey(ctx context.Context, arg GetStockCountByIdempotencyKeyParams) (StockCount, error) {
+	row := q.db.QueryRow(ctx, getStockCountByIdempotencyKey, arg.BusinessID, arg.IdempotencyKey)
+	var i StockCount
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.LocationID,
+		&i.CountedBy,
+		&i.IdempotencyKey,
+		&i.StartedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listInventoryBalances = `-- name: ListInventoryBalances :many
 SELECT business_id, variant_id, location_id, quantity, updated_at FROM inventory_balances WHERE business_id = $1
 `
@@ -227,6 +564,311 @@ func (q *Queries) ListInventoryBalances(ctx context.Context, businessID uuid.UUI
 		return nil, err
 	}
 	return items, nil
+}
+
+const listInventoryMovementsDetailed = `-- name: ListInventoryMovementsDetailed :many
+SELECT
+    m.id, m.quantity_delta, m.created_at,
+    e.type AS event_type, e.actor_id,
+    ar.reason_category AS adjustment_reason_category, ar.reason_note AS adjustment_reason_note,
+    ar.decided_by AS adjustment_decided_by
+FROM inventory_movements m
+JOIN inventory_events e ON e.business_id = m.business_id AND e.id = m.event_id
+LEFT JOIN inventory_adjustment_requests ar ON ar.business_id = m.business_id AND ar.id = e.adjustment_request_id
+WHERE m.business_id = $1 AND m.variant_id = $2
+ORDER BY m.created_at DESC
+LIMIT $3
+`
+
+type ListInventoryMovementsDetailedParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	VariantID  uuid.UUID `json:"variant_id"`
+	Limit      int32     `json:"limit"`
+}
+
+type ListInventoryMovementsDetailedRow struct {
+	ID                       uuid.UUID          `json:"id"`
+	QuantityDelta            int32              `json:"quantity_delta"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	EventType                string             `json:"event_type"`
+	ActorID                  uuid.UUID          `json:"actor_id"`
+	AdjustmentReasonCategory pgtype.Text        `json:"adjustment_reason_category"`
+	AdjustmentReasonNote     pgtype.Text        `json:"adjustment_reason_note"`
+	AdjustmentDecidedBy      pgtype.UUID        `json:"adjustment_decided_by"`
+}
+
+// Stock history (docs/PHASE_INVENTORY_COUNTS_AND_ADJUSTMENTS.md §3): a
+// flat, chronological, human-readable feed for one variant -- joins in
+// the event type and, for adjustments, the reason that authorized it.
+func (q *Queries) ListInventoryMovementsDetailed(ctx context.Context, arg ListInventoryMovementsDetailedParams) ([]ListInventoryMovementsDetailedRow, error) {
+	rows, err := q.db.Query(ctx, listInventoryMovementsDetailed, arg.BusinessID, arg.VariantID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInventoryMovementsDetailedRow{}
+	for rows.Next() {
+		var i ListInventoryMovementsDetailedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.QuantityDelta,
+			&i.CreatedAt,
+			&i.EventType,
+			&i.ActorID,
+			&i.AdjustmentReasonCategory,
+			&i.AdjustmentReasonNote,
+			&i.AdjustmentDecidedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOpenInventoryReviewsDetailed = `-- name: ListOpenInventoryReviewsDetailed :many
+SELECT
+    r.id, r.type, r.variant_id, r.location_id, r.related_movement_id, r.related_count_line_id,
+    r.status, r.created_at,
+    v.name AS variant_name, p.name AS product_name,
+    cl.expected_quantity AS count_expected_quantity, cl.physical_quantity AS count_physical_quantity
+FROM inventory_reviews r
+JOIN product_variants v ON v.business_id = r.business_id AND v.id = r.variant_id
+JOIN products p ON p.business_id = v.business_id AND p.id = v.product_id
+LEFT JOIN stock_count_lines cl ON cl.business_id = r.business_id AND cl.id = r.related_count_line_id
+WHERE r.business_id = $1 AND r.status = 'open'
+ORDER BY r.created_at DESC
+`
+
+type ListOpenInventoryReviewsDetailedRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	Type                  string             `json:"type"`
+	VariantID             uuid.UUID          `json:"variant_id"`
+	LocationID            uuid.UUID          `json:"location_id"`
+	RelatedMovementID     pgtype.UUID        `json:"related_movement_id"`
+	RelatedCountLineID    pgtype.UUID        `json:"related_count_line_id"`
+	Status                string             `json:"status"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	VariantName           string             `json:"variant_name"`
+	ProductName           string             `json:"product_name"`
+	CountExpectedQuantity pgtype.Int4        `json:"count_expected_quantity"`
+	CountPhysicalQuantity pgtype.Int4        `json:"count_physical_quantity"`
+}
+
+func (q *Queries) ListOpenInventoryReviewsDetailed(ctx context.Context, businessID uuid.UUID) ([]ListOpenInventoryReviewsDetailedRow, error) {
+	rows, err := q.db.Query(ctx, listOpenInventoryReviewsDetailed, businessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOpenInventoryReviewsDetailedRow{}
+	for rows.Next() {
+		var i ListOpenInventoryReviewsDetailedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.VariantID,
+			&i.LocationID,
+			&i.RelatedMovementID,
+			&i.RelatedCountLineID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.VariantName,
+			&i.ProductName,
+			&i.CountExpectedQuantity,
+			&i.CountPhysicalQuantity,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingInventoryAdjustmentRequestsDetailed = `-- name: ListPendingInventoryAdjustmentRequestsDetailed :many
+SELECT
+    r.id, r.location_id, r.variant_id, r.requested_by, r.quantity_delta,
+    r.reason_category, r.reason_note, r.source_count_line_id, r.status, r.created_at,
+    v.name AS variant_name, p.name AS product_name
+FROM inventory_adjustment_requests r
+JOIN product_variants v ON v.business_id = r.business_id AND v.id = r.variant_id
+JOIN products p ON p.business_id = v.business_id AND p.id = v.product_id
+WHERE r.business_id = $1 AND r.status = 'pending'
+ORDER BY r.created_at DESC
+`
+
+type ListPendingInventoryAdjustmentRequestsDetailedRow struct {
+	ID                uuid.UUID          `json:"id"`
+	LocationID        uuid.UUID          `json:"location_id"`
+	VariantID         uuid.UUID          `json:"variant_id"`
+	RequestedBy       uuid.UUID          `json:"requested_by"`
+	QuantityDelta     int32              `json:"quantity_delta"`
+	ReasonCategory    string             `json:"reason_category"`
+	ReasonNote        string             `json:"reason_note"`
+	SourceCountLineID pgtype.UUID        `json:"source_count_line_id"`
+	Status            string             `json:"status"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	VariantName       string             `json:"variant_name"`
+	ProductName       string             `json:"product_name"`
+}
+
+func (q *Queries) ListPendingInventoryAdjustmentRequestsDetailed(ctx context.Context, businessID uuid.UUID) ([]ListPendingInventoryAdjustmentRequestsDetailedRow, error) {
+	rows, err := q.db.Query(ctx, listPendingInventoryAdjustmentRequestsDetailed, businessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPendingInventoryAdjustmentRequestsDetailedRow{}
+	for rows.Next() {
+		var i ListPendingInventoryAdjustmentRequestsDetailedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LocationID,
+			&i.VariantID,
+			&i.RequestedBy,
+			&i.QuantityDelta,
+			&i.ReasonCategory,
+			&i.ReasonNote,
+			&i.SourceCountLineID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.VariantName,
+			&i.ProductName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStockCountLines = `-- name: ListStockCountLines :many
+SELECT id, business_id, count_id, variant_id, expected_quantity, physical_quantity, variance, is_stale, created_at FROM stock_count_lines WHERE business_id = $1 AND count_id = $2
+`
+
+type ListStockCountLinesParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	CountID    uuid.UUID `json:"count_id"`
+}
+
+func (q *Queries) ListStockCountLines(ctx context.Context, arg ListStockCountLinesParams) ([]StockCountLine, error) {
+	rows, err := q.db.Query(ctx, listStockCountLines, arg.BusinessID, arg.CountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StockCountLine{}
+	for rows.Next() {
+		var i StockCountLine
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.CountID,
+			&i.VariantID,
+			&i.ExpectedQuantity,
+			&i.PhysicalQuantity,
+			&i.Variance,
+			&i.IsStale,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const rejectInventoryAdjustmentRequest = `-- name: RejectInventoryAdjustmentRequest :one
+UPDATE inventory_adjustment_requests
+    SET status = 'rejected', decided_by = $3, decided_at = now(), resolution_note = $4
+    WHERE business_id = $1 AND id = $2 AND status = 'pending'
+RETURNING id, business_id, location_id, variant_id, requested_by, idempotency_key, quantity_delta, reason_category, reason_note, source_count_line_id, status, decided_by, decided_at, resolution_note, created_at
+`
+
+type RejectInventoryAdjustmentRequestParams struct {
+	BusinessID     uuid.UUID   `json:"business_id"`
+	ID             uuid.UUID   `json:"id"`
+	DecidedBy      pgtype.UUID `json:"decided_by"`
+	ResolutionNote pgtype.Text `json:"resolution_note"`
+}
+
+func (q *Queries) RejectInventoryAdjustmentRequest(ctx context.Context, arg RejectInventoryAdjustmentRequestParams) (InventoryAdjustmentRequest, error) {
+	row := q.db.QueryRow(ctx, rejectInventoryAdjustmentRequest,
+		arg.BusinessID,
+		arg.ID,
+		arg.DecidedBy,
+		arg.ResolutionNote,
+	)
+	var i InventoryAdjustmentRequest
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.LocationID,
+		&i.VariantID,
+		&i.RequestedBy,
+		&i.IdempotencyKey,
+		&i.QuantityDelta,
+		&i.ReasonCategory,
+		&i.ReasonNote,
+		&i.SourceCountLineID,
+		&i.Status,
+		&i.DecidedBy,
+		&i.DecidedAt,
+		&i.ResolutionNote,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const resolveInventoryReview = `-- name: ResolveInventoryReview :one
+UPDATE inventory_reviews
+    SET status = 'resolved', resolved_by = $3, resolved_note = $4, resolved_at = now()
+    WHERE business_id = $1 AND id = $2 AND status = 'open'
+RETURNING id, business_id, type, variant_id, location_id, related_movement_id, related_count_line_id, status, resolved_by, resolved_note, resolved_at, created_at
+`
+
+type ResolveInventoryReviewParams struct {
+	BusinessID   uuid.UUID   `json:"business_id"`
+	ID           uuid.UUID   `json:"id"`
+	ResolvedBy   pgtype.UUID `json:"resolved_by"`
+	ResolvedNote pgtype.Text `json:"resolved_note"`
+}
+
+func (q *Queries) ResolveInventoryReview(ctx context.Context, arg ResolveInventoryReviewParams) (InventoryReview, error) {
+	row := q.db.QueryRow(ctx, resolveInventoryReview,
+		arg.BusinessID,
+		arg.ID,
+		arg.ResolvedBy,
+		arg.ResolvedNote,
+	)
+	var i InventoryReview
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.Type,
+		&i.VariantID,
+		&i.LocationID,
+		&i.RelatedMovementID,
+		&i.RelatedCountLineID,
+		&i.Status,
+		&i.ResolvedBy,
+		&i.ResolvedNote,
+		&i.ResolvedAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const upsertInventoryBalanceDelta = `-- name: UpsertInventoryBalanceDelta :one

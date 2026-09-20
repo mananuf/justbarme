@@ -60,7 +60,7 @@ func (q *Queries) CreateBill(ctx context.Context, arg CreateBillParams) (Bill, e
 const createInventoryEventForSale = `-- name: CreateInventoryEventForSale :one
 INSERT INTO inventory_events (id, business_id, type, actor_id, sale_id)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, business_id, type, actor_id, receipt_id, occurred_at, created_at, sale_id
+RETURNING id, business_id, type, actor_id, receipt_id, occurred_at, created_at, sale_id, adjustment_request_id
 `
 
 type CreateInventoryEventForSaleParams struct {
@@ -89,6 +89,7 @@ func (q *Queries) CreateInventoryEventForSale(ctx context.Context, arg CreateInv
 		&i.OccurredAt,
 		&i.CreatedAt,
 		&i.SaleID,
+		&i.AdjustmentRequestID,
 	)
 	return i, err
 }

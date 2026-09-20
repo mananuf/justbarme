@@ -104,6 +104,7 @@ func cleanupTenant(t *testing.T, pool *pgxpool.Pool, ownerID, businessID uuid.UU
 			for _, stmt := range []string{
 				"DELETE FROM sale_reviews WHERE business_id = $1",
 				"DELETE FROM sale_items WHERE business_id = $1",
+				"DELETE FROM inventory_reviews WHERE business_id = $1",
 				"DELETE FROM inventory_movements WHERE business_id = $1",
 				"DELETE FROM inventory_events WHERE business_id = $1",
 				"DELETE FROM payments WHERE business_id = $1",
@@ -166,6 +167,46 @@ func TestCreateSalePostsAtomicallyAndDeductsStock(t *testing.T) {
 	}
 	if balances[variantID] != 45 {
 		t.Fatalf("expected stock to drop from 48 to 45, got %d", balances[variantID])
+	}
+}
+
+func TestCreateSaleOversellOpensNegativeInventoryReview(t *testing.T) {
+	salesSvc, inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
+
+	// newTenant stocks exactly 48 -- selling 50 is a real, offline-capable
+	// oversell scenario (docs/ARCHITECTURE.md §8.5): the sale must still
+	// post exactly as submitted, never rejected for insufficient stock,
+	// with the resulting negative balance surfaced as a review instead.
+	sale, err := salesSvc.CreateSale(ctx, ownerID, businessID, locationID, ownerID, uuid.New(), time.Now(),
+		[]sales.SaleItemInput{{VariantID: variantID, Quantity: 50, UnitPriceKobo: 80000}},
+		sales.PaymentInput{AmountKobo: 4_000_000, Method: sales.PaymentMethodCash},
+	)
+	if err != nil {
+		t.Fatalf("CreateSale: %v", err)
+	}
+	if sale.TotalKobo != 4_000_000 {
+		t.Fatalf("expected the oversold sale to post at its full submitted total, got %d", sale.TotalKobo)
+	}
+
+	balances, err := inventorySvc.GetBalances(ctx, ownerID, businessID)
+	if err != nil {
+		t.Fatalf("GetBalances: %v", err)
+	}
+	if balances[variantID] != -2 {
+		t.Fatalf("expected balance to go negative (48 - 50 = -2), got %d", balances[variantID])
+	}
+
+	reviews, err := inventorySvc.ListOpenReviews(ctx, ownerID, businessID)
+	if err != nil {
+		t.Fatalf("ListOpenReviews: %v", err)
+	}
+	if len(reviews) != 1 || reviews[0].Type != inventory.ReviewTypeNegativeInventory {
+		t.Fatalf("expected 1 negative_inventory review, got %+v", reviews)
+	}
+	if reviews[0].VariantID != variantID {
+		t.Fatalf("expected the review to reference the oversold variant")
 	}
 }
 

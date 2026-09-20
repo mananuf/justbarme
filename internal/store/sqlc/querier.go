@@ -13,6 +13,7 @@ import (
 
 type Querier interface {
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (Invitation, error)
+	ApproveInventoryAdjustmentRequest(ctx context.Context, arg ApproveInventoryAdjustmentRequestParams) (InventoryAdjustmentRequest, error)
 	CloseCurrentPrice(ctx context.Context, arg CloseCurrentPriceParams) error
 	CreateBill(ctx context.Context, arg CreateBillParams) (Bill, error)
 	CreateBillWriteOff(ctx context.Context, arg CreateBillWriteOffParams) (BillWriteOff, error)
@@ -22,9 +23,12 @@ type Querier interface {
 	CreateDefaultLocation(ctx context.Context, arg CreateDefaultLocationParams) (Location, error)
 	CreateDevice(ctx context.Context, arg CreateDeviceParams) (Device, error)
 	CreateIdentityVerification(ctx context.Context, arg CreateIdentityVerificationParams) (IdentityVerification, error)
+	CreateInventoryAdjustmentRequest(ctx context.Context, arg CreateInventoryAdjustmentRequestParams) (InventoryAdjustmentRequest, error)
 	CreateInventoryEvent(ctx context.Context, arg CreateInventoryEventParams) (InventoryEvent, error)
+	CreateInventoryEventForAdjustment(ctx context.Context, arg CreateInventoryEventForAdjustmentParams) (InventoryEvent, error)
 	CreateInventoryEventForSale(ctx context.Context, arg CreateInventoryEventForSaleParams) (InventoryEvent, error)
 	CreateInventoryMovement(ctx context.Context, arg CreateInventoryMovementParams) (InventoryMovement, error)
+	CreateInventoryReview(ctx context.Context, arg CreateInventoryReviewParams) (InventoryReview, error)
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (Invitation, error)
 	CreateMembership(ctx context.Context, arg CreateMembershipParams) (BusinessMembership, error)
 	CreatePayment(ctx context.Context, arg CreatePaymentParams) (Payment, error)
@@ -37,6 +41,8 @@ type Querier interface {
 	CreateSaleItem(ctx context.Context, arg CreateSaleItemParams) (SaleItem, error)
 	CreateSaleReview(ctx context.Context, arg CreateSaleReviewParams) (SaleReview, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
+	CreateStockCount(ctx context.Context, arg CreateStockCountParams) (StockCount, error)
+	CreateStockCountLine(ctx context.Context, arg CreateStockCountLineParams) (StockCountLine, error)
 	CreateStockLot(ctx context.Context, arg CreateStockLotParams) (StockLot, error)
 	CreateStockReceipt(ctx context.Context, arg CreateStockReceiptParams) (StockReceipt, error)
 	CreateStockReceiptLine(ctx context.Context, arg CreateStockReceiptLineParams) (StockReceiptLine, error)
@@ -58,6 +64,13 @@ type Querier interface {
 	GetDefaultLocation(ctx context.Context, businessID uuid.UUID) (Location, error)
 	GetDeviceByID(ctx context.Context, arg GetDeviceByIDParams) (Device, error)
 	GetIdentityVerificationByID(ctx context.Context, id uuid.UUID) (IdentityVerification, error)
+	GetInventoryAdjustmentRequestByIdempotencyKey(ctx context.Context, arg GetInventoryAdjustmentRequestByIdempotencyKeyParams) (InventoryAdjustmentRequest, error)
+	// Used to compare a stock count's submitted expected_quantity against the
+	// live truth at processing time (docs/PHASE_INVENTORY_COUNTS_AND_
+	// ADJUSTMENTS.md: staleness is a value comparison, not a timestamp one).
+	// COALESCE to 0 -- a variant with no movements yet simply has no row, not
+	// an error (same convention internal/inventory.Service.GetBalances uses).
+	GetInventoryBalance(ctx context.Context, arg GetInventoryBalanceParams) (int32, error)
 	GetInvitationByID(ctx context.Context, arg GetInvitationByIDParams) (Invitation, error)
 	// The public, unauthenticated lookup -- the hashed token is itself the
 	// access control (invitations carries no RLS; see migration 000021).
@@ -75,6 +88,7 @@ type Querier interface {
 	GetSaleByIdempotencyKey(ctx context.Context, arg GetSaleByIdempotencyKeyParams) (Sale, error)
 	GetSignupVerificationByEmail(ctx context.Context, email string) (SignupVerification, error)
 	GetSignupVerificationByPhone(ctx context.Context, phone pgtype.Text) (SignupVerification, error)
+	GetStockCountByIdempotencyKey(ctx context.Context, arg GetStockCountByIdempotencyKeyParams) (StockCount, error)
 	GetTableByID(ctx context.Context, arg GetTableByIDParams) (Table, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
@@ -97,11 +111,17 @@ type Querier interface {
 	ListCustomers(ctx context.Context, businessID uuid.UUID) ([]Customer, error)
 	ListDevicesForBusiness(ctx context.Context, businessID uuid.UUID) ([]Device, error)
 	ListInventoryBalances(ctx context.Context, businessID uuid.UUID) ([]InventoryBalance, error)
+	// Stock history (docs/PHASE_INVENTORY_COUNTS_AND_ADJUSTMENTS.md §3): a
+	// flat, chronological, human-readable feed for one variant -- joins in
+	// the event type and, for adjustments, the reason that authorized it.
+	ListInventoryMovementsDetailed(ctx context.Context, arg ListInventoryMovementsDetailedParams) ([]ListInventoryMovementsDetailedRow, error)
 	ListInvitationsByBusiness(ctx context.Context, businessID uuid.UUID) ([]Invitation, error)
 	ListMembershipsForUser(ctx context.Context, userID uuid.UUID) ([]ListMembershipsForUserRow, error)
 	ListOpenBills(ctx context.Context, businessID uuid.UUID) ([]Bill, error)
+	ListOpenInventoryReviewsDetailed(ctx context.Context, businessID uuid.UUID) ([]ListOpenInventoryReviewsDetailedRow, error)
 	ListOutstandingBills(ctx context.Context, businessID uuid.UUID) ([]Bill, error)
 	ListPaymentsByBillID(ctx context.Context, arg ListPaymentsByBillIDParams) ([]Payment, error)
+	ListPendingInventoryAdjustmentRequestsDetailed(ctx context.Context, businessID uuid.UUID) ([]ListPendingInventoryAdjustmentRequestsDetailedRow, error)
 	ListPlatformAuditLog(ctx context.Context, limit int32) ([]PlatformAuditLog, error)
 	ListPriceHistory(ctx context.Context, arg ListPriceHistoryParams) ([]ProductPrice, error)
 	ListProducts(ctx context.Context, businessID uuid.UUID) ([]Product, error)
@@ -114,10 +134,13 @@ type Querier interface {
 	ListSaleReviewsDetailed(ctx context.Context, arg ListSaleReviewsDetailedParams) ([]ListSaleReviewsDetailedRow, error)
 	ListSales(ctx context.Context, arg ListSalesParams) ([]Sale, error)
 	ListSalesByBillID(ctx context.Context, arg ListSalesByBillIDParams) ([]Sale, error)
+	ListStockCountLines(ctx context.Context, arg ListStockCountLinesParams) ([]StockCountLine, error)
 	ListTables(ctx context.Context, businessID uuid.UUID) ([]Table, error)
 	ListVariantsByBusiness(ctx context.Context, businessID uuid.UUID) ([]ProductVariant, error)
 	ListVariantsByProduct(ctx context.Context, arg ListVariantsByProductParams) ([]ProductVariant, error)
 	ListWriteOffsByBillID(ctx context.Context, arg ListWriteOffsByBillIDParams) ([]BillWriteOff, error)
+	RejectInventoryAdjustmentRequest(ctx context.Context, arg RejectInventoryAdjustmentRequestParams) (InventoryAdjustmentRequest, error)
+	ResolveInventoryReview(ctx context.Context, arg ResolveInventoryReviewParams) (InventoryReview, error)
 	ResolveSaleReview(ctx context.Context, arg ResolveSaleReviewParams) (SaleReview, error)
 	RevokeDevice(ctx context.Context, arg RevokeDeviceParams) (Device, error)
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (Invitation, error)

@@ -241,6 +241,17 @@ func NewHandler(deps Dependencies) http.Handler {
 				router.Post("/variants/{variant_id}/prices", api.setVariantPrice)
 
 				router.Post("/stock-receipts", api.receiveStock)
+				router.Get("/products/variants/{variant_id}/history", api.getInventoryHistory)
+
+				router.Post("/stock-counts", api.submitStockCount)
+
+				router.Post("/inventory-adjustments", api.requestAdjustment)
+				router.Get("/inventory-adjustments", api.listPendingAdjustments)
+				router.Post("/inventory-adjustments/{adjustment_id}/approve", api.approveAdjustment)
+				router.Post("/inventory-adjustments/{adjustment_id}/reject", api.rejectAdjustment)
+
+				router.Get("/inventory-reviews", api.listInventoryReviews)
+				router.Post("/inventory-reviews/{review_id}/resolve", api.resolveInventoryReview)
 
 				router.Post("/sales", api.createSale)
 				router.Get("/sales", api.listSales)

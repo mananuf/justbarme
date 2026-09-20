@@ -72,3 +72,76 @@ export async function resolveSaleReview(
   });
   return toSaleReview(raw);
 }
+
+// The inventory-side counterpart of SaleReview
+// (docs/PHASE_INVENTORY_COUNTS_AND_ADJUSTMENTS.md) -- a negative balance
+// (from either a sale oversell or an approved adjustment) or a stock count
+// whose expected quantity didn't match the live balance when processed.
+export type InventoryReviewType = 'negative_inventory' | 'stale_stock_count';
+
+export interface InventoryReview {
+  id: string;
+  type: InventoryReviewType;
+  variantId: string;
+  variantName: string;
+  productName: string;
+  status: 'open' | 'resolved';
+  createdAt: string;
+  countExpectedQuantity: number;
+  countPhysicalQuantity: number;
+}
+
+interface RawInventoryReview {
+  id: string;
+  type: string;
+  variant_id: string;
+  variant_name?: string;
+  product_name?: string;
+  status: string;
+  created_at: string;
+  count_expected_quantity?: number;
+  count_physical_quantity?: number;
+}
+
+function toInventoryReview(raw: RawInventoryReview): InventoryReview {
+  return {
+    id: raw.id,
+    type: raw.type as InventoryReviewType,
+    variantId: raw.variant_id,
+    variantName: raw.variant_name ?? '',
+    productName: raw.product_name ?? '',
+    status: raw.status as 'open' | 'resolved',
+    createdAt: raw.created_at,
+    countExpectedQuantity: raw.count_expected_quantity ?? 0,
+    countPhysicalQuantity: raw.count_physical_quantity ?? 0,
+  };
+}
+
+// listInventoryReviews wraps GET /api/v1/inventory-reviews (reviews:read).
+// Open reviews only, same convention as listSaleReviews.
+export async function listInventoryReviews(businessId: string): Promise<InventoryReview[]> {
+  const raw = await apiRequest<RawInventoryReview[]>('/api/v1/inventory-reviews', {
+    headers: { 'X-Business-ID': businessId },
+  });
+  return raw.map(toInventoryReview);
+}
+
+// resolveInventoryReview wraps POST /api/v1/inventory-reviews/{id}/resolve
+// (reviews:resolve). A note is required; resolving never changes the
+// underlying balance or count, it only acknowledges the flag.
+export async function resolveInventoryReview(
+  reviewId: string,
+  note: string,
+  businessId: string,
+  csrfToken: string,
+): Promise<InventoryReview> {
+  const raw = await apiRequest<RawInventoryReview>(
+    `/api/v1/inventory-reviews/${reviewId}/resolve`,
+    {
+      method: 'POST',
+      headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
+      body: JSON.stringify({ note }),
+    },
+  );
+  return toInventoryReview(raw);
+}

@@ -125,6 +125,24 @@ type IdentityVerification struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+type InventoryAdjustmentRequest struct {
+	ID                uuid.UUID          `json:"id"`
+	BusinessID        uuid.UUID          `json:"business_id"`
+	LocationID        uuid.UUID          `json:"location_id"`
+	VariantID         uuid.UUID          `json:"variant_id"`
+	RequestedBy       uuid.UUID          `json:"requested_by"`
+	IdempotencyKey    uuid.UUID          `json:"idempotency_key"`
+	QuantityDelta     int32              `json:"quantity_delta"`
+	ReasonCategory    string             `json:"reason_category"`
+	ReasonNote        string             `json:"reason_note"`
+	SourceCountLineID pgtype.UUID        `json:"source_count_line_id"`
+	Status            string             `json:"status"`
+	DecidedBy         pgtype.UUID        `json:"decided_by"`
+	DecidedAt         pgtype.Timestamptz `json:"decided_at"`
+	ResolutionNote    pgtype.Text        `json:"resolution_note"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
 type InventoryBalance struct {
 	BusinessID uuid.UUID          `json:"business_id"`
 	VariantID  uuid.UUID          `json:"variant_id"`
@@ -134,14 +152,15 @@ type InventoryBalance struct {
 }
 
 type InventoryEvent struct {
-	ID         uuid.UUID          `json:"id"`
-	BusinessID uuid.UUID          `json:"business_id"`
-	Type       string             `json:"type"`
-	ActorID    uuid.UUID          `json:"actor_id"`
-	ReceiptID  pgtype.UUID        `json:"receipt_id"`
-	OccurredAt pgtype.Timestamptz `json:"occurred_at"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	SaleID     pgtype.UUID        `json:"sale_id"`
+	ID                  uuid.UUID          `json:"id"`
+	BusinessID          uuid.UUID          `json:"business_id"`
+	Type                string             `json:"type"`
+	ActorID             uuid.UUID          `json:"actor_id"`
+	ReceiptID           pgtype.UUID        `json:"receipt_id"`
+	OccurredAt          pgtype.Timestamptz `json:"occurred_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	SaleID              pgtype.UUID        `json:"sale_id"`
+	AdjustmentRequestID pgtype.UUID        `json:"adjustment_request_id"`
 }
 
 type InventoryMovement struct {
@@ -152,6 +171,21 @@ type InventoryMovement struct {
 	LocationID    uuid.UUID          `json:"location_id"`
 	QuantityDelta int32              `json:"quantity_delta"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type InventoryReview struct {
+	ID                 uuid.UUID          `json:"id"`
+	BusinessID         uuid.UUID          `json:"business_id"`
+	Type               string             `json:"type"`
+	VariantID          uuid.UUID          `json:"variant_id"`
+	LocationID         uuid.UUID          `json:"location_id"`
+	RelatedMovementID  pgtype.UUID        `json:"related_movement_id"`
+	RelatedCountLineID pgtype.UUID        `json:"related_count_line_id"`
+	Status             string             `json:"status"`
+	ResolvedBy         pgtype.UUID        `json:"resolved_by"`
+	ResolvedNote       pgtype.Text        `json:"resolved_note"`
+	ResolvedAt         pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 }
 
 type Invitation struct {
@@ -319,6 +353,28 @@ type SignupVerification struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 	Phone        pgtype.Text        `json:"phone"`
 	Channel      string             `json:"channel"`
+}
+
+type StockCount struct {
+	ID             uuid.UUID          `json:"id"`
+	BusinessID     uuid.UUID          `json:"business_id"`
+	LocationID     uuid.UUID          `json:"location_id"`
+	CountedBy      uuid.UUID          `json:"counted_by"`
+	IdempotencyKey uuid.UUID          `json:"idempotency_key"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type StockCountLine struct {
+	ID               uuid.UUID          `json:"id"`
+	BusinessID       uuid.UUID          `json:"business_id"`
+	CountID          uuid.UUID          `json:"count_id"`
+	VariantID        uuid.UUID          `json:"variant_id"`
+	ExpectedQuantity int32              `json:"expected_quantity"`
+	PhysicalQuantity int32              `json:"physical_quantity"`
+	Variance         int32              `json:"variance"`
+	IsStale          bool               `json:"is_stale"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type StockLot struct {

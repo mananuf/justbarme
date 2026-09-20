@@ -58,11 +58,44 @@ export interface CachedCatalogue {
   cachedAt: string;
 }
 
+// A physical stock count recorded on this device, written here BEFORE any
+// network call -- same "queue first" discipline as PendingSale. expectedQuantity
+// is read from catalogueCache at the moment counting happens (the device's
+// last-known balance), never re-derived later -- staleness is decided
+// server-side by comparing this figure against the *live* balance when the
+// count is actually processed (docs/PHASE_INVENTORY_COUNTS_AND_ADJUSTMENTS.md
+// §3), not by any client-side clock.
+export interface PendingStockCount {
+  idempotencyKey: string;
+  businessId: string;
+  startedAt: string;
+  lines: { variantId: string; expectedQuantity: number; physicalQuantity: number }[];
+  status: 'pending' | 'synced';
+  createdAt: string;
+}
+
+// A staff-initiated adjustment request (complimentary/broken/spoiled/
+// staff_use/manual) recorded here before any network call -- same reasoning
+// as PendingStockCount. Never carries reasonCategory 'count_correction';
+// that one is only ever server-generated from a stock count.
+export interface PendingAdjustmentRequest {
+  idempotencyKey: string;
+  businessId: string;
+  variantId: string;
+  quantityDelta: number;
+  reasonCategory: string;
+  reasonNote: string;
+  status: 'pending' | 'synced';
+  createdAt: string;
+}
+
 class JustbarmeDB extends Dexie {
   authMeta!: EntityTable<CachedIdentity, 'id'>;
   device!: EntityTable<DeviceRecord, 'id'>;
   pendingSales!: EntityTable<PendingSale, 'idempotencyKey'>;
   catalogueCache!: EntityTable<CachedCatalogue, 'businessId'>;
+  pendingStockCounts!: EntityTable<PendingStockCount, 'idempotencyKey'>;
+  pendingAdjustmentRequests!: EntityTable<PendingAdjustmentRequest, 'idempotencyKey'>;
 
   constructor() {
     super('justbarme');
@@ -80,6 +113,14 @@ class JustbarmeDB extends Dexie {
       device: 'id',
       pendingSales: 'idempotencyKey, businessId, status, createdAt',
       catalogueCache: 'businessId',
+    });
+    this.version(4).stores({
+      authMeta: 'id',
+      device: 'id',
+      pendingSales: 'idempotencyKey, businessId, status, createdAt',
+      catalogueCache: 'businessId',
+      pendingStockCounts: 'idempotencyKey, businessId, status, createdAt',
+      pendingAdjustmentRequests: 'idempotencyKey, businessId, status, createdAt',
     });
   }
 }

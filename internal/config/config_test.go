@@ -215,7 +215,7 @@ func TestLoadProductionRequiresHardenedConfiguration(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected production defaults to be rejected")
 		}
-		for _, want := range []string{"JBM_OFFLINE_SIGNING_PRIVATE_KEY", "JBM_PUBLIC_BASE_URL must be an https URL", "JBM_SMTP_USERNAME", "JBM_ZAVU_API_KEY"} {
+		for _, want := range []string{"JBM_OFFLINE_SIGNING_PRIVATE_KEY", "JBM_PUBLIC_BASE_URL must be an https URL", "JBM_SMTP_USERNAME", "JBM_ZAVU_API_KEY", "JBM_STORAGE_ENDPOINT"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("load() error = %v, want it to mention %q", err, want)
 			}
@@ -235,6 +235,11 @@ func TestLoadProductionRequiresHardenedConfiguration(t *testing.T) {
 			"JBM_SMTP_FROM":                   "justbarme <signup@justbarme.app>",
 			"JBM_ZAVU_API_KEY":                "zv_live_test",
 			"JBM_ZAVU_SENDER_ID":              "sender-123",
+			"JBM_STORAGE_ENDPOINT":            "https://account123.r2.cloudflarestorage.com",
+			"JBM_STORAGE_ACCESS_KEY_ID":       "storage-key-id",
+			"JBM_STORAGE_SECRET_ACCESS_KEY":   "storage-secret",
+			"JBM_STORAGE_BUCKET":              "justbarme-uploads",
+			"JBM_STORAGE_PUBLIC_BASE_URL":     "https://uploads.justbarme.app",
 		}
 		if _, err := load(mapLookup(values)); err != nil {
 			t.Fatalf("load() error = %v", err)

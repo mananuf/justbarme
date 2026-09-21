@@ -18,6 +18,7 @@ const MORE_PATHS = [
   '/dashboard/expenses',
   '/dashboard/activity',
   '/dashboard/reports',
+  '/dashboard/settings',
 ];
 
 function Glyph({ icon, active, onDark }: { icon: string; active?: boolean; onDark?: boolean }) {

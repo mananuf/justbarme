@@ -33,7 +33,7 @@ func testServices(t *testing.T) (*reports.Service, *sales.Service, *expenses.Ser
 		t.Skipf("database not reachable: %v", err)
 	}
 	argon2 := config.Argon2{MemoryKiB: 8 * 1024, Iterations: 1, Parallelism: 1}
-	return reports.New(pool), sales.New(pool), expenses.New(pool), inventory.New(pool), catalogue.New(pool), identity.New(pool, argon2), pool
+	return reports.New(pool), sales.New(pool, ""), expenses.New(pool), inventory.New(pool), catalogue.New(pool), identity.New(pool, argon2), pool
 }
 
 func uniqueName(prefix string) string {
@@ -100,6 +100,7 @@ func cleanupTenant(t *testing.T, pool *pgxpool.Pool, ownerID, businessID uuid.UU
 				"DELETE FROM sale_items WHERE business_id = $1",
 				"DELETE FROM sale_reviews WHERE business_id = $1",
 				"DELETE FROM sales WHERE business_id = $1",
+				"DELETE FROM bill_share_links WHERE business_id = $1",
 				"DELETE FROM bills WHERE business_id = $1",
 				"DELETE FROM inventory_balances WHERE business_id = $1",
 				"DELETE FROM stock_lots WHERE business_id = $1",

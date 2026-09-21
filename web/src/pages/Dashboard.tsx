@@ -97,12 +97,22 @@ function MoreMenuItems({
           </span>
         </Link>
       )}
+      {isOwner && (
+        <Link
+          to="/dashboard/settings"
+          onClick={onNavigate}
+          className="px-4 py-3.5 flex flex-col hover:bg-jb-ink/[0.03] transition-colors"
+        >
+          <span className="text-[13px] text-jb-ink/75">Settings</span>
+          <span className="text-[11px] text-jb-ink/40">Branding, logo, and catalogue</span>
+        </Link>
+      )}
       <Link
         to="/install"
         onClick={onNavigate}
         className="px-4 py-3.5 flex flex-col hover:bg-jb-ink/[0.03] transition-colors"
       >
-        <span className="text-[13px] text-jb-ink/75">Settings — Install justbarme</span>
+        <span className="text-[13px] text-jb-ink/75">Install justbarme</span>
         <span className="text-[11px] text-jb-ink/40">
           {leaseStatus.kind === 'valid'
             ? `Works offline until ${new Date(leaseStatus.expiresAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`

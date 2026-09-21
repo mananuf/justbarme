@@ -155,3 +155,17 @@ type BillDetail struct {
 	Payments  []Payment
 	WriteOffs []WriteOff
 }
+
+// BillShareLink is a public, revocable link to a branded read-only view of
+// one bill (docs/ARCHITECTURE.md §15, docs/PHASE_PILOT_RELEASE.md §4). The
+// raw token is never stored -- only its hash, same as a session or CSRF
+// token -- so it exists on this type only at the moment it's created,
+// never on a later read. ExpiresAt/RevokedAt are nil when not set.
+type BillShareLink struct {
+	ID        uuid.UUID
+	BillID    uuid.UUID
+	CreatedBy uuid.UUID
+	CreatedAt time.Time
+	ExpiresAt *time.Time
+	RevokedAt *time.Time
+}

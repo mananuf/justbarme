@@ -77,3 +77,17 @@ func readJSON(w http.ResponseWriter, r *http.Request, destination any, maxBytes 
 	}
 	return nil
 }
+
+// readRawBody reads the entire request body as-is -- for the one endpoint
+// that isn't JSON (POST /business/logo, a raw image upload). The caller is
+// responsible for wrapping r.Body in http.MaxBytesReader first; an
+// *http.MaxBytesError from that limit surfaces here like any other read
+// error, which callers report as a generic "too large or unreadable"
+// message rather than distinguishing the cause.
+func readRawBody(r *http.Request) ([]byte, error) {
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read request body: %w", err)
+	}
+	return data, nil
+}

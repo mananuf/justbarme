@@ -8,6 +8,7 @@ import { Landing } from '../pages/Landing';
 import { Login } from '../pages/Login';
 import { SignUp } from '../pages/SignUp';
 import { InviteAccept } from '../pages/InviteAccept';
+import { BillReceipt } from '../pages/BillReceipt';
 import { Onboarding } from '../pages/Onboarding';
 import { Install } from '../pages/Install';
 import { Dashboard } from '../pages/Dashboard';
@@ -19,6 +20,7 @@ import { Reviews } from '../pages/Reviews';
 import { Expenses } from '../pages/Expenses';
 import { Activity } from '../pages/Activity';
 import { Reports } from '../pages/Reports';
+import { Settings } from '../pages/Settings';
 import { PlatformLogin } from '../pages/platform/PlatformLogin';
 import { PlatformDashboard } from '../pages/platform/PlatformDashboard';
 
@@ -45,6 +47,7 @@ export function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<SignUp />} />
         <Route path="/invite/:token" element={<InviteAccept />} />
+        <Route path="/bill/:token" element={<BillReceipt />} />
         <Route
           path="/onboarding"
           element={
@@ -130,6 +133,14 @@ export function App() {
           element={
             <RequireAuth requireBusiness>
               <Reports />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/dashboard/settings"
+          element={
+            <RequireAuth requireBusiness>
+              <Settings />
             </RequireAuth>
           }
         />

@@ -1,0 +1,21 @@
+# Production/staging overlay -- merge onto docker-compose.yml rather than
+# using it standalone:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# The only thing this changes is WHERE the api/web images come from: CI
+# builds and pushes them to GHCR on merge to main (docs/PHASE_PILOT_
+# RELEASE.md §6's confirmed CI), and this overlay pulls those pre-built
+# images by tag instead of rebuilding from source on the VPS itself --
+# building a Vite+Go stack on a 4GB pilot box on every deploy would be
+# slow and wasteful compared to a `docker compose pull && up -d`.
+# Everything else (postgres tuning, volumes, certbot) is unchanged from
+# the base file.
+
+services:
+  api:
+    build: !reset null
+    image: ghcr.io/mananuf/justbarme-api:${IMAGE_TAG:-latest}
+
+  web:
+    build: !reset null
+    image: ghcr.io/mananuf/justbarme-web:${IMAGE_TAG:-latest}

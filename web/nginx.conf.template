@@ -1,0 +1,88 @@
+# Steady-state config -- assumes a certificate already exists at
+# /etc/letsencrypt/live/${DOMAIN}/ (mounted read-only from the host; see
+# docs/DEPLOYMENT.md for the certbot bootstrap step that has to run once,
+# before this config's HTTPS server block has anything to load).
+#
+# ${DOMAIN} is substituted by nginx's own docker-entrypoint (this file is
+# named *.template, see the Dockerfile) from the container's DOMAIN
+# environment variable -- never hand-edit a domain into this file itself.
+
+server {
+    listen 80;
+    server_name ${DOMAIN};
+
+    # Required for certbot's webroot HTTP-01 challenge, both for the
+    # initial bootstrap and every renewal -- see docs/DEPLOYMENT.md.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # index.html and the service worker must always be revalidated -- a
+    # stale cached index.html would keep pointing at old, since-deleted
+    # hashed asset filenames, and a stale cached sw.js would never pick up
+    # a new deployment at all. Every OTHER built asset is content-hashed
+    # by Vite (e.g. index-DpwixnZW.js), so it's safe to cache aggressively
+    # forever -- a new deploy always ships a new filename, never mutates
+    # an old one in place.
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+    }
+    location = /sw.js {
+        add_header Cache-Control "no-cache";
+    }
+    location = /manifest.webmanifest {
+        add_header Cache-Control "no-cache";
+    }
+    location ~* \.(js|css|woff2?|png|svg|ico)$ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    # Reverse-proxy the API -- same origin as the frontend in production,
+    # which is exactly what avoids the CSRF/Origin trap the Vite dev
+    # proxy has (see CLAUDE.md's Frontend architecture section, "Vite's
+    # dev /api proxy silently breaks the backend's CSRF check"): nginx
+    # doesn't rewrite Host, so Origin and Host agree here without the
+    # workaround that dev setup needs.
+    location /api/ {
+        proxy_pass http://api:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # The API's own /metrics (docs/PHASE_PILOT_RELEASE.md §6) sits outside
+    # /api/v1 -- see internal/httpapi/router.go's own comment on why --
+    # so it needs its own proxy location for an external scraper to reach
+    # it at all. Protected by JBM_METRICS_TOKEN's bearer-token check on
+    # the API side, not by anything here.
+    location = /metrics {
+        proxy_pass http://api:8080/metrics;
+        proxy_set_header Host $host;
+    }
+
+    # SPA fallback: any path that isn't a real static file or /api/*
+    # resolves to index.html, so React Router's client-side routes
+    # (/dashboard/sell, /bill/:token, etc.) work on a hard reload, not
+    # just client-side navigation.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

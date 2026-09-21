@@ -1,0 +1,31 @@
+# Production promotion -- docs/PHASE_PILOT_RELEASE.md §2/§6: "production
+# as a separate promotion step (a manual trigger or a tagged release),
+# never the same push driving both." Always run this against an image tag
+# that ci.yml already built and pushed (i.e. one that's already running on
+# staging, ideally one that's been sitting there a while) -- this workflow
+# does not build anything itself, only deploys an existing image.
+name: Deploy to production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (the short commit SHA ci.yml tagged staging's images with)"
+        required: true
+
+jobs:
+  deploy-production:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      # Requires PRODUCTION_SSH_HOST/USER/KEY repository secrets,
+      # deliberately separate from staging's -- see docs/DEPLOYMENT.md §5.
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PRODUCTION_SSH_HOST }}
+          username: ${{ secrets.PRODUCTION_SSH_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          script: |
+            cd /opt/justbarme
+            git pull
+            IMAGE_TAG=${{ inputs.image_tag }} COMPOSE_PROJECT_DIR=/opt/justbarme ./scripts/deploy-release.sh

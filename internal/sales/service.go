@@ -16,10 +16,15 @@ import (
 
 type Service struct {
 	pool *pgxpool.Pool
+	// publicBaseURL is the frontend's own origin (JBM_PUBLIC_BASE_URL,
+	// never this API's address -- see CLAUDE.md's Invitations section for
+	// why that distinction matters) used to build a bill share link's full
+	// URL, the same way internal/invitations builds its own invite links.
+	publicBaseURL string
 }
 
-func New(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool}
+func New(pool *pgxpool.Pool, publicBaseURL string) *Service {
+	return &Service{pool: pool, publicBaseURL: publicBaseURL}
 }
 
 func newID() (uuid.UUID, error) {

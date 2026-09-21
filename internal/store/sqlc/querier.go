@@ -67,6 +67,7 @@ type Querier interface {
 	CreateVariant(ctx context.Context, arg CreateVariantParams) (ProductVariant, error)
 	DeleteIdentityVerification(ctx context.Context, id uuid.UUID) error
 	DeleteSignupVerification(ctx context.Context, id uuid.UUID) error
+	GetActiveBillShareLinkByTokenHash(ctx context.Context, tokenHash string) (BillShareLink, error)
 	GetActivePlatformSessionByTokenHash(ctx context.Context, tokenHash string) (PlatformSession, error)
 	GetActiveSessionByTokenHash(ctx context.Context, tokenHash string) (Session, error)
 	GetBillByID(ctx context.Context, arg GetBillByIDParams) (Bill, error)
@@ -187,6 +188,7 @@ type Querier interface {
 	RejectInventoryAdjustmentRequest(ctx context.Context, arg RejectInventoryAdjustmentRequestParams) (InventoryAdjustmentRequest, error)
 	ResolveInventoryReview(ctx context.Context, arg ResolveInventoryReviewParams) (InventoryReview, error)
 	ResolveSaleReview(ctx context.Context, arg ResolveSaleReviewParams) (SaleReview, error)
+	RevokeBillShareLinkByBillID(ctx context.Context, arg RevokeBillShareLinkByBillIDParams) (BillShareLink, error)
 	RevokeDevice(ctx context.Context, arg RevokeDeviceParams) (Device, error)
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (Invitation, error)
 	RevokePlatformSession(ctx context.Context, arg RevokePlatformSessionParams) (int64, error)
@@ -228,11 +230,14 @@ type Querier interface {
 	TouchSession(ctx context.Context, id uuid.UUID) error
 	UpdateBillBalanceAndStatus(ctx context.Context, arg UpdateBillBalanceAndStatusParams) (Bill, error)
 	UpdateBillStatus(ctx context.Context, arg UpdateBillStatusParams) (Bill, error)
+	UpdateBusinessBranding(ctx context.Context, arg UpdateBusinessBrandingParams) (Business, error)
+	UpdateBusinessLogo(ctx context.Context, arg UpdateBusinessLogoParams) (Business, error)
 	UpdateCategory(ctx context.Context, arg UpdateCategoryParams) (Category, error)
 	UpdatePlatformSessionCSRFTokenHash(ctx context.Context, arg UpdatePlatformSessionCSRFTokenHashParams) error
 	UpdateProduct(ctx context.Context, arg UpdateProductParams) (Product, error)
 	UpdateSessionCSRFTokenHash(ctx context.Context, arg UpdateSessionCSRFTokenHashParams) error
 	UpdateVariant(ctx context.Context, arg UpdateVariantParams) (ProductVariant, error)
+	UpsertBillShareLink(ctx context.Context, arg UpsertBillShareLinkParams) (BillShareLink, error)
 	UpsertCatalogueTemplate(ctx context.Context, arg UpsertCatalogueTemplateParams) (CatalogueTemplate, error)
 	UpsertCatalogueTemplateVariant(ctx context.Context, arg UpsertCatalogueTemplateVariantParams) (CatalogueTemplateVariant, error)
 	UpsertInventoryBalanceDelta(ctx context.Context, arg UpsertInventoryBalanceDeltaParams) (InventoryBalance, error)

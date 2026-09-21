@@ -1,0 +1,125 @@
+# Base compose file -- docs/PHASE_PILOT_RELEASE.md §2: "Everything on one
+# VPS per environment, via Docker Compose: nginx ..., the Go API, and
+# PostgreSQL -- three services in one docker-compose.yml, identical on
+# staging and production." This file builds images locally (`docker
+# compose up --build`), which is what makes it directly usable for local
+# development/testing of the containerized stack. The actual staging/
+# production deploy overlays docker-compose.prod.yml on top of this file
+# (`docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+# -d`), which swaps these `build:` directives for pre-built images CI
+# pushed to a registry -- see that file's own header and
+# docs/DEPLOYMENT.md.
+#
+# Reads ./.env automatically (Compose's own convention for this exact
+# filename) for both ${VARIABLE} substitution in this file and, via each
+# service's env_file, the container's actual environment -- the same file
+# `go run ./cmd/api` already reads via internal/app.LoadDotEnvIfPresent.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-justbarme}
+      POSTGRES_USER: ${POSTGRES_USER:-justbarme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    # Modest tuning for a 4GB VPS shared three ways with the API and
+    # nginx (docs/PHASE_PILOT_RELEASE.md §2) -- not a dedicated database
+    # host, but no longer the single-GB squeeze an earlier draft assumed
+    # either. max_connections=50 comfortably covers config.Database's own
+    # default pool size (JBM_DB_MAX_CONNS=10) with headroom for `make
+    # migrate-up` and manual psql access alongside it.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - max_connections=50
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Loopback-only, never a public port: this is what lets the VPS
+    # host's own `migrate` CLI run `make migrate-up` directly against the
+    # running container for the explicit, controlled release step
+    # docs/PHASE_PILOT_RELEASE.md §6 calls for ("run as an explicit
+    # deploy-pipeline step... never automatically on every app start") --
+    # see docs/DEPLOYMENT.md. Not reachable from outside the VPS itself.
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-justbarme}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Overrides whatever JBM_DATABASE_URL/JBM_HTTP_ADDR the host .env
+      # carries for bare `go run` -- inside the compose network the
+      # database is reachable at the service name, not localhost, and the
+      # API listens on the port nginx/tests expect to reach it at.
+      JBM_DATABASE_URL: postgres://${POSTGRES_USER:-justbarme}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-justbarme}?sslmode=disable
+      JBM_HTTP_ADDR: :8080
+    expose:
+      - "8080"
+    # Loopback-only: lets the deploy script (scripts/deploy-release.sh)
+    # verify readiness directly, without going through nginx/TLS at all.
+    # Not reachable from outside the VPS.
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        VITE_OFFLINE_SIGNING_PUBLIC_KEY: ${JBM_OFFLINE_SIGNING_PUBLIC_KEY}
+        VITE_GOOGLE_OAUTH_CLIENT_ID: ${JBM_GOOGLE_OAUTH_CLIENT_ID}
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Read-write, not :ro -- ensure-self-signed-cert.sh (see web/Dockerfile)
+      # needs to write a placeholder certificate into this same volume the
+      # first time the stack ever starts, before certbot has issued a real
+      # one. Both containers trust this volume's contents equally; there's
+      # no meaningful isolation gained from making nginx's own mount
+      # read-only here.
+      - certbot_conf:/etc/letsencrypt
+      - certbot_webroot:/var/www/certbot:ro
+
+  # Renews the Let's Encrypt certificate every 12 hours (a no-op unless
+  # the cert is within its renewal window) -- the actual first-issuance
+  # bootstrap is a one-time manual step, see docs/DEPLOYMENT.md, since it
+  # needs nginx already serving the ACME challenge path before a
+  # certificate exists to configure nginx's HTTPS block with in the first
+  # place.
+  certbot:
+    image: certbot/certbot:latest
+    restart: unless-stopped
+    volumes:
+      - certbot_conf:/etc/letsencrypt
+      - certbot_webroot:/var/www/certbot
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot; sleep 12h & wait $${!}; done"
+
+volumes:
+  postgres_data:
+  certbot_conf:
+  certbot_webroot:

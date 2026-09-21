@@ -73,7 +73,9 @@ interface RawProduct {
   id: string;
   name: string;
   category_id: string | null;
-  variants: RawVariant[];
+  // Omitted (not just empty) by PATCH /products/{id}'s response, which
+  // never recomputes variants -- see updateProduct below.
+  variants?: RawVariant[];
 }
 
 function toCatalogueProduct(p: RawProduct): CatalogueProduct {
@@ -81,7 +83,7 @@ function toCatalogueProduct(p: RawProduct): CatalogueProduct {
     id: p.id,
     name: p.name,
     categoryId: p.category_id,
-    variants: p.variants.map((v) => ({
+    variants: (p.variants ?? []).map((v) => ({
       id: v.id,
       name: v.name,
       active: v.active,
@@ -173,4 +175,109 @@ export async function setVariantPrice(
     headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
     body: JSON.stringify({ amount_kobo: amountKobo }),
   });
+}
+
+export interface Category {
+  id: string;
+  name: string;
+  sortOrder: number;
+  active: boolean;
+}
+
+interface RawCategory {
+  id: string;
+  name: string;
+  sort_order: number;
+  active: boolean;
+}
+
+function toCategory(c: RawCategory): Category {
+  return { id: c.id, name: c.name, sortOrder: c.sort_order, active: c.active };
+}
+
+// listCategories wraps GET /api/v1/categories (catalogue:read -- both roles).
+export async function listCategories(businessId: string): Promise<Category[]> {
+  const raw = await apiRequest<RawCategory[]>('/api/v1/categories', {
+    headers: { 'X-Business-ID': businessId },
+  });
+  return raw.map(toCategory);
+}
+
+// createCategory wraps POST /api/v1/categories (catalogue:manage -- owner-only).
+export async function createCategory(
+  name: string,
+  sortOrder: number,
+  businessId: string,
+  csrfToken: string,
+): Promise<Category> {
+  const raw = await apiRequest<RawCategory>('/api/v1/categories', {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
+    body: JSON.stringify({ name, sort_order: sortOrder }),
+  });
+  return toCategory(raw);
+}
+
+// updateCategory wraps PATCH /api/v1/categories/{category_id} -- a full
+// replacement of the mutable fields (name/sort_order/active), matching
+// this codebase's PATCH convention (see docs/PHASE_PILOT_RELEASE.md §5).
+export async function updateCategory(
+  categoryId: string,
+  params: { name: string; sortOrder: number; active: boolean },
+  businessId: string,
+  csrfToken: string,
+): Promise<Category> {
+  const raw = await apiRequest<RawCategory>(`/api/v1/categories/${categoryId}`, {
+    method: 'PATCH',
+    headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
+    body: JSON.stringify({
+      name: params.name,
+      sort_order: params.sortOrder,
+      active: params.active,
+    }),
+  });
+  return toCategory(raw);
+}
+
+// updateProduct wraps PATCH /api/v1/products/{product_id} -- a full
+// replacement of the mutable fields. categoryId of null clears the
+// product's category.
+export async function updateProduct(
+  productId: string,
+  params: { name: string; categoryId: string | null; active: boolean },
+  businessId: string,
+  csrfToken: string,
+): Promise<CatalogueProduct> {
+  const raw = await apiRequest<RawProduct>(`/api/v1/products/${productId}`, {
+    method: 'PATCH',
+    headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
+    body: JSON.stringify({
+      name: params.name,
+      category_id: params.categoryId,
+      active: params.active,
+    }),
+  });
+  return toCatalogueProduct(raw);
+}
+
+// updateVariant wraps PATCH /api/v1/variants/{variant_id} -- name and
+// active only; price changes go through setVariantPrice instead.
+export async function updateVariant(
+  variantId: string,
+  params: { name: string; active: boolean },
+  businessId: string,
+  csrfToken: string,
+): Promise<CatalogueVariant> {
+  const raw = await apiRequest<RawVariant>(`/api/v1/variants/${variantId}`, {
+    method: 'PATCH',
+    headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
+    body: JSON.stringify({ name: params.name, active: params.active }),
+  });
+  return {
+    id: raw.id,
+    name: raw.name,
+    active: raw.active,
+    currentPriceKobo: raw.current_price.amount_kobo,
+    currentStock: raw.current_stock,
+  };
 }

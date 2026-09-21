@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mananuf/justbarme/internal/activity"
+	"github.com/mananuf/justbarme/internal/business"
 	"github.com/mananuf/justbarme/internal/catalogue"
 	"github.com/mananuf/justbarme/internal/config"
 	"github.com/mananuf/justbarme/internal/email"
@@ -22,11 +23,13 @@ import (
 	"github.com/mananuf/justbarme/internal/identity"
 	"github.com/mananuf/justbarme/internal/inventory"
 	"github.com/mananuf/justbarme/internal/invitations"
+	"github.com/mananuf/justbarme/internal/metrics"
 	"github.com/mananuf/justbarme/internal/oauth"
 	"github.com/mananuf/justbarme/internal/platformadmin"
 	"github.com/mananuf/justbarme/internal/reports"
 	"github.com/mananuf/justbarme/internal/sales"
 	"github.com/mananuf/justbarme/internal/signup"
+	"github.com/mananuf/justbarme/internal/storage"
 	"github.com/mananuf/justbarme/internal/store"
 	"github.com/mananuf/justbarme/internal/verification"
 	"github.com/mananuf/justbarme/internal/whatsapp"
@@ -51,19 +54,30 @@ func Run(ctx context.Context) error {
 
 	emailSvc := emailProvider(cfg, logger)
 	whatsappSvc := whatsappProvider(cfg, logger)
+	storageSvc, err := storageProvider(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
 
 	identitySvc := identity.New(pool, cfg.Argon2)
 	catalogueSvc := catalogue.New(pool)
 	inventorySvc := inventory.New(pool)
-	salesSvc := sales.New(pool)
+	salesSvc := sales.New(pool, cfg.PublicBaseURL)
 	expensesSvc := expenses.New(pool)
 	activitySvc := activity.New(pool)
 	reportsSvc := reports.New(pool)
+	businessSvc := business.New(pool, storageSvc)
 	platformAdminSvc := platformadmin.New(pool, cfg.Argon2)
 	signupSvc := signup.New(pool, cfg.Argon2, identitySvc, emailSvc, whatsappSvc, cfg.Signup.OTPTTL)
 	invitationsSvc := invitations.New(pool, identitySvc, emailSvc, whatsappSvc, cfg.PublicBaseURL)
 	verificationSvc := verification.New(pool, identitySvc, emailSvc, whatsappSvc)
 	oauthSvc := googleOAuthService(cfg, pool, identitySvc, logger)
+
+	metricsRegistry := metrics.New()
+	metricsRegistry.MustRegister(
+		metrics.NewDBPoolCollector(pool),
+		metrics.NewReviewsCollector(pool, salesSvc, inventorySvc, logger),
+	)
 
 	handler := httpapi.NewHandler(httpapi.Dependencies{
 		Logger:        logger,
@@ -77,7 +91,9 @@ func Run(ctx context.Context) error {
 		Expenses:      expensesSvc,
 		Activity:      activitySvc,
 		Reports:       reportsSvc,
+		Business:      businessSvc,
 		PlatformAdmin: platformAdminSvc,
+		Metrics:       metricsRegistry,
 		Signup:        signupSvc,
 		Invitations:   invitationsSvc,
 		Verification:  verificationSvc,
@@ -158,6 +174,31 @@ func whatsappProvider(cfg config.Config, logger *slog.Logger) whatsapp.Provider 
 	logger.Warn("no Zavu credentials configured; WhatsApp messages will only be logged, not sent",
 		"note", "set JBM_ZAVU_API_KEY/SENDER_ID to send real WhatsApp messages")
 	return whatsapp.NewConsoleProvider(logger)
+}
+
+// storageProvider returns a real S3-compatible provider (Cloudflare R2 for
+// the pilot, see docs/PHASE_PILOT_RELEASE.md §3) when configured, or a
+// local-disk fallback outside production when it isn't -- the same
+// dev-convenience-not-silent-gap pattern as emailProvider/whatsappProvider.
+// Unlike those, building the real provider can itself fail (it loads AWS
+// SDK config), so this returns an error instead of only ever succeeding.
+func storageProvider(ctx context.Context, cfg config.Config, logger *slog.Logger) (storage.Provider, error) {
+	if cfg.Storage.Configured() {
+		return storage.NewS3Provider(ctx, cfg.Storage.Endpoint, cfg.Storage.Region,
+			cfg.Storage.AccessKeyID, cfg.Storage.SecretAccessKey, cfg.Storage.Bucket, cfg.Storage.PublicBaseURL)
+	}
+	publicBaseURL := cfg.Storage.PublicBaseURL
+	if publicBaseURL == "" {
+		// This API itself serves the local uploads directory at
+		// /dev-uploads (see router.go's devUploadsDir wiring) so a logo
+		// uploaded in development is genuinely viewable, not just written
+		// to disk with nothing able to read it back.
+		publicBaseURL = "http://localhost" + cfg.HTTP.Addr + "/dev-uploads"
+	}
+	logger.Warn("no object storage credentials configured; uploads will be written to local disk only",
+		"note", "set JBM_STORAGE_ENDPOINT/ACCESS_KEY_ID/SECRET_ACCESS_KEY/BUCKET/PUBLIC_BASE_URL to use real object storage",
+		"local_dir", cfg.Storage.LocalDir, "public_base_url", publicBaseURL)
+	return storage.NewLocalDiskProvider(cfg.Storage.LocalDir, publicBaseURL), nil
 }
 
 // googleOAuthService returns nil when JBM_GOOGLE_OAUTH_CLIENT_ID is unset --

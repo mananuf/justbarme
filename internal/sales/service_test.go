@@ -31,7 +31,7 @@ func testServices(t *testing.T) (*sales.Service, *inventory.Service, *catalogue.
 		t.Skipf("database not reachable: %v", err)
 	}
 	argon2 := config.Argon2{MemoryKiB: 8 * 1024, Iterations: 1, Parallelism: 1}
-	return sales.New(pool), inventory.New(pool), catalogue.New(pool), identity.New(pool, argon2), pool
+	return sales.New(pool, ""), inventory.New(pool), catalogue.New(pool), identity.New(pool, argon2), pool
 }
 
 func uniqueName(prefix string) string {
@@ -110,6 +110,10 @@ func cleanupTenant(t *testing.T, pool *pgxpool.Pool, ownerID, businessID uuid.UU
 				"DELETE FROM payments WHERE business_id = $1",
 				"DELETE FROM bill_write_offs WHERE business_id = $1",
 				"DELETE FROM sales WHERE business_id = $1",
+				// bill_share_links (migration 000024) has its own FK to
+				// bills -- must go before it, same reasoning as every
+				// other entry in this list.
+				"DELETE FROM bill_share_links WHERE business_id = $1",
 				"DELETE FROM bills WHERE business_id = $1",
 				"DELETE FROM customers WHERE business_id = $1",
 				"DELETE FROM tables WHERE business_id = $1",

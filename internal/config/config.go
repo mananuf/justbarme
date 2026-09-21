@@ -132,6 +132,32 @@ type GoogleOAuth struct {
 	ClientID string
 }
 
+// Storage configures the object-storage provider used for business logo
+// uploads (internal/storage, docs/PHASE_PILOT_RELEASE.md §3). The pilot
+// points this at a Cloudflare R2 bucket via the generic S3-compatible
+// client, but nothing here is R2-specific. Enforced in production the same
+// way SMTP/Zavu are -- storage.LocalDiskProvider is the dev-only fallback
+// (internal/app.storageProvider).
+type Storage struct {
+	Endpoint        string
+	Region          string
+	AccessKeyID     string
+	SecretAccessKey string
+	Bucket          string
+	PublicBaseURL   string
+	// LocalDir is where storage.LocalDiskProvider writes objects outside
+	// production when no real credentials are configured.
+	LocalDir string
+}
+
+// Configured reports whether real object-storage credentials are present.
+// When false, internal/app falls back to storage.LocalDiskProvider outside
+// production (config.Load itself refuses to start in production without
+// them).
+func (s Storage) Configured() bool {
+	return s.Endpoint != "" && s.AccessKeyID != "" && s.SecretAccessKey != "" && s.Bucket != "" && s.PublicBaseURL != ""
+}
+
 type Config struct {
 	Env             string
 	HTTP            HTTP
@@ -145,7 +171,16 @@ type Config struct {
 	Zavu            Zavu
 	Signup          Signup
 	GoogleOAuth     GoogleOAuth
+	Storage         Storage
 	PublicBaseURL   string
+	// MetricsToken, when set, requires GET /metrics requests to carry
+	// "Authorization: Bearer <token>" matching it -- optional hardening
+	// for a lightweight observability endpoint (docs/PHASE_PILOT_
+	// RELEASE.md §6), not enforced in production the way a real secret
+	// (SMTP/Zavu/Storage) is: a leaked scrape token exposes aggregate
+	// counts, not tenant data. Left empty, /metrics is open -- fine for
+	// local development.
+	MetricsToken string
 }
 
 type lookupEnv func(string) (string, bool)
@@ -200,6 +235,9 @@ func load(lookup lookupEnv) (Config, error) {
 		},
 		Signup: Signup{
 			OTPTTL: 10 * time.Minute,
+		},
+		Storage: Storage{
+			LocalDir: ".dev-uploads",
 		},
 	}
 
@@ -285,10 +323,23 @@ func load(lookup lookupEnv) (Config, error) {
 
 	cfg.GoogleOAuth.ClientID = stringValue(lookup, "JBM_GOOGLE_OAUTH_CLIENT_ID", cfg.GoogleOAuth.ClientID)
 
+	cfg.Storage.Endpoint = stringValue(lookup, "JBM_STORAGE_ENDPOINT", cfg.Storage.Endpoint)
+	cfg.Storage.Region = stringValue(lookup, "JBM_STORAGE_REGION", cfg.Storage.Region)
+	cfg.Storage.AccessKeyID = stringValue(lookup, "JBM_STORAGE_ACCESS_KEY_ID", cfg.Storage.AccessKeyID)
+	cfg.Storage.SecretAccessKey = stringValue(lookup, "JBM_STORAGE_SECRET_ACCESS_KEY", cfg.Storage.SecretAccessKey)
+	cfg.Storage.Bucket = stringValue(lookup, "JBM_STORAGE_BUCKET", cfg.Storage.Bucket)
+	cfg.Storage.PublicBaseURL = stringValue(lookup, "JBM_STORAGE_PUBLIC_BASE_URL", cfg.Storage.PublicBaseURL)
+	cfg.Storage.LocalDir = stringValue(lookup, "JBM_STORAGE_LOCAL_DIR", cfg.Storage.LocalDir)
+	if cfg.Env == Production && !cfg.Storage.Configured() {
+		problems = append(problems, "JBM_STORAGE_ENDPOINT, JBM_STORAGE_ACCESS_KEY_ID, JBM_STORAGE_SECRET_ACCESS_KEY, JBM_STORAGE_BUCKET, and JBM_STORAGE_PUBLIC_BASE_URL are required in production")
+	}
+
 	cfg.PublicBaseURL = stringValue(lookup, "JBM_PUBLIC_BASE_URL", cfg.PublicBaseURL)
 	if cfg.Env == Production && !strings.HasPrefix(cfg.PublicBaseURL, "https://") {
 		problems = append(problems, "JBM_PUBLIC_BASE_URL must be an https URL in production")
 	}
+
+	cfg.MetricsToken = stringValue(lookup, "JBM_METRICS_TOKEN", cfg.MetricsToken)
 
 	if len(problems) > 0 {
 		return Config{}, fmt.Errorf("invalid configuration: %s", strings.Join(problems, "; "))

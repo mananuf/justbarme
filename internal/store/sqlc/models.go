@@ -23,6 +23,17 @@ type Bill struct {
 	BalanceKobo int64              `json:"balance_kobo"`
 }
 
+type BillShareLink struct {
+	ID         uuid.UUID          `json:"id"`
+	BusinessID uuid.UUID          `json:"business_id"`
+	BillID     uuid.UUID          `json:"bill_id"`
+	TokenHash  string             `json:"token_hash"`
+	CreatedBy  uuid.UUID          `json:"created_by"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+}
+
 type BillWriteOff struct {
 	ID         uuid.UUID          `json:"id"`
 	BusinessID uuid.UUID          `json:"business_id"`

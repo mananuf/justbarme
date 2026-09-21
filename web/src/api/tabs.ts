@@ -362,3 +362,43 @@ export async function recordPayment(
   });
   return { amountKobo: raw.amount_kobo, method: raw.method };
 }
+
+export interface BillShareLink {
+  token: string;
+  url: string;
+}
+
+interface RawBillShareLink {
+  token: string;
+  url: string;
+}
+
+// createOrRotateShareLink creates a public bill-share link, or replaces
+// the existing one if the bill already has one -- see
+// docs/PHASE_PILOT_RELEASE.md §4. The returned token is only ever shown
+// here, at creation; calling this again produces a new, different token
+// and the previous one stops working immediately.
+export async function createOrRotateShareLink(
+  billId: string,
+  businessId: string,
+  csrfToken: string,
+): Promise<BillShareLink> {
+  const raw = await apiRequest<RawBillShareLink>(`/api/v1/bills/${billId}/share-link`, {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
+    body: JSON.stringify({}),
+  });
+  return { token: raw.token, url: raw.url };
+}
+
+export async function revokeShareLink(
+  billId: string,
+  businessId: string,
+  csrfToken: string,
+): Promise<void> {
+  await apiRequest<{ revoked: boolean }>(`/api/v1/bills/${billId}/share-link/revoke`, {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
+    body: JSON.stringify({}),
+  });
+}

@@ -22,7 +22,7 @@ func tabsErrorResponse(api *API, w http.ResponseWriter, r *http.Request, err err
 	switch {
 	case errors.Is(err, sales.ErrTableNotFound), errors.Is(err, sales.ErrCustomerNotFound),
 		errors.Is(err, sales.ErrBillNotFound), errors.Is(err, sales.ErrPaymentNotFound),
-		errors.Is(err, sales.ErrVariantNotFound):
+		errors.Is(err, sales.ErrVariantNotFound), errors.Is(err, sales.ErrShareLinkNotFound):
 		api.notFoundResponse(w, r)
 	case errors.Is(err, sales.ErrTableLabelTaken), errors.Is(err, sales.ErrBillNotOpen),
 		errors.Is(err, sales.ErrBillNotClosedUnpaid), errors.Is(err, sales.ErrBillNotPayable),

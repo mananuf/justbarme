@@ -11,12 +11,14 @@ import (
 
 	"github.com/mananuf/justbarme/internal/activity"
 	"github.com/mananuf/justbarme/internal/auth"
+	"github.com/mananuf/justbarme/internal/business"
 	"github.com/mananuf/justbarme/internal/catalogue"
 	"github.com/mananuf/justbarme/internal/config"
 	"github.com/mananuf/justbarme/internal/expenses"
 	"github.com/mananuf/justbarme/internal/identity"
 	"github.com/mananuf/justbarme/internal/inventory"
 	"github.com/mananuf/justbarme/internal/invitations"
+	"github.com/mananuf/justbarme/internal/metrics"
 	"github.com/mananuf/justbarme/internal/oauth"
 	"github.com/mananuf/justbarme/internal/platformadmin"
 	"github.com/mananuf/justbarme/internal/reports"
@@ -41,10 +43,15 @@ type Dependencies struct {
 	Expenses      *expenses.Service
 	Activity      *activity.Service
 	Reports       *reports.Service
+	Business      *business.Service
 	PlatformAdmin *platformadmin.Service
-	Signup        *signup.Service
-	Invitations   *invitations.Service
-	Verification  *verification.Service
+	// Metrics is nil-safe -- accessLogMiddleware and the login handler
+	// simply skip recording when it's unset (e.g. a test harness that
+	// doesn't care about metrics).
+	Metrics      *metrics.Registry
+	Signup       *signup.Service
+	Invitations  *invitations.Service
+	Verification *verification.Service
 	// OAuth is nil when Google sign-in isn't configured (see
 	// internal/app.googleOAuthService) -- NewHandler only registers
 	// POST /auth/google when it's set.
@@ -65,7 +72,9 @@ type API struct {
 	expenses          *expenses.Service
 	activity          *activity.Service
 	reports           *reports.Service
+	business          *business.Service
 	platformAdmin     *platformadmin.Service
+	metrics           *metrics.Registry
 	signup            *signup.Service
 	invitations       *invitations.Service
 	verification      *verification.Service
@@ -94,6 +103,10 @@ type API struct {
 	invitationAcceptIPLimiter         *auth.Limiter
 
 	googleSignInIPLimiter *auth.Limiter
+
+	publicBillLookupIPLimiter *auth.Limiter
+
+	metricsToken string
 }
 
 func NewHandler(deps Dependencies) http.Handler {
@@ -120,7 +133,10 @@ func NewHandler(deps Dependencies) http.Handler {
 		expenses:          deps.Expenses,
 		activity:          deps.Activity,
 		reports:           deps.Reports,
+		business:          deps.Business,
 		platformAdmin:     deps.PlatformAdmin,
+		metrics:           deps.Metrics,
+		metricsToken:      deps.Config.MetricsToken,
 		signup:            deps.Signup,
 		invitations:       deps.Invitations,
 		verification:      deps.Verification,
@@ -174,6 +190,11 @@ func NewHandler(deps Dependencies) http.Handler {
 		// work from garbage tokens, not defend against brute-forcing --
 		// generous enough that legitimate multi-tab sign-ins never trip it.
 		googleSignInIPLimiter: auth.NewLimiter(30, time.Minute),
+
+		// docs/PHASE_PILOT_RELEASE.md §4: a genuinely unauthenticated
+		// surface next to a guessable-adjacent token, same shape and
+		// numbers as invitationLookupIPLimiter above.
+		publicBillLookupIPLimiter: auth.NewLimiter(30, 15*time.Minute),
 	}
 
 	router := chi.NewRouter()
@@ -184,6 +205,22 @@ func NewHandler(deps Dependencies) http.Handler {
 
 	router.NotFound(api.notFoundResponse)
 	router.MethodNotAllowed(api.methodNotAllowedResponse)
+
+	// Outside production only: serves whatever storage.LocalDiskProvider
+	// wrote to disk (see internal/app.storageProvider) so an uploaded logo
+	// is genuinely viewable in development without real object-storage
+	// credentials. Never registered in production -- config.Load refuses
+	// to start there without a real provider configured, so this path
+	// would just be dead weight.
+	if api.env != config.Production && deps.Config.Storage.LocalDir != "" {
+		fileServer := http.FileServer(http.Dir(deps.Config.Storage.LocalDir))
+		router.Handle("/dev-uploads/*", http.StripPrefix("/dev-uploads/", fileServer))
+	}
+
+	// Deliberately outside /api/v1 -- Prometheus scrapers expect a bare
+	// /metrics path, and this isn't a versioned application API surface.
+	// See metricsHandler for the optional bearer-token gate.
+	router.Get("/metrics", api.metricsHandler)
 
 	router.Route("/api/v1", func(router chi.Router) {
 		router.Get("/health/live", api.liveness)
@@ -203,6 +240,12 @@ func NewHandler(deps Dependencies) http.Handler {
 		router.Post("/invitations/{token}/accept", api.acceptInvitationAsNewUser)
 
 		router.Post("/webhooks/zavu", api.zavuWebhook)
+
+		// Public, unauthenticated: a bill-share-link recipient has no
+		// session and no business context -- the row's own unguessable
+		// hashed token is the access control, same reasoning as the
+		// invitation lookup above (docs/PHASE_PILOT_RELEASE.md §4).
+		router.Get("/public/bills/{token}", api.getPublicBill)
 
 		router.Group(func(router chi.Router) {
 			router.Use(api.requireAuth)
@@ -227,6 +270,8 @@ func NewHandler(deps Dependencies) http.Handler {
 				router.Use(api.requireBusinessContext)
 
 				router.Get("/business", api.getBusiness)
+				router.Patch("/business", api.updateBusinessSettings)
+				router.Post("/business/logo", api.uploadBusinessLogo)
 
 				router.Post("/invitations", api.createInvitation)
 				router.Get("/invitations", api.listInvitations)
@@ -305,6 +350,9 @@ func NewHandler(deps Dependencies) http.Handler {
 				router.Post("/bills/{bill_id}/write-off", api.writeOffBill)
 				router.Post("/bills/{bill_id}/payments", api.recordPayment)
 				router.Post("/payments/{payment_id}/reverse", api.reversePayment)
+
+				router.Post("/bills/{bill_id}/share-link", api.createOrRotateBillShareLink)
+				router.Post("/bills/{bill_id}/share-link/revoke", api.revokeBillShareLink)
 			})
 		})
 

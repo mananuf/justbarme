@@ -66,6 +66,9 @@ func (api *API) login(w http.ResponseWriter, r *http.Request) {
 	user, err := api.identity.Authenticate(r.Context(), req.Identifier, req.Password)
 	if err != nil {
 		if errors.Is(err, identity.ErrInvalidCredentials) {
+			if api.metrics != nil {
+				api.metrics.IncrementLoginFailure()
+			}
 			api.invalidCredentialsResponse(w, r)
 			return
 		}

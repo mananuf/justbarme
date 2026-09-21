@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
@@ -91,18 +92,42 @@ func (api *API) accessLogMiddleware(next http.Handler) http.Handler {
 		started := time.Now()
 		recorder := &responseRecorder{ResponseWriter: w}
 		next.ServeHTTP(recorder, r)
+		duration := time.Since(started)
 
 		status := recorder.status
 		if status == 0 {
 			status = http.StatusOK
 		}
+
+		// chi.RouteContext's RoutePattern is only fully populated once
+		// routing has actually matched a handler -- reading it here,
+		// after next.ServeHTTP returns, is what makes this the resolved
+		// pattern ("/bills/{bill_id}/rounds") rather than the raw path
+		// with a live UUID in it. A request that matched no route at all
+		// (chi's NotFound handler) leaves it empty, so fall back to the
+		// raw path -- still useful for spotting a genuinely wrong URL,
+		// and the fallback is exactly why this can't just always be the
+		// pattern.
+		route := ""
+		if routeCtx := chi.RouteContext(r.Context()); routeCtx != nil {
+			route = routeCtx.RoutePattern()
+		}
+		if route == "" {
+			route = r.URL.Path
+		}
+
+		if api.metrics != nil {
+			api.metrics.ObserveHTTPRequest(route, r.Method, status, duration)
+		}
+
 		api.logger.LogAttrs(r.Context(), slog.LevelInfo, "HTTP request",
 			slog.String("request_id", RequestID(r.Context())),
 			slog.String("method", r.Method),
+			slog.String("route", route),
 			slog.String("path", r.URL.Path),
 			slog.Int("status", status),
 			slog.Int("response_bytes", recorder.bytes),
-			slog.Duration("duration", time.Since(started)),
+			slog.Duration("duration", duration),
 		)
 	})
 }

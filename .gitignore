@@ -15,6 +15,9 @@ coverage/
 playwright-report/
 test-results/
 
+# Local-only object storage fallback (internal/storage.LocalDiskProvider)
+.dev-uploads/
+
 # Editor and operating-system files
 .DS_Store
 .idea/

@@ -6,6 +6,7 @@ import {
   addSaleRound,
   closeBill,
   createCustomer,
+  createOrRotateShareLink,
   createTable,
   getBillDetail,
   listBills,
@@ -86,6 +87,8 @@ export function Tabs() {
   const [showWriteOff, setShowWriteOff] = useState(false);
   const [writeOffAmount, setWriteOffAmount] = useState('');
   const [writeOffReason, setWriteOffReason] = useState('');
+  const [sharing, setSharing] = useState(false);
+  const [shareLinkUrl, setShareLinkUrl] = useState<string | null>(null);
 
   const refreshBillDetail = async (billId: string) => {
     if (!selectedBusinessId) return;
@@ -314,6 +317,43 @@ export function Tabs() {
       setActionError(describeActionError(err, 'Could not void this tab.'));
     } finally {
       setBusy(false);
+    }
+  }
+
+  // handleShare creates (or rotates) the bill's public share link, then
+  // hands it to the Web Share API when available -- WhatsApp/email/etc.
+  // all show up as native share-sheet targets on a phone -- falling back
+  // to just showing/copying the URL in-page on a browser without it (most
+  // desktop browsers) per docs/PHASE_PILOT_RELEASE.md §4.
+  async function handleShare(billId: string) {
+    if (!selectedBusinessId || !csrfToken) return;
+    setSharing(true);
+    setActionError(null);
+    try {
+      const { url } = await createOrRotateShareLink(billId, selectedBusinessId, csrfToken);
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: 'Your bill', url });
+          return;
+        } catch {
+          // User cancelled the share sheet, or the platform rejected it --
+          // fall through to the copy-link fallback rather than treating
+          // this as an error.
+        }
+      }
+      if (navigator.clipboard) {
+        try {
+          await navigator.clipboard.writeText(url);
+        } catch {
+          // Clipboard access can be denied by the browser -- the URL is
+          // still shown on-page below, so this is not fatal.
+        }
+      }
+      setShareLinkUrl(url);
+    } catch (err) {
+      setActionError(describeActionError(err, 'Could not create a share link.'));
+    } finally {
+      setSharing(false);
     }
   }
 
@@ -673,7 +713,27 @@ export function Tabs() {
               </div>
             )}
 
+          {shareLinkUrl && (
+            <div className="mb-4 rounded-xl border border-jb-ink/10 bg-white p-3 text-[13px] space-y-1.5">
+              <div className="text-jb-ink/60">Link copied — share it with the customer:</div>
+              <div className="break-all text-jb-ink font-medium">{shareLinkUrl}</div>
+              <button
+                onClick={() => setShareLinkUrl(null)}
+                className="text-jb-ink/45 text-[12px] underline underline-offset-2"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           <div className="flex flex-col gap-2 mb-6">
+            <button
+              onClick={() => void handleShare(activeBillId)}
+              disabled={sharing}
+              className="w-full rounded-xl border border-jb-ink/15 text-jb-ink text-[14px] font-medium py-3 disabled:opacity-40"
+            >
+              {sharing ? 'Preparing link…' : 'Share bill'}
+            </button>
             {activeDetail.status === 'open' && (
               <button
                 onClick={() => void handleCloseBill(activeBillId)}

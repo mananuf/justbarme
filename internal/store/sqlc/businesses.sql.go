@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createBusiness = `-- name: CreateBusiness :one
@@ -49,6 +50,83 @@ SELECT id, name, timezone, currency, phone, address, receipt_wording, receipt_fo
 
 func (q *Queries) GetBusinessByID(ctx context.Context, id uuid.UUID) (Business, error) {
 	row := q.db.QueryRow(ctx, getBusinessByID, id)
+	var i Business
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Timezone,
+		&i.Currency,
+		&i.Phone,
+		&i.Address,
+		&i.ReceiptWording,
+		&i.ReceiptFooter,
+		&i.PaymentInstructions,
+		&i.LogoObjectKey,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateBusinessBranding = `-- name: UpdateBusinessBranding :one
+UPDATE businesses
+SET phone = $2, address = $3, receipt_wording = $4, receipt_footer = $5, payment_instructions = $6, updated_at = now()
+WHERE id = $1
+RETURNING id, name, timezone, currency, phone, address, receipt_wording, receipt_footer, payment_instructions, logo_object_key, status, created_at, updated_at
+`
+
+type UpdateBusinessBrandingParams struct {
+	ID                  uuid.UUID   `json:"id"`
+	Phone               pgtype.Text `json:"phone"`
+	Address             pgtype.Text `json:"address"`
+	ReceiptWording      pgtype.Text `json:"receipt_wording"`
+	ReceiptFooter       pgtype.Text `json:"receipt_footer"`
+	PaymentInstructions pgtype.Text `json:"payment_instructions"`
+}
+
+func (q *Queries) UpdateBusinessBranding(ctx context.Context, arg UpdateBusinessBrandingParams) (Business, error) {
+	row := q.db.QueryRow(ctx, updateBusinessBranding,
+		arg.ID,
+		arg.Phone,
+		arg.Address,
+		arg.ReceiptWording,
+		arg.ReceiptFooter,
+		arg.PaymentInstructions,
+	)
+	var i Business
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Timezone,
+		&i.Currency,
+		&i.Phone,
+		&i.Address,
+		&i.ReceiptWording,
+		&i.ReceiptFooter,
+		&i.PaymentInstructions,
+		&i.LogoObjectKey,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateBusinessLogo = `-- name: UpdateBusinessLogo :one
+UPDATE businesses
+SET logo_object_key = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, name, timezone, currency, phone, address, receipt_wording, receipt_footer, payment_instructions, logo_object_key, status, created_at, updated_at
+`
+
+type UpdateBusinessLogoParams struct {
+	ID            uuid.UUID   `json:"id"`
+	LogoObjectKey pgtype.Text `json:"logo_object_key"`
+}
+
+func (q *Queries) UpdateBusinessLogo(ctx context.Context, arg UpdateBusinessLogoParams) (Business, error) {
+	row := q.db.QueryRow(ctx, updateBusinessLogo, arg.ID, arg.LogoObjectKey)
 	var i Business
 	err := row.Scan(
 		&i.ID,

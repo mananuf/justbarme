@@ -73,29 +73,28 @@ func (api *API) createBusiness(w http.ResponseWriter, r *http.Request) {
 }
 
 // getBusiness implements GET /api/v1/business: the tenant-scoped business
-// resolved by requireBusinessContext. Any active member may read it —
-// editing settings (PATCH) is deferred to the Phase 3 catalogue/branding
-// work in docs/IMPLEMENTATION_PLAN.md.
+// resolved by requireBusinessContext, including its branding fields and
+// derived logo URL (internal/business, docs/PHASE_PILOT_RELEASE.md §5).
+// Any active member may read it — PATCH is owner-only, see
+// updateBusinessSettings/uploadBusinessLogo.
 func (api *API) getBusiness(w http.ResponseWriter, r *http.Request) {
 	principal, ok := tenancy.PrincipalFromContext(r.Context())
 	if !ok {
 		api.internalErrorResponse(w, r, errors.New("getBusiness ran without requireAuth"))
 		return
 	}
-	business, ok := api.requireCapability(w, r, tenancy.CapabilityBusinessRead)
+	businessCtx, ok := api.requireCapability(w, r, tenancy.CapabilityBusinessRead)
 	if !ok {
 		return
 	}
 
-	found, err := api.identity.GetBusiness(r.Context(), principal.UserID, business.BusinessID)
+	found, err := api.business.Get(r.Context(), principal.UserID, businessCtx.BusinessID)
 	if err != nil {
-		api.internalErrorResponse(w, r, fmt.Errorf("get business: %w", err))
+		businessErrorResponse(api, w, r, err, "get business")
 		return
 	}
 
-	payload := envelope{"data": businessResponse{
-		ID: found.ID.String(), Name: found.Name, Timezone: found.Timezone, Currency: found.Currency,
-	}}
+	payload := envelope{"data": toBusinessSettingsResponse(found)}
 	if err := writeJSON(w, http.StatusOK, payload, nil); err != nil {
 		api.logger.Error("write business response", "request_id", RequestID(r.Context()), "error", err)
 	}

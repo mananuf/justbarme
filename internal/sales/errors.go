@@ -32,6 +32,14 @@ var (
 	ErrBillNotEditable            = errors.New("bill can only be edited while open or awaiting payment")
 	ErrInsufficientQuantityOnBill = errors.New("cannot remove more than is currently on the bill")
 	ErrBillFullyPaid              = errors.New("this bill is already fully paid; removing an item would leave a negative balance")
+
+	// ErrShareLinkNotFound covers a token that never existed, was revoked,
+	// or has expired -- all indistinguishably, on purpose. The public
+	// lookup endpoint has no legitimate reason to tell a caller which of
+	// the three happened, matching this codebase's existing "a business
+	// that doesn't exist and one the caller isn't a member of both return
+	// 404, deliberately indistinguishable" posture (see requireBusinessContext).
+	ErrShareLinkNotFound = errors.New("share link not found")
 )
 
 // pgErrorCode reports err's Postgres SQLSTATE code, if any. Duplicated

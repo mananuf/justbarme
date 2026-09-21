@@ -81,6 +81,10 @@ export function Reviews() {
   const [inventoryReviewsError, setInventoryReviewsError] = useState<string | null>(null);
   const [resolvingInventoryId, setResolvingInventoryId] = useState<string | null>(null);
   const [inventoryNote, setInventoryNote] = useState('');
+  // Only meaningful for a negative_inventory review that traces back to a
+  // sale's oversell (docs/PHASE_FIFO_COSTING.md §5) -- left blank, the
+  // pending FIFO cost allocation (if any) just stays pending.
+  const [resolvedUnitCostNaira, setResolvedUnitCostNaira] = useState('');
   const [inventoryActionError, setInventoryActionError] = useState<string | null>(null);
   const [inventoryBusy, setInventoryBusy] = useState(false);
 
@@ -159,6 +163,7 @@ export function Reviews() {
   function startResolvingInventory(id: string) {
     setResolvingInventoryId(id);
     setInventoryNote('');
+    setResolvedUnitCostNaira('');
     setInventoryActionError(null);
   }
 
@@ -167,7 +172,16 @@ export function Reviews() {
     setInventoryBusy(true);
     setInventoryActionError(null);
     try {
-      await resolveInventoryReview(id, inventoryNote.trim(), selectedBusinessId, csrfToken);
+      const resolvedUnitCostKobo = resolvedUnitCostNaira.trim()
+        ? Math.round(Number(resolvedUnitCostNaira) * 100)
+        : undefined;
+      await resolveInventoryReview(
+        id,
+        inventoryNote.trim(),
+        selectedBusinessId,
+        csrfToken,
+        resolvedUnitCostKobo,
+      );
       setInventoryReviews((prev) => (prev ?? []).filter((r) => r.id !== id));
       setResolvingInventoryId(null);
     } catch (err) {
@@ -357,6 +371,25 @@ export function Reviews() {
                     rows={2}
                     className="w-full rounded-lg border border-jb-ink/15 bg-white px-3 py-2 text-[13px] text-jb-ink placeholder:text-jb-ink/30 focus:outline-none focus:border-jb-ink/40 transition-colors mb-2"
                   />
+                  {review.type === 'negative_inventory' && (
+                    <label className="block mb-2">
+                      <span className="block text-[11.5px] text-jb-ink/50 mb-1">
+                        If this was a sale that oversold before the stock was logged, enter what it
+                        actually cost per unit to record the real profit (optional).
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-jb-ink/40 text-[13px]">₦</span>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          placeholder="Cost per unit"
+                          value={resolvedUnitCostNaira}
+                          onChange={(e) => setResolvedUnitCostNaira(e.target.value)}
+                          className="flex-1 rounded-lg border border-jb-ink/15 bg-white px-3 py-2 text-[13px] focus:outline-none focus:border-jb-ink/40"
+                        />
+                      </div>
+                    </label>
+                  )}
                   {inventoryActionError && (
                     <p className="text-[12.5px] text-red-700 mb-2">{inventoryActionError}</p>
                   )}

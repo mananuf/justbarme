@@ -402,6 +402,12 @@ func (api *API) listInventoryReviews(w http.ResponseWriter, r *http.Request) {
 
 type resolveInventoryReviewRequest struct {
 	Note string `json:"note"`
+	// ResolvedUnitCostKobo is optional and only meaningful for a
+	// negative_inventory review that traces back to a sale's oversell --
+	// see internal/inventory.Service.ResolveReview's own doc comment and
+	// docs/PHASE_FIFO_COSTING.md §5. Omitted or nil leaves any pending
+	// FIFO cost allocation exactly as it was: still pending.
+	ResolvedUnitCostKobo *int64 `json:"resolved_unit_cost_kobo"`
 }
 
 // resolveInventoryReview implements POST
@@ -425,12 +431,13 @@ func (api *API) resolveInventoryReview(w http.ResponseWriter, r *http.Request) {
 	}
 	v := validator.New()
 	v.Check(req.Note != "", "note", "must be provided")
+	v.Check(req.ResolvedUnitCostKobo == nil || *req.ResolvedUnitCostKobo > 0, "resolved_unit_cost_kobo", "must be positive when provided")
 	if !v.IsValid() {
 		api.validationFailedResponse(w, r, v.Errors)
 		return
 	}
 
-	updated, err := api.inventory.ResolveReview(r.Context(), principal.UserID, business.BusinessID, reviewID, principal.UserID, req.Note)
+	updated, err := api.inventory.ResolveReview(r.Context(), principal.UserID, business.BusinessID, reviewID, principal.UserID, req.Note, req.ResolvedUnitCostKobo)
 	if err != nil {
 		inventoryErrorResponse(api, w, r, err, "resolve inventory review")
 		return

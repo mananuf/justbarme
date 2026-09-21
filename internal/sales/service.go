@@ -261,8 +261,24 @@ func postSaleRound(
 				if _, err := q.CreateInventoryReview(ctx, sqlc.CreateInventoryReviewParams{
 					ID: negReviewID, BusinessID: businessID, Type: "negative_inventory",
 					VariantID: r.variantID, LocationID: locationID, RelatedMovementID: pgUUID(movementID),
+					SaleItemID: pgUUID(postedItem.ID),
 				}); err != nil {
 					return Sale{}, fmt.Errorf("create negative-inventory review: %w", err)
+				}
+			}
+
+			// FIFO cost allocation (docs/PHASE_FIFO_COSTING.md) only runs
+			// for an ordinary positive-quantity sale. RemoveBillItem's
+			// compensating negative round (an in-progress tab correction,
+			// before the bill ever settles -- see the Tabs and credit
+			// section of CLAUDE.md) is deliberately excluded: it has no
+			// single original sale item to give quantity back to, and
+			// approximating one (e.g. reversing whichever lots were most
+			// recently touched) would be a guess, not a real allocation.
+			// Named, accepted gap -- see docs/PHASE_FIFO_COSTING.md §9.
+			if r.quantity > 0 {
+				if err := allocateSaleItemLots(ctx, q, businessID, postedItem.ID, r.variantID, locationID, r.quantity); err != nil {
+					return Sale{}, fmt.Errorf("allocate lots: %w", err)
 				}
 			}
 		}
@@ -543,6 +559,13 @@ func (s *Service) ReverseSale(ctx context.Context, userID, businessID, saleID, a
 				BusinessID: businessID, VariantID: item.VariantID, LocationID: original.LocationID, Quantity: -quantity,
 			}); err != nil {
 				return fmt.Errorf("update inventory balance: %w", err)
+			}
+
+			// Give quantity back to the exact lots the original item drew
+			// from -- never re-run the allocator here (docs/PHASE_FIFO_
+			// COSTING.md §6).
+			if err := reverseSaleItemLots(ctx, q, businessID, item.ID, postedItem.ID); err != nil {
+				return fmt.Errorf("reverse lot allocations: %w", err)
 			}
 		}
 

@@ -12,6 +12,88 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const grossMarginByProduct = `-- name: GrossMarginByProduct :many
+WITH allocation_totals AS (
+    SELECT
+        sale_item_id,
+        COALESCE(SUM(allocated_cost_kobo) FILTER (WHERE stock_lot_id IS NOT NULL), 0)::bigint AS resolved_cogs_kobo,
+        COALESCE(SUM(quantity) FILTER (WHERE stock_lot_id IS NULL), 0)::bigint AS unresolved_quantity
+    FROM sale_item_lot_allocations
+    WHERE business_id = $1
+    GROUP BY sale_item_id
+)
+SELECT
+    si.variant_id, v.name AS variant_name, p.name AS product_name,
+    COALESCE(SUM(si.line_total_kobo), 0)::bigint AS revenue_kobo,
+    COALESCE(SUM(at.resolved_cogs_kobo), 0)::bigint AS resolved_cogs_kobo,
+    COALESCE(SUM(at.unresolved_quantity), 0)::bigint AS unresolved_units
+FROM sale_items si
+JOIN sales s ON s.business_id = si.business_id AND s.id = si.sale_id
+JOIN product_variants v ON v.business_id = si.business_id AND v.id = si.variant_id
+JOIN products p ON p.business_id = v.business_id AND p.id = v.product_id
+LEFT JOIN allocation_totals at ON at.sale_item_id = si.id
+WHERE si.business_id = $1
+  AND s.occurred_at >= $2 AND s.occurred_at < $3
+GROUP BY si.variant_id, v.name, p.name
+ORDER BY revenue_kobo DESC
+`
+
+type GrossMarginByProductParams struct {
+	BusinessID   uuid.UUID          `json:"business_id"`
+	OccurredAt   pgtype.Timestamptz `json:"occurred_at"`
+	OccurredAt_2 pgtype.Timestamptz `json:"occurred_at_2"`
+}
+
+type GrossMarginByProductRow struct {
+	VariantID        uuid.UUID `json:"variant_id"`
+	VariantName      string    `json:"variant_name"`
+	ProductName      string    `json:"product_name"`
+	RevenueKobo      int64     `json:"revenue_kobo"`
+	ResolvedCogsKobo int64     `json:"resolved_cogs_kobo"`
+	UnresolvedUnits  int64     `json:"unresolved_units"`
+}
+
+// FIFO gross margin (docs/PHASE_FIFO_COSTING.md §8). The allocation_totals
+// CTE pre-aggregates to exactly one row per sale_item BEFORE joining --
+// joining sale_item_lot_allocations directly (one-to-many: a sale
+// spanning two lots, or an oversell, has more than one allocation row per
+// sale_item) would fan out and double-count si.line_total_kobo in the
+// outer SUM, a real bug caught by this query's own test
+// (TestGrossMarginByProductComputesRealCostAndFlagsUnresolvedUnits).
+// revenue_kobo already nets a reversal's negative line totals, same
+// convention SalesByDay relies on; resolved_cogs_kobo nets a reversal's
+// negative allocated_cost rows the same way. unresolved_units is the
+// honesty flag this report exists to never hide: nonzero means some of
+// this product's sold units still have no known cost (an unresolved
+// oversell), so gross_margin (computed in Go as revenue - resolved_cogs)
+// must never be presented as complete while it's nonzero.
+func (q *Queries) GrossMarginByProduct(ctx context.Context, arg GrossMarginByProductParams) ([]GrossMarginByProductRow, error) {
+	rows, err := q.db.Query(ctx, grossMarginByProduct, arg.BusinessID, arg.OccurredAt, arg.OccurredAt_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GrossMarginByProductRow{}
+	for rows.Next() {
+		var i GrossMarginByProductRow
+		if err := rows.Scan(
+			&i.VariantID,
+			&i.VariantName,
+			&i.ProductName,
+			&i.RevenueKobo,
+			&i.ResolvedCogsKobo,
+			&i.UnresolvedUnits,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProductQuantitiesSold = `-- name: ListProductQuantitiesSold :many
 SELECT
     si.variant_id, v.name AS variant_name, p.name AS product_name,

@@ -3,11 +3,13 @@ import { Link } from 'react-router-dom';
 
 import {
   reportExpenses,
+  reportGrossMargin,
   reportProducts,
   reportSales,
   reportStaffSales,
   reportStock,
   type ExpensesByCategory,
+  type GrossMargin,
   type ProductQuantity,
   type SalesDay,
   type StaffSales,
@@ -24,11 +26,12 @@ function formatNaira(kobo: number): string {
   return (kobo / 100).toLocaleString();
 }
 
-type ReportKey = 'sales' | 'products' | 'staff' | 'expenses' | 'stock' | 'outstanding';
+type ReportKey = 'sales' | 'products' | 'margin' | 'staff' | 'expenses' | 'stock' | 'outstanding';
 
 const REPORT_TABS: { key: ReportKey; label: string }[] = [
   { key: 'sales', label: 'Sales' },
   { key: 'products', label: 'Products' },
+  { key: 'margin', label: 'Margin' },
   { key: 'staff', label: 'Staff' },
   { key: 'expenses', label: 'Expenses' },
   { key: 'stock', label: 'Stock' },
@@ -67,6 +70,7 @@ export function Reports() {
 
   const [salesDays, setSalesDays] = useState<SalesDay[] | null>(null);
   const [products, setProducts] = useState<ProductQuantity[] | null>(null);
+  const [margins, setMargins] = useState<GrossMargin[] | null>(null);
   const [staffSales, setStaffSales] = useState<StaffSales[] | null>(null);
   const [expensesByCategory, setExpensesByCategory] = useState<ExpensesByCategory[] | null>(null);
   const [discrepancies, setDiscrepancies] = useState<StockDiscrepancy[] | null>(null);
@@ -94,6 +98,16 @@ export function Reports() {
           })
           .catch((err: unknown) =>
             setError(describeActionError(err, 'Could not load the products report.')),
+          );
+        break;
+      case 'margin':
+        reportGrossMargin(selectedBusinessId, startAt, endAt)
+          .then((d) => {
+            setMargins(d);
+            setError(null);
+          })
+          .catch((err: unknown) =>
+            setError(describeActionError(err, 'Could not load the margin report.')),
           );
         break;
       case 'staff':
@@ -256,6 +270,37 @@ export function Reports() {
                     style={{ width: `${(p.unitsSold / maxProduct) * 100}%` }}
                   />
                 </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {tab === 'margin' && (
+          <div className="rounded-xl border border-jb-ink/10 bg-white/60 divide-y divide-jb-ink/[0.06] overflow-hidden">
+            {margins === null && <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">Loading…</p>}
+            {margins !== null && margins.length === 0 && (
+              <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">No units sold in this range.</p>
+            )}
+            {(margins ?? []).map((m) => (
+              <div key={m.variantId} className="px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[13px] text-jb-ink/80">
+                    {m.productName} — {m.variantName}
+                  </span>
+                  <span className="text-[13px] font-medium text-jb-ink/80">
+                    ₦{formatNaira(m.grossMarginKobo)}
+                  </span>
+                </div>
+                <div className="text-[11.5px] text-jb-ink/40 mt-0.5">
+                  Revenue ₦{formatNaira(m.revenueKobo)} − cost ₦{formatNaira(m.resolvedCogsKobo)}
+                </div>
+                {m.unresolvedUnits > 0 && (
+                  <div className="text-[11.5px] text-jb-gold mt-1">
+                    {m.unresolvedUnits} unit{m.unresolvedUnits === 1 ? '' : 's'} sold with cost not
+                    yet known — margin above is a lower bound, not final. Resolve the matching
+                    review to record the real profit.
+                  </div>
+                )}
               </div>
             ))}
           </div>

@@ -93,6 +93,7 @@ func cleanupTenant(t *testing.T, pool *pgxpool.Pool, ownerID, businessID uuid.UU
 				"DELETE FROM inventory_balances WHERE business_id = $1",
 				"DELETE FROM inventory_movements WHERE business_id = $1",
 				"DELETE FROM inventory_events WHERE business_id = $1",
+				"DELETE FROM sale_item_lot_allocations WHERE business_id = $1",
 				"DELETE FROM stock_lots WHERE business_id = $1",
 				"DELETE FROM stock_receipt_lines WHERE business_id = $1",
 				"DELETE FROM stock_receipts WHERE business_id = $1",
@@ -559,7 +560,7 @@ func TestResolveInventoryReviewMarksResolved(t *testing.T) {
 		t.Fatalf("expected 1 open review, got %d", len(open))
 	}
 
-	resolved, err := inventorySvc.ResolveReview(ctx, ownerID, businessID, open[0].ID, ownerID, "Checked, restocking tomorrow.")
+	resolved, err := inventorySvc.ResolveReview(ctx, ownerID, businessID, open[0].ID, ownerID, "Checked, restocking tomorrow.", nil)
 	if err != nil {
 		t.Fatalf("ResolveReview: %v", err)
 	}

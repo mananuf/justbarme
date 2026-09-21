@@ -40,6 +40,29 @@ type ExpensesByCategory struct {
 	ExpenseCount int64
 }
 
+// GrossMargin is one variant's revenue/cost picture within a range --
+// docs/PHASE_FIFO_COSTING.md §8. GrossMarginKobo is Revenue - ResolvedCOGS,
+// but must never be presented as complete on its own: UnresolvedUnits is
+// the count of sold units whose cost is still pending (an unresolved
+// oversell, see docs/ARCHITECTURE.md §8.5's "omit or clearly label COGS/
+// profit as unavailable while unresolved quantities exist") -- a nonzero
+// value here means GrossMarginKobo is a lower bound on true cost, not the
+// final number, and callers must say so rather than showing it bare.
+type GrossMargin struct {
+	VariantID        uuid.UUID
+	VariantName      string
+	ProductName      string
+	RevenueKobo      int64
+	ResolvedCogsKobo int64
+	UnresolvedUnits  int64
+}
+
+// GrossMarginKobo is Revenue - ResolvedCOGS -- see the type's own doc
+// comment on why this is never the final word when UnresolvedUnits != 0.
+func (g GrossMargin) GrossMarginKobo() int64 {
+	return g.RevenueKobo - g.ResolvedCogsKobo
+}
+
 // StockDiscrepancy is one stock-count line whose physical count didn't
 // match its expected quantity -- reuses Phase 7's own data directly, no
 // new schema (docs/PHASE_EXPENSES_DASHBOARD_ACTIVITY_REPORTS.md §3).

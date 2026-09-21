@@ -218,9 +218,9 @@ func (q *Queries) CreateInventoryMovement(ctx context.Context, arg CreateInvento
 }
 
 const createInventoryReview = `-- name: CreateInventoryReview :one
-INSERT INTO inventory_reviews (id, business_id, type, variant_id, location_id, related_movement_id, related_count_line_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, business_id, type, variant_id, location_id, related_movement_id, related_count_line_id, status, resolved_by, resolved_note, resolved_at, created_at
+INSERT INTO inventory_reviews (id, business_id, type, variant_id, location_id, related_movement_id, related_count_line_id, sale_item_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, business_id, type, variant_id, location_id, related_movement_id, related_count_line_id, status, resolved_by, resolved_note, resolved_at, created_at, sale_item_id
 `
 
 type CreateInventoryReviewParams struct {
@@ -231,8 +231,14 @@ type CreateInventoryReviewParams struct {
 	LocationID         uuid.UUID   `json:"location_id"`
 	RelatedMovementID  pgtype.UUID `json:"related_movement_id"`
 	RelatedCountLineID pgtype.UUID `json:"related_count_line_id"`
+	SaleItemID         pgtype.UUID `json:"sale_item_id"`
 }
 
+// sale_item_id is only set when this negative_inventory review was opened
+// by a sale's oversell (internal/sales.postSaleRound) -- NULL for one
+// opened by an approved inventory adjustment instead, which has no sale
+// and therefore no pending cost allocation to ever resolve. See
+// docs/PHASE_FIFO_COSTING.md §5.
 func (q *Queries) CreateInventoryReview(ctx context.Context, arg CreateInventoryReviewParams) (InventoryReview, error) {
 	row := q.db.QueryRow(ctx, createInventoryReview,
 		arg.ID,
@@ -242,6 +248,7 @@ func (q *Queries) CreateInventoryReview(ctx context.Context, arg CreateInventory
 		arg.LocationID,
 		arg.RelatedMovementID,
 		arg.RelatedCountLineID,
+		arg.SaleItemID,
 	)
 	var i InventoryReview
 	err := row.Scan(
@@ -256,6 +263,44 @@ func (q *Queries) CreateInventoryReview(ctx context.Context, arg CreateInventory
 		&i.ResolvedBy,
 		&i.ResolvedNote,
 		&i.ResolvedAt,
+		&i.CreatedAt,
+		&i.SaleItemID,
+	)
+	return i, err
+}
+
+const createSaleItemLotAllocation = `-- name: CreateSaleItemLotAllocation :one
+INSERT INTO sale_item_lot_allocations (id, business_id, sale_item_id, stock_lot_id, quantity, allocated_cost_kobo)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, business_id, sale_item_id, stock_lot_id, quantity, allocated_cost_kobo, created_at
+`
+
+type CreateSaleItemLotAllocationParams struct {
+	ID                uuid.UUID   `json:"id"`
+	BusinessID        uuid.UUID   `json:"business_id"`
+	SaleItemID        uuid.UUID   `json:"sale_item_id"`
+	StockLotID        pgtype.UUID `json:"stock_lot_id"`
+	Quantity          int32       `json:"quantity"`
+	AllocatedCostKobo pgtype.Int8 `json:"allocated_cost_kobo"`
+}
+
+func (q *Queries) CreateSaleItemLotAllocation(ctx context.Context, arg CreateSaleItemLotAllocationParams) (SaleItemLotAllocation, error) {
+	row := q.db.QueryRow(ctx, createSaleItemLotAllocation,
+		arg.ID,
+		arg.BusinessID,
+		arg.SaleItemID,
+		arg.StockLotID,
+		arg.Quantity,
+		arg.AllocatedCostKobo,
+	)
+	var i SaleItemLotAllocation
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.SaleItemID,
+		&i.StockLotID,
+		&i.Quantity,
+		&i.AllocatedCostKobo,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -342,20 +387,21 @@ func (q *Queries) CreateStockCountLine(ctx context.Context, arg CreateStockCount
 }
 
 const createStockLot = `-- name: CreateStockLot :one
-INSERT INTO stock_lots (id, business_id, receipt_line_id, variant_id, location_id, received_quantity, total_cost_kobo, received_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, business_id, receipt_line_id, variant_id, location_id, received_quantity, total_cost_kobo, received_at, created_at
+INSERT INTO stock_lots (id, business_id, receipt_line_id, variant_id, location_id, received_quantity, remaining_quantity, total_cost_kobo, received_at, source)
+VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9)
+RETURNING id, business_id, receipt_line_id, variant_id, location_id, received_quantity, total_cost_kobo, received_at, created_at, remaining_quantity, source
 `
 
 type CreateStockLotParams struct {
 	ID               uuid.UUID          `json:"id"`
 	BusinessID       uuid.UUID          `json:"business_id"`
-	ReceiptLineID    uuid.UUID          `json:"receipt_line_id"`
+	ReceiptLineID    pgtype.UUID        `json:"receipt_line_id"`
 	VariantID        uuid.UUID          `json:"variant_id"`
 	LocationID       uuid.UUID          `json:"location_id"`
 	ReceivedQuantity int32              `json:"received_quantity"`
 	TotalCostKobo    int64              `json:"total_cost_kobo"`
 	ReceivedAt       pgtype.Timestamptz `json:"received_at"`
+	Source           string             `json:"source"`
 }
 
 func (q *Queries) CreateStockLot(ctx context.Context, arg CreateStockLotParams) (StockLot, error) {
@@ -368,6 +414,7 @@ func (q *Queries) CreateStockLot(ctx context.Context, arg CreateStockLotParams) 
 		arg.ReceivedQuantity,
 		arg.TotalCostKobo,
 		arg.ReceivedAt,
+		arg.Source,
 	)
 	var i StockLot
 	err := row.Scan(
@@ -380,6 +427,8 @@ func (q *Queries) CreateStockLot(ctx context.Context, arg CreateStockLotParams) 
 		&i.TotalCostKobo,
 		&i.ReceivedAt,
 		&i.CreatedAt,
+		&i.RemainingQuantity,
+		&i.Source,
 	)
 	return i, err
 }
@@ -451,6 +500,38 @@ func (q *Queries) CreateStockReceiptLine(ctx context.Context, arg CreateStockRec
 		&i.Quantity,
 		&i.TotalCostKobo,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const decrementLotRemainingQuantity = `-- name: DecrementLotRemainingQuantity :one
+UPDATE stock_lots
+SET remaining_quantity = remaining_quantity - $3
+WHERE business_id = $1 AND id = $2
+RETURNING id, business_id, receipt_line_id, variant_id, location_id, received_quantity, total_cost_kobo, received_at, created_at, remaining_quantity, source
+`
+
+type DecrementLotRemainingQuantityParams struct {
+	BusinessID        uuid.UUID `json:"business_id"`
+	ID                uuid.UUID `json:"id"`
+	RemainingQuantity int32     `json:"remaining_quantity"`
+}
+
+func (q *Queries) DecrementLotRemainingQuantity(ctx context.Context, arg DecrementLotRemainingQuantityParams) (StockLot, error) {
+	row := q.db.QueryRow(ctx, decrementLotRemainingQuantity, arg.BusinessID, arg.ID, arg.RemainingQuantity)
+	var i StockLot
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.ReceiptLineID,
+		&i.VariantID,
+		&i.LocationID,
+		&i.ReceivedQuantity,
+		&i.TotalCostKobo,
+		&i.ReceivedAt,
+		&i.CreatedAt,
+		&i.RemainingQuantity,
+		&i.Source,
 	)
 	return i, err
 }
@@ -536,6 +617,77 @@ func (q *Queries) GetStockCountByIdempotencyKey(ctx context.Context, arg GetStoc
 	return i, err
 }
 
+const incrementLotRemainingQuantity = `-- name: IncrementLotRemainingQuantity :one
+UPDATE stock_lots
+SET remaining_quantity = remaining_quantity + $3
+WHERE business_id = $1 AND id = $2
+RETURNING id, business_id, receipt_line_id, variant_id, location_id, received_quantity, total_cost_kobo, received_at, created_at, remaining_quantity, source
+`
+
+type IncrementLotRemainingQuantityParams struct {
+	BusinessID        uuid.UUID `json:"business_id"`
+	ID                uuid.UUID `json:"id"`
+	RemainingQuantity int32     `json:"remaining_quantity"`
+}
+
+func (q *Queries) IncrementLotRemainingQuantity(ctx context.Context, arg IncrementLotRemainingQuantityParams) (StockLot, error) {
+	row := q.db.QueryRow(ctx, incrementLotRemainingQuantity, arg.BusinessID, arg.ID, arg.RemainingQuantity)
+	var i StockLot
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.ReceiptLineID,
+		&i.VariantID,
+		&i.LocationID,
+		&i.ReceivedQuantity,
+		&i.TotalCostKobo,
+		&i.ReceivedAt,
+		&i.CreatedAt,
+		&i.RemainingQuantity,
+		&i.Source,
+	)
+	return i, err
+}
+
+const listAllocationsBySaleItem = `-- name: ListAllocationsBySaleItem :many
+SELECT id, business_id, sale_item_id, stock_lot_id, quantity, allocated_cost_kobo, created_at FROM sale_item_lot_allocations
+WHERE business_id = $1 AND sale_item_id = $2
+ORDER BY created_at ASC
+`
+
+type ListAllocationsBySaleItemParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	SaleItemID uuid.UUID `json:"sale_item_id"`
+}
+
+func (q *Queries) ListAllocationsBySaleItem(ctx context.Context, arg ListAllocationsBySaleItemParams) ([]SaleItemLotAllocation, error) {
+	rows, err := q.db.Query(ctx, listAllocationsBySaleItem, arg.BusinessID, arg.SaleItemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SaleItemLotAllocation{}
+	for rows.Next() {
+		var i SaleItemLotAllocation
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.SaleItemID,
+			&i.StockLotID,
+			&i.Quantity,
+			&i.AllocatedCostKobo,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInventoryBalances = `-- name: ListInventoryBalances :many
 SELECT business_id, variant_id, location_id, quantity, updated_at FROM inventory_balances WHERE business_id = $1
 `
@@ -618,6 +770,58 @@ func (q *Queries) ListInventoryMovementsDetailed(ctx context.Context, arg ListIn
 			&i.AdjustmentReasonCategory,
 			&i.AdjustmentReasonNote,
 			&i.AdjustmentDecidedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLotsForAllocation = `-- name: ListLotsForAllocation :many
+SELECT id, business_id, receipt_line_id, variant_id, location_id, received_quantity, total_cost_kobo, received_at, created_at, remaining_quantity, source FROM stock_lots
+WHERE business_id = $1 AND variant_id = $2 AND location_id = $3 AND remaining_quantity > 0
+ORDER BY received_at ASC, id ASC
+FOR UPDATE
+`
+
+type ListLotsForAllocationParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	VariantID  uuid.UUID `json:"variant_id"`
+	LocationID uuid.UUID `json:"location_id"`
+}
+
+// FIFO order (docs/PHASE_FIFO_COSTING.md §3): oldest lot first, then lot
+// ID (UUIDv7, itself time-ordered) as a stable tiebreaker for lots
+// received in the same instant. FOR UPDATE is what makes concurrent
+// sales against the same lot actually serialize -- the second
+// transaction blocks until the first commits, then sees the already-
+// decremented remaining_quantity, same locking pattern
+// GetBillForUpdate already established for bill balances.
+func (q *Queries) ListLotsForAllocation(ctx context.Context, arg ListLotsForAllocationParams) ([]StockLot, error) {
+	rows, err := q.db.Query(ctx, listLotsForAllocation, arg.BusinessID, arg.VariantID, arg.LocationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StockLot{}
+	for rows.Next() {
+		var i StockLot
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.ReceiptLineID,
+			&i.VariantID,
+			&i.LocationID,
+			&i.ReceivedQuantity,
+			&i.TotalCostKobo,
+			&i.ReceivedAt,
+			&i.CreatedAt,
+			&i.RemainingQuantity,
+			&i.Source,
 		); err != nil {
 			return nil, err
 		}
@@ -836,7 +1040,7 @@ const resolveInventoryReview = `-- name: ResolveInventoryReview :one
 UPDATE inventory_reviews
     SET status = 'resolved', resolved_by = $3, resolved_note = $4, resolved_at = now()
     WHERE business_id = $1 AND id = $2 AND status = 'open'
-RETURNING id, business_id, type, variant_id, location_id, related_movement_id, related_count_line_id, status, resolved_by, resolved_note, resolved_at, created_at
+RETURNING id, business_id, type, variant_id, location_id, related_movement_id, related_count_line_id, status, resolved_by, resolved_note, resolved_at, created_at, sale_item_id
 `
 
 type ResolveInventoryReviewParams struct {
@@ -867,8 +1071,31 @@ func (q *Queries) ResolveInventoryReview(ctx context.Context, arg ResolveInvento
 		&i.ResolvedNote,
 		&i.ResolvedAt,
 		&i.CreatedAt,
+		&i.SaleItemID,
 	)
 	return i, err
+}
+
+const sumNetPendingQuantityForSaleItem = `-- name: SumNetPendingQuantityForSaleItem :one
+SELECT COALESCE(SUM(quantity), 0)::bigint AS net_pending_quantity
+FROM sale_item_lot_allocations
+WHERE business_id = $1 AND sale_item_id = $2 AND stock_lot_id IS NULL
+`
+
+type SumNetPendingQuantityForSaleItemParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	SaleItemID uuid.UUID `json:"sale_item_id"`
+}
+
+// Nets every pending (stock_lot_id IS NULL) allocation for this sale item
+// -- normally just one row, but a resolution's own negative close-out row
+// (docs/PHASE_FIFO_COSTING.md §5) is also stock_lot_id IS NULL, so this
+// must sum rather than assume a single row.
+func (q *Queries) SumNetPendingQuantityForSaleItem(ctx context.Context, arg SumNetPendingQuantityForSaleItemParams) (int64, error) {
+	row := q.db.QueryRow(ctx, sumNetPendingQuantityForSaleItem, arg.BusinessID, arg.SaleItemID)
+	var net_pending_quantity int64
+	err := row.Scan(&net_pending_quantity)
+	return net_pending_quantity, err
 }
 
 const upsertInventoryBalanceDelta = `-- name: UpsertInventoryBalanceDelta :one

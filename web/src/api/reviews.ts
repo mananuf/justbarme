@@ -129,18 +129,25 @@ export async function listInventoryReviews(businessId: string): Promise<Inventor
 // resolveInventoryReview wraps POST /api/v1/inventory-reviews/{id}/resolve
 // (reviews:resolve). A note is required; resolving never changes the
 // underlying balance or count, it only acknowledges the flag.
+//
+// resolvedUnitCostKobo is optional and only meaningful for a
+// negative_inventory review that traces back to a sale's oversell (see
+// docs/PHASE_FIFO_COSTING.md §5) -- supplying it closes out that sale's
+// pending FIFO cost at this per-unit price. Harmless to omit or to supply
+// when it doesn't apply.
 export async function resolveInventoryReview(
   reviewId: string,
   note: string,
   businessId: string,
   csrfToken: string,
+  resolvedUnitCostKobo?: number,
 ): Promise<InventoryReview> {
   const raw = await apiRequest<RawInventoryReview>(
     `/api/v1/inventory-reviews/${reviewId}/resolve`,
     {
       method: 'POST',
       headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
-      body: JSON.stringify({ note }),
+      body: JSON.stringify({ note, resolved_unit_cost_kobo: resolvedUnitCostKobo ?? null }),
     },
   );
   return toInventoryReview(raw);

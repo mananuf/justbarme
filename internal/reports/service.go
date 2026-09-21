@@ -153,3 +153,34 @@ func (s *Service) StockDiscrepancies(ctx context.Context, userID, businessID uui
 	}
 	return out, nil
 }
+
+// GrossMarginByProduct backs the FIFO gross-margin report
+// (docs/PHASE_FIFO_COSTING.md §8) -- revenue and resolved cost of goods
+// sold per product/variant within [start, end), plus the unresolved-unit
+// count that must always accompany it. See GrossMargin's own doc comment
+// for why a nonzero UnresolvedUnits means the margin figure is a lower
+// bound, not a final number.
+func (s *Service) GrossMarginByProduct(ctx context.Context, userID, businessID uuid.UUID, start, end time.Time) ([]GrossMargin, error) {
+	var rows []sqlc.GrossMarginByProductRow
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		r, err := q.GrossMarginByProduct(ctx, sqlc.GrossMarginByProductParams{
+			BusinessID: businessID, OccurredAt: pgTimestamptz(start), OccurredAt_2: pgTimestamptz(end),
+		})
+		if err != nil {
+			return err
+		}
+		rows = r
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("gross margin by product: %w", err)
+	}
+	out := make([]GrossMargin, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, GrossMargin{
+			VariantID: r.VariantID, VariantName: r.VariantName, ProductName: r.ProductName,
+			RevenueKobo: r.RevenueKobo, ResolvedCogsKobo: r.ResolvedCogsKobo, UnresolvedUnits: r.UnresolvedUnits,
+		})
+	}
+	return out, nil
+}

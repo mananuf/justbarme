@@ -106,10 +106,10 @@ func (s *Service) ReceiveStock(ctx context.Context, userID, businessID, location
 				return err
 			}
 			if _, err := q.CreateStockLot(ctx, sqlc.CreateStockLotParams{
-				ID: lotID, BusinessID: businessID, ReceiptLineID: postedLine.ID,
+				ID: lotID, BusinessID: businessID, ReceiptLineID: pgUUID(postedLine.ID),
 				VariantID: line.VariantID, LocationID: locationID,
 				ReceivedQuantity: line.Quantity, TotalCostKobo: line.TotalCostKobo,
-				ReceivedAt: pgTimestamptz(receivedAt),
+				ReceivedAt: pgTimestamptz(receivedAt), Source: "receipt",
 			}); err != nil {
 				return fmt.Errorf("create stock lot: %w", err)
 			}
@@ -476,7 +476,16 @@ func (s *Service) ListOpenReviews(ctx context.Context, userID, businessID uuid.U
 // ResolveReview marks a review acknowledged, with a required note -- like
 // internal/sales's sale reviews, this never changes the movement or count
 // it's attached to, it's purely informational.
-func (s *Service) ResolveReview(ctx context.Context, userID, businessID, reviewID, resolvedBy uuid.UUID, note string) (InventoryReview, error) {
+//
+// resolvedUnitCostKobo is optional and only ever meaningful for a
+// negative_inventory review that traces back to a sale's oversell (see
+// docs/PHASE_FIFO_COSTING.md §5): when supplied, it closes out that
+// sale item's pending FIFO cost allocation at this per-unit price,
+// via a new synthetic lot -- never a fabricated cost, always a
+// deliberate, reviewed decision. Harmless to supply when it doesn't
+// apply (a stale-count review, or a negative_inventory review with
+// nothing actually pending) -- resolvePendingAllocation is a no-op then.
+func (s *Service) ResolveReview(ctx context.Context, userID, businessID, reviewID, resolvedBy uuid.UUID, note string, resolvedUnitCostKobo *int64) (InventoryReview, error) {
 	var result InventoryReview
 	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
 		updated, err := q.ResolveInventoryReview(ctx, sqlc.ResolveInventoryReviewParams{
@@ -489,6 +498,13 @@ func (s *Service) ResolveReview(ctx context.Context, userID, businessID, reviewI
 			return fmt.Errorf("resolve inventory review: %w", err)
 		}
 		result = toInventoryReview(updated)
+
+		if resolvedUnitCostKobo != nil && updated.Type == ReviewTypeNegativeInventory && updated.SaleItemID.Valid {
+			saleItemID := uuid.UUID(updated.SaleItemID.Bytes)
+			if err := resolvePendingAllocation(ctx, q, businessID, saleItemID, updated.VariantID, updated.LocationID, *resolvedUnitCostKobo); err != nil {
+				return fmt.Errorf("resolve pending cost allocation: %w", err)
+			}
+		}
 		return nil
 	})
 	if err != nil {

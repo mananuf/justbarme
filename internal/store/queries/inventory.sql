@@ -9,9 +9,53 @@ VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: CreateStockLot :one
-INSERT INTO stock_lots (id, business_id, receipt_line_id, variant_id, location_id, received_quantity, total_cost_kobo, received_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO stock_lots (id, business_id, receipt_line_id, variant_id, location_id, received_quantity, remaining_quantity, total_cost_kobo, received_at, source)
+VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9)
 RETURNING *;
+
+-- name: ListLotsForAllocation :many
+-- FIFO order (docs/PHASE_FIFO_COSTING.md §3): oldest lot first, then lot
+-- ID (UUIDv7, itself time-ordered) as a stable tiebreaker for lots
+-- received in the same instant. FOR UPDATE is what makes concurrent
+-- sales against the same lot actually serialize -- the second
+-- transaction blocks until the first commits, then sees the already-
+-- decremented remaining_quantity, same locking pattern
+-- GetBillForUpdate already established for bill balances.
+SELECT * FROM stock_lots
+WHERE business_id = $1 AND variant_id = $2 AND location_id = $3 AND remaining_quantity > 0
+ORDER BY received_at ASC, id ASC
+FOR UPDATE;
+
+-- name: DecrementLotRemainingQuantity :one
+UPDATE stock_lots
+SET remaining_quantity = remaining_quantity - $3
+WHERE business_id = $1 AND id = $2
+RETURNING *;
+
+-- name: IncrementLotRemainingQuantity :one
+UPDATE stock_lots
+SET remaining_quantity = remaining_quantity + $3
+WHERE business_id = $1 AND id = $2
+RETURNING *;
+
+-- name: CreateSaleItemLotAllocation :one
+INSERT INTO sale_item_lot_allocations (id, business_id, sale_item_id, stock_lot_id, quantity, allocated_cost_kobo)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING *;
+
+-- name: ListAllocationsBySaleItem :many
+SELECT * FROM sale_item_lot_allocations
+WHERE business_id = $1 AND sale_item_id = $2
+ORDER BY created_at ASC;
+
+-- name: SumNetPendingQuantityForSaleItem :one
+-- Nets every pending (stock_lot_id IS NULL) allocation for this sale item
+-- -- normally just one row, but a resolution's own negative close-out row
+-- (docs/PHASE_FIFO_COSTING.md §5) is also stock_lot_id IS NULL, so this
+-- must sum rather than assume a single row.
+SELECT COALESCE(SUM(quantity), 0)::bigint AS net_pending_quantity
+FROM sale_item_lot_allocations
+WHERE business_id = $1 AND sale_item_id = $2 AND stock_lot_id IS NULL;
 
 -- name: CreateInventoryEvent :one
 INSERT INTO inventory_events (id, business_id, type, actor_id, receipt_id)
@@ -98,8 +142,13 @@ UPDATE inventory_adjustment_requests
 RETURNING *;
 
 -- name: CreateInventoryReview :one
-INSERT INTO inventory_reviews (id, business_id, type, variant_id, location_id, related_movement_id, related_count_line_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+-- sale_item_id is only set when this negative_inventory review was opened
+-- by a sale's oversell (internal/sales.postSaleRound) -- NULL for one
+-- opened by an approved inventory adjustment instead, which has no sale
+-- and therefore no pending cost allocation to ever resolve. See
+-- docs/PHASE_FIFO_COSTING.md §5.
+INSERT INTO inventory_reviews (id, business_id, type, variant_id, location_id, related_movement_id, related_count_line_id, sale_item_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: ListOpenInventoryReviewsDetailed :many

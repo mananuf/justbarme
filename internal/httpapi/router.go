@@ -331,6 +331,7 @@ func NewHandler(deps Dependencies) http.Handler {
 				router.Get("/reports/staff-sales", api.reportStaffSales)
 				router.Get("/reports/expenses", api.reportExpenses)
 				router.Get("/reports/stock", api.reportStock)
+				router.Get("/reports/gross-margin", api.reportGrossMargin)
 
 				router.Get("/dashboard", api.getDashboard)
 

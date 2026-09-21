@@ -255,3 +255,54 @@ func (api *API) reportStock(w http.ResponseWriter, r *http.Request) {
 		api.logger.Error("write stock discrepancies report response", "request_id", RequestID(r.Context()), "error", err)
 	}
 }
+
+type grossMarginResponse struct {
+	VariantID        string `json:"variant_id"`
+	VariantName      string `json:"variant_name"`
+	ProductName      string `json:"product_name"`
+	RevenueKobo      int64  `json:"revenue_kobo"`
+	ResolvedCogsKobo int64  `json:"resolved_cogs_kobo"`
+	// GrossMarginKobo is revenue - resolved_cogs_kobo -- a lower bound on
+	// the real figure whenever UnresolvedUnits is nonzero, never presented
+	// as final in that case. See internal/reports.GrossMargin's own doc
+	// comment and docs/PHASE_FIFO_COSTING.md §8.
+	GrossMarginKobo int64 `json:"gross_margin_kobo"`
+	UnresolvedUnits int64 `json:"unresolved_units"`
+}
+
+// reportGrossMargin implements GET /api/v1/reports/gross-margin
+// (reports:read) -- FIFO cost of goods sold and gross margin per product,
+// docs/PHASE_FIFO_COSTING.md §8.
+func (api *API) reportGrossMargin(w http.ResponseWriter, r *http.Request) {
+	principal, ok := tenancy.PrincipalFromContext(r.Context())
+	if !ok {
+		api.internalErrorResponse(w, r, errors.New("reportGrossMargin ran without requireAuth"))
+		return
+	}
+	business, ok := api.requireCapability(w, r, tenancy.CapabilityReportsRead)
+	if !ok {
+		return
+	}
+	start, end, valid := parseReportRange(r)
+	if !valid {
+		api.badRequestResponse(w, r, "start_at and end_at must both be RFC 3339 timestamps.")
+		return
+	}
+
+	rows, err := api.reports.GrossMarginByProduct(r.Context(), principal.UserID, business.BusinessID, start, end)
+	if err != nil {
+		api.internalErrorResponse(w, r, fmt.Errorf("gross margin report: %w", err))
+		return
+	}
+	out := make([]grossMarginResponse, 0, len(rows))
+	for _, m := range rows {
+		out = append(out, grossMarginResponse{
+			VariantID: m.VariantID.String(), VariantName: m.VariantName, ProductName: m.ProductName,
+			RevenueKobo: m.RevenueKobo, ResolvedCogsKobo: m.ResolvedCogsKobo,
+			GrossMarginKobo: m.GrossMarginKobo(), UnresolvedUnits: m.UnresolvedUnits,
+		})
+	}
+	if err := writeJSON(w, http.StatusOK, envelope{"data": out}, nil); err != nil {
+		api.logger.Error("write gross margin report response", "request_id", RequestID(r.Context()), "error", err)
+	}
+}

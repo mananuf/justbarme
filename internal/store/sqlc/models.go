@@ -221,6 +221,7 @@ type InventoryReview struct {
 	ResolvedNote       pgtype.Text        `json:"resolved_note"`
 	ResolvedAt         pgtype.Timestamptz `json:"resolved_at"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	SaleItemID         pgtype.UUID        `json:"sale_item_id"`
 }
 
 type Invitation struct {
@@ -351,6 +352,16 @@ type SaleItem struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
+type SaleItemLotAllocation struct {
+	ID                uuid.UUID          `json:"id"`
+	BusinessID        uuid.UUID          `json:"business_id"`
+	SaleItemID        uuid.UUID          `json:"sale_item_id"`
+	StockLotID        pgtype.UUID        `json:"stock_lot_id"`
+	Quantity          int32              `json:"quantity"`
+	AllocatedCostKobo pgtype.Int8        `json:"allocated_cost_kobo"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
 type SaleReview struct {
 	ID           uuid.UUID          `json:"id"`
 	BusinessID   uuid.UUID          `json:"business_id"`
@@ -414,15 +425,17 @@ type StockCountLine struct {
 }
 
 type StockLot struct {
-	ID               uuid.UUID          `json:"id"`
-	BusinessID       uuid.UUID          `json:"business_id"`
-	ReceiptLineID    uuid.UUID          `json:"receipt_line_id"`
-	VariantID        uuid.UUID          `json:"variant_id"`
-	LocationID       uuid.UUID          `json:"location_id"`
-	ReceivedQuantity int32              `json:"received_quantity"`
-	TotalCostKobo    int64              `json:"total_cost_kobo"`
-	ReceivedAt       pgtype.Timestamptz `json:"received_at"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ID                uuid.UUID          `json:"id"`
+	BusinessID        uuid.UUID          `json:"business_id"`
+	ReceiptLineID     pgtype.UUID        `json:"receipt_line_id"`
+	VariantID         uuid.UUID          `json:"variant_id"`
+	LocationID        uuid.UUID          `json:"location_id"`
+	ReceivedQuantity  int32              `json:"received_quantity"`
+	TotalCostKobo     int64              `json:"total_cost_kobo"`
+	ReceivedAt        pgtype.Timestamptz `json:"received_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	RemainingQuantity int32              `json:"remaining_quantity"`
+	Source            string             `json:"source"`
 }
 
 type StockReceipt struct {

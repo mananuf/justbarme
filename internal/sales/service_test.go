@@ -103,6 +103,7 @@ func cleanupTenant(t *testing.T, pool *pgxpool.Pool, ownerID, businessID uuid.UU
 			// CLAUDE.md-documented failure mode for this pattern.
 			for _, stmt := range []string{
 				"DELETE FROM sale_reviews WHERE business_id = $1",
+				"DELETE FROM sale_item_lot_allocations WHERE business_id = $1",
 				"DELETE FROM sale_items WHERE business_id = $1",
 				"DELETE FROM inventory_reviews WHERE business_id = $1",
 				"DELETE FROM inventory_movements WHERE business_id = $1",

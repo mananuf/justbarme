@@ -43,6 +43,11 @@ type Querier interface {
 	CreateInventoryEventForAdjustment(ctx context.Context, arg CreateInventoryEventForAdjustmentParams) (InventoryEvent, error)
 	CreateInventoryEventForSale(ctx context.Context, arg CreateInventoryEventForSaleParams) (InventoryEvent, error)
 	CreateInventoryMovement(ctx context.Context, arg CreateInventoryMovementParams) (InventoryMovement, error)
+	// sale_item_id is only set when this negative_inventory review was opened
+	// by a sale's oversell (internal/sales.postSaleRound) -- NULL for one
+	// opened by an approved inventory adjustment instead, which has no sale
+	// and therefore no pending cost allocation to ever resolve. See
+	// docs/PHASE_FIFO_COSTING.md §5.
 	CreateInventoryReview(ctx context.Context, arg CreateInventoryReviewParams) (InventoryReview, error)
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (Invitation, error)
 	CreateMembership(ctx context.Context, arg CreateMembershipParams) (BusinessMembership, error)
@@ -54,6 +59,7 @@ type Querier interface {
 	CreateProduct(ctx context.Context, arg CreateProductParams) (Product, error)
 	CreateSale(ctx context.Context, arg CreateSaleParams) (Sale, error)
 	CreateSaleItem(ctx context.Context, arg CreateSaleItemParams) (SaleItem, error)
+	CreateSaleItemLotAllocation(ctx context.Context, arg CreateSaleItemLotAllocationParams) (SaleItemLotAllocation, error)
 	CreateSaleReview(ctx context.Context, arg CreateSaleReviewParams) (SaleReview, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateStockCount(ctx context.Context, arg CreateStockCountParams) (StockCount, error)
@@ -65,6 +71,7 @@ type Querier interface {
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	CreateUserIdentity(ctx context.Context, arg CreateUserIdentityParams) (UserIdentity, error)
 	CreateVariant(ctx context.Context, arg CreateVariantParams) (ProductVariant, error)
+	DecrementLotRemainingQuantity(ctx context.Context, arg DecrementLotRemainingQuantityParams) (StockLot, error)
 	DeleteIdentityVerification(ctx context.Context, id uuid.UUID) error
 	DeleteSignupVerification(ctx context.Context, id uuid.UUID) error
 	GetActiveBillShareLinkByTokenHash(ctx context.Context, tokenHash string) (BillShareLink, error)
@@ -120,7 +127,23 @@ type Querier interface {
 	// recording what was actually sold) -- product_variants.name alone is
 	// just the variant's own name ("50cl Bottle"), never the product name.
 	GetVariantWithProductNameByID(ctx context.Context, arg GetVariantWithProductNameByIDParams) (GetVariantWithProductNameByIDRow, error)
+	// FIFO gross margin (docs/PHASE_FIFO_COSTING.md §8). The allocation_totals
+	// CTE pre-aggregates to exactly one row per sale_item BEFORE joining --
+	// joining sale_item_lot_allocations directly (one-to-many: a sale
+	// spanning two lots, or an oversell, has more than one allocation row per
+	// sale_item) would fan out and double-count si.line_total_kobo in the
+	// outer SUM, a real bug caught by this query's own test
+	// (TestGrossMarginByProductComputesRealCostAndFlagsUnresolvedUnits).
+	// revenue_kobo already nets a reversal's negative line totals, same
+	// convention SalesByDay relies on; resolved_cogs_kobo nets a reversal's
+	// negative allocated_cost rows the same way. unresolved_units is the
+	// honesty flag this report exists to never hide: nonzero means some of
+	// this product's sold units still have no known cost (an unresolved
+	// oversell), so gross_margin (computed in Go as revenue - resolved_cogs)
+	// must never be presented as complete while it's nonzero.
+	GrossMarginByProduct(ctx context.Context, arg GrossMarginByProductParams) ([]GrossMarginByProductRow, error)
 	IncrementIdentityVerificationAttempts(ctx context.Context, id uuid.UUID) error
+	IncrementLotRemainingQuantity(ctx context.Context, arg IncrementLotRemainingQuantityParams) (StockLot, error)
 	IncrementSignupVerificationAttempts(ctx context.Context, id uuid.UUID) error
 	// Unified activity feed (docs/PHASE_EXPENSES_DASHBOARD_ACTIVITY_REPORTS.md
 	// §3): a query-time UNION ALL across every domain's own already-posted
@@ -139,6 +162,7 @@ type Querier interface {
 	// real Postgres.
 	ListActivity(ctx context.Context, arg ListActivityParams) ([]ListActivityRow, error)
 	ListAllBusinesses(ctx context.Context) ([]Business, error)
+	ListAllocationsBySaleItem(ctx context.Context, arg ListAllocationsBySaleItemParams) ([]SaleItemLotAllocation, error)
 	ListCatalogueTemplateVariantsByTemplateIDs(ctx context.Context, templateIds []uuid.UUID) ([]CatalogueTemplateVariant, error)
 	ListCatalogueTemplates(ctx context.Context) ([]CatalogueTemplate, error)
 	ListCatalogueTemplatesByIDs(ctx context.Context, ids []uuid.UUID) ([]CatalogueTemplate, error)
@@ -154,6 +178,14 @@ type Querier interface {
 	// the event type and, for adjustments, the reason that authorized it.
 	ListInventoryMovementsDetailed(ctx context.Context, arg ListInventoryMovementsDetailedParams) ([]ListInventoryMovementsDetailedRow, error)
 	ListInvitationsByBusiness(ctx context.Context, businessID uuid.UUID) ([]Invitation, error)
+	// FIFO order (docs/PHASE_FIFO_COSTING.md §3): oldest lot first, then lot
+	// ID (UUIDv7, itself time-ordered) as a stable tiebreaker for lots
+	// received in the same instant. FOR UPDATE is what makes concurrent
+	// sales against the same lot actually serialize -- the second
+	// transaction blocks until the first commits, then sees the already-
+	// decremented remaining_quantity, same locking pattern
+	// GetBillForUpdate already established for bill balances.
+	ListLotsForAllocation(ctx context.Context, arg ListLotsForAllocationParams) ([]StockLot, error)
 	ListMembershipsForUser(ctx context.Context, userID uuid.UUID) ([]ListMembershipsForUserRow, error)
 	ListOpenBills(ctx context.Context, businessID uuid.UUID) ([]Bill, error)
 	ListOpenInventoryReviewsDetailed(ctx context.Context, businessID uuid.UUID) ([]ListOpenInventoryReviewsDetailedRow, error)
@@ -210,6 +242,11 @@ type Querier interface {
 	// compensating negative-quantity lines, same reasoning
 	// SumSalesTotalSince already applies to its own sale count.
 	SumItemsSoldSince(ctx context.Context, arg SumItemsSoldSinceParams) (int64, error)
+	// Nets every pending (stock_lot_id IS NULL) allocation for this sale item
+	// -- normally just one row, but a resolution's own negative close-out row
+	// (docs/PHASE_FIFO_COSTING.md §5) is also stock_lot_id IS NULL, so this
+	// must sum rather than assume a single row.
+	SumNetPendingQuantityForSaleItem(ctx context.Context, arg SumNetPendingQuantityForSaleItemParams) (int64, error)
 	SumPaymentsByBillID(ctx context.Context, arg SumPaymentsByBillIDParams) (int64, error)
 	// Backs the Sales report's daily-revenue heatmap (docs/PHASE_EXPENSES_
 	// DASHBOARD_ACTIVITY_REPORTS.md §5). Bucketed in the business's own

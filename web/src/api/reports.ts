@@ -189,3 +189,52 @@ export async function reportStock(
     countedByName: r.counted_by_name ?? '',
   }));
 }
+
+// GrossMargin is one product's revenue/cost picture within a range
+// (docs/PHASE_FIFO_COSTING.md §8). unresolvedUnits is the honesty flag
+// this report exists to never hide -- a nonzero value means
+// grossMarginKobo is a lower bound on the real figure, not the final
+// number (some sold units' cost is still unresolved, from a sale that
+// oversold before the real stock was ever logged).
+export interface GrossMargin {
+  variantId: string;
+  variantName: string;
+  productName: string;
+  revenueKobo: number;
+  resolvedCogsKobo: number;
+  grossMarginKobo: number;
+  unresolvedUnits: number;
+}
+
+interface RawGrossMargin {
+  variant_id: string;
+  variant_name: string;
+  product_name: string;
+  revenue_kobo: number;
+  resolved_cogs_kobo: number;
+  gross_margin_kobo: number;
+  unresolved_units: number;
+}
+
+// reportGrossMargin wraps GET /api/v1/reports/gross-margin (reports:read).
+export async function reportGrossMargin(
+  businessId: string,
+  startAt: string,
+  endAt: string,
+): Promise<GrossMargin[]> {
+  const raw = await apiRequest<RawGrossMargin[]>(
+    `/api/v1/reports/gross-margin?${rangeParams(startAt, endAt)}`,
+    {
+      headers: { 'X-Business-ID': businessId },
+    },
+  );
+  return raw.map((r) => ({
+    variantId: r.variant_id,
+    variantName: r.variant_name,
+    productName: r.product_name,
+    revenueKobo: r.revenue_kobo,
+    resolvedCogsKobo: r.resolved_cogs_kobo,
+    grossMarginKobo: r.gross_margin_kobo,
+    unresolvedUnits: r.unresolved_units,
+  }));
+}

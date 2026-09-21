@@ -97,6 +97,7 @@ func cleanupTenant(t *testing.T, pool *pgxpool.Pool, ownerID, businessID uuid.UU
 				"DELETE FROM stock_count_lines WHERE business_id = $1",
 				"DELETE FROM stock_counts WHERE business_id = $1",
 				"DELETE FROM payments WHERE business_id = $1",
+				"DELETE FROM sale_item_lot_allocations WHERE business_id = $1",
 				"DELETE FROM sale_items WHERE business_id = $1",
 				"DELETE FROM sale_reviews WHERE business_id = $1",
 				"DELETE FROM sales WHERE business_id = $1",
@@ -224,5 +225,57 @@ func TestStockDiscrepanciesReusesPhase7Data(t *testing.T) {
 	}
 	if discrepancies[0].Variance != -2 {
 		t.Fatalf("expected variance=-2, got %d", discrepancies[0].Variance)
+	}
+}
+
+// TestGrossMarginByProductComputesRealCostAndFlagsUnresolvedUnits covers
+// both halves of docs/PHASE_FIFO_COSTING.md §8: a clean sale's resolved
+// COGS/margin, and an oversold sale's unresolved-unit count (never a
+// fabricated cost).
+func TestGrossMarginByProductComputesRealCostAndFlagsUnresolvedUnits(t *testing.T) {
+	reportsSvc, salesSvc, _, inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	// newTenant already received 48 units at a total of 3,600,000 kobo
+	// (75,000 kobo/unit).
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
+
+	if _, err := salesSvc.CreateSale(ctx, ownerID, businessID, locationID, ownerID, uuid.New(), time.Now(),
+		[]sales.SaleItemInput{{VariantID: variantID, Quantity: 10, UnitPriceKobo: 80000}},
+		sales.PaymentInput{AmountKobo: 800000, Method: "cash"},
+	); err != nil {
+		t.Fatalf("CreateSale (clean, within stock): %v", err)
+	}
+
+	// Oversell the remaining 38 by 5 -- 5 units end up with no known cost.
+	if _, err := salesSvc.CreateSale(ctx, ownerID, businessID, locationID, ownerID, uuid.New(), time.Now(),
+		[]sales.SaleItemInput{{VariantID: variantID, Quantity: 43, UnitPriceKobo: 80000}},
+		sales.PaymentInput{AmountKobo: 3_440_000, Method: "cash"},
+	); err != nil {
+		t.Fatalf("CreateSale (oversell): %v", err)
+	}
+
+	rows, err := reportsSvc.GrossMarginByProduct(ctx, ownerID, businessID, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("GrossMarginByProduct: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected one product row, got %d: %+v", len(rows), rows)
+	}
+	row := rows[0]
+
+	// Revenue: (10 + 43) * 80,000 = 4,240,000.
+	if row.RevenueKobo != 4_240_000 {
+		t.Fatalf("expected revenue 4,240,000, got %d", row.RevenueKobo)
+	}
+	// Resolved COGS: only the 48 units actually covered by the real lot,
+	// at 75,000 kobo/unit = 3,600,000 (the lot's exact total, kobo-exact).
+	if row.ResolvedCogsKobo != 3_600_000 {
+		t.Fatalf("expected resolved COGS 3,600,000 (the lot's exact total), got %d", row.ResolvedCogsKobo)
+	}
+	if row.UnresolvedUnits != 5 {
+		t.Fatalf("expected 5 unresolved units (the oversold amount), got %d", row.UnresolvedUnits)
+	}
+	if row.GrossMarginKobo() != 4_240_000-3_600_000 {
+		t.Fatalf("expected gross margin 640,000, got %d", row.GrossMarginKobo())
 	}
 }

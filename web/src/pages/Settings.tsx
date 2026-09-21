@@ -16,6 +16,7 @@ import {
   updateVariant,
   setVariantPrice,
   type CatalogueProduct,
+  type CatalogueVariant,
   type Category,
 } from '../api/catalogue';
 import { describeActionError } from '../lib/errors';
@@ -211,13 +212,13 @@ export function Settings() {
     }
   }
 
-  async function handleRenameVariant(variantId: string, currentName: string, name: string) {
-    if (!selectedBusinessId || !csrfToken || !name.trim() || name === currentName) return;
-    setBusyItemId(variantId);
+  async function handleRenameVariant(variant: CatalogueVariant, name: string) {
+    if (!selectedBusinessId || !csrfToken || !name.trim() || name === variant.name) return;
+    setBusyItemId(variant.id);
     try {
       await updateVariant(
-        variantId,
-        { name: name.trim(), active: true },
+        variant.id,
+        { name: name.trim(), active: variant.active, tracksInventory: variant.tracksInventory },
         selectedBusinessId,
         csrfToken,
       );
@@ -229,11 +230,34 @@ export function Settings() {
     }
   }
 
-  async function handleToggleVariantActive(variantId: string, name: string, active: boolean) {
+  async function handleToggleVariantActive(variant: CatalogueVariant) {
     if (!selectedBusinessId || !csrfToken) return;
-    setBusyItemId(variantId);
+    setBusyItemId(variant.id);
     try {
-      await updateVariant(variantId, { name, active }, selectedBusinessId, csrfToken);
+      await updateVariant(
+        variant.id,
+        { name: variant.name, active: !variant.active, tracksInventory: variant.tracksInventory },
+        selectedBusinessId,
+        csrfToken,
+      );
+      loadCatalogue();
+    } catch (err) {
+      setCatalogueError(describeActionError(err, 'Could not update this item.'));
+    } finally {
+      setBusyItemId(null);
+    }
+  }
+
+  async function handleToggleVariantTracksInventory(variant: CatalogueVariant) {
+    if (!selectedBusinessId || !csrfToken) return;
+    setBusyItemId(variant.id);
+    try {
+      await updateVariant(
+        variant.id,
+        { name: variant.name, active: variant.active, tracksInventory: !variant.tracksInventory },
+        selectedBusinessId,
+        csrfToken,
+      );
       loadCatalogue();
     } catch (err) {
       setCatalogueError(describeActionError(err, 'Could not update this item.'));
@@ -430,35 +454,42 @@ export function Settings() {
             </div>
             <div className="space-y-1.5">
               {product.variants.map((variant) => (
-                <div key={variant.id} className="flex items-center gap-2 pl-2">
-                  <input
-                    type="text"
-                    defaultValue={variant.name}
-                    onBlur={(e) =>
-                      void handleRenameVariant(variant.id, variant.name, e.target.value)
-                    }
-                    disabled={busyItemId === variant.id}
-                    className={`flex-1 bg-transparent text-[13px] focus:outline-none ${variant.active ? '' : 'line-through text-jb-ink/40'}`}
-                  />
-                  <div className="flex items-center gap-1 shrink-0">
-                    <span className="text-jb-ink/40 text-[12.5px]">₦</span>
+                <div key={variant.id} className="pl-2">
+                  <div className="flex items-center gap-2">
                     <input
-                      type="number"
-                      inputMode="decimal"
-                      defaultValue={variant.currentPriceKobo / 100}
-                      onBlur={(e) => void handleChangePrice(variant.id, e.target.value)}
+                      type="text"
+                      defaultValue={variant.name}
+                      onBlur={(e) => void handleRenameVariant(variant, e.target.value)}
                       disabled={busyItemId === variant.id}
-                      className="w-16 bg-transparent text-[12.5px] text-right focus:outline-none"
+                      className={`flex-1 bg-transparent text-[13px] focus:outline-none ${variant.active ? '' : 'line-through text-jb-ink/40'}`}
                     />
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className="text-jb-ink/40 text-[12.5px]">₦</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        defaultValue={variant.currentPriceKobo / 100}
+                        onBlur={(e) => void handleChangePrice(variant.id, e.target.value)}
+                        disabled={busyItemId === variant.id}
+                        className="w-16 bg-transparent text-[12.5px] text-right focus:outline-none"
+                      />
+                    </div>
+                    <button
+                      onClick={() => void handleToggleVariantActive(variant)}
+                      disabled={busyItemId === variant.id}
+                      className="text-[11px] text-jb-ink/40 disabled:opacity-40 shrink-0"
+                    >
+                      {variant.active ? 'Off' : 'On'}
+                    </button>
                   </div>
                   <button
-                    onClick={() =>
-                      void handleToggleVariantActive(variant.id, variant.name, !variant.active)
-                    }
+                    onClick={() => void handleToggleVariantTracksInventory(variant)}
                     disabled={busyItemId === variant.id}
-                    className="text-[11px] text-jb-ink/40 disabled:opacity-40 shrink-0"
+                    className="text-[10.5px] text-jb-ink/35 disabled:opacity-40 mt-0.5"
                   >
-                    {variant.active ? 'Off' : 'On'}
+                    {variant.tracksInventory
+                      ? 'Tracks stock — mark as a service instead'
+                      : 'Service item (no stock tracking) — mark as stocked instead'}
                   </button>
                 </div>
               ))}

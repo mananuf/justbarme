@@ -1,6 +1,6 @@
 -- name: CreateVariant :one
-INSERT INTO product_variants (id, business_id, product_id, name)
-VALUES ($1, $2, $3, $4)
+INSERT INTO product_variants (id, business_id, product_id, name, tracks_inventory)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: GetVariantByID :one
@@ -24,6 +24,6 @@ SELECT * FROM product_variants WHERE business_id = $1 ORDER BY product_id, name;
 
 -- name: UpdateVariant :one
 UPDATE product_variants
-SET name = $3, active = $4, updated_at = now()
+SET name = $3, active = $4, tracks_inventory = $5, updated_at = now()
 WHERE business_id = $1 AND id = $2
 RETURNING *;

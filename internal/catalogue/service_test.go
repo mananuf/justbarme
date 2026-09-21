@@ -144,7 +144,7 @@ func TestCreateVariantSetsInitialPriceAtomically(t *testing.T) {
 		t.Fatalf("CreateProduct: %v", err)
 	}
 
-	variant, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "50cl Bottle", 150000)
+	variant, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "50cl Bottle", 150000, true)
 	if err != nil {
 		t.Fatalf("CreateVariant: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestSetVariantPriceClosesOldRowAndInsertsNewAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProduct: %v", err)
 	}
-	variant, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "50cl Bottle", 90000)
+	variant, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "50cl Bottle", 90000, true)
 	if err != nil {
 		t.Fatalf("CreateVariant: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestConcurrentSetVariantPriceNeverProducesTwoCurrentPrices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProduct: %v", err)
 	}
-	variant, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "50cl Bottle", 100000)
+	variant, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "50cl Bottle", 100000, true)
 	if err != nil {
 		t.Fatalf("CreateVariant: %v", err)
 	}
@@ -346,10 +346,10 @@ func TestVariantDuplicateNameRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProduct: %v", err)
 	}
-	if _, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "50cl Bottle", 120000); err != nil {
+	if _, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "50cl Bottle", 120000, true); err != nil {
 		t.Fatalf("CreateVariant: %v", err)
 	}
-	if _, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "50cl Bottle", 125000); err != catalogue.ErrVariantNameTaken {
+	if _, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "50cl Bottle", 125000, true); err != catalogue.ErrVariantNameTaken {
 		t.Fatalf("expected ErrVariantNameTaken for a duplicate variant name on the same product, got %v", err)
 	}
 }
@@ -367,7 +367,7 @@ func TestDeactivateProductCategoryAndVariantPreservesRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProduct: %v", err)
 	}
-	variant, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "50cl Bottle", 80000)
+	variant, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "50cl Bottle", 80000, true)
 	if err != nil {
 		t.Fatalf("CreateVariant: %v", err)
 	}

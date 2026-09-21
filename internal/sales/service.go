@@ -151,12 +151,13 @@ func postSaleRound(
 	}
 
 	type resolvedItem struct {
-		variantID     uuid.UUID
-		description   string
-		quantity      int32
-		unitPriceKobo int64
-		lineTotalKobo int64
-		reviewReason  string // "" if none
+		variantID       uuid.UUID
+		description     string
+		quantity        int32
+		unitPriceKobo   int64
+		lineTotalKobo   int64
+		reviewReason    string // "" if none
+		tracksInventory bool
 	}
 	resolved := make([]resolvedItem, 0, len(items))
 	var totalKobo int64
@@ -184,6 +185,7 @@ func postSaleRound(
 		resolved = append(resolved, resolvedItem{
 			variantID: item.VariantID, description: variant.ProductName + " — " + variant.Name, quantity: item.Quantity,
 			unitPriceKobo: item.UnitPriceKobo, lineTotalKobo: lineTotal, reviewReason: reviewReason,
+			tracksInventory: variant.TracksInventory,
 		})
 	}
 
@@ -219,40 +221,49 @@ func postSaleRound(
 		}
 		postedItems = append(postedItems, toSaleItem(postedItem))
 
-		movementID, err := newID()
-		if err != nil {
-			return Sale{}, err
-		}
-		if _, err := q.CreateInventoryMovement(ctx, sqlc.CreateInventoryMovementParams{
-			ID: movementID, BusinessID: businessID, EventID: eventID,
-			VariantID: r.variantID, LocationID: locationID, QuantityDelta: -r.quantity,
-		}); err != nil {
-			return Sale{}, fmt.Errorf("create inventory movement: %w", err)
-		}
-		balance, err := q.UpsertInventoryBalanceDelta(ctx, sqlc.UpsertInventoryBalanceDeltaParams{
-			BusinessID: businessID, VariantID: r.variantID, LocationID: locationID, Quantity: -r.quantity,
-		})
-		if err != nil {
-			return Sale{}, fmt.Errorf("update inventory balance: %w", err)
-		}
-		// A real, offline-capable oversell is never rejected -- the sale
-		// always posts as submitted (docs/ARCHITECTURE.md §8.5) -- but a
-		// negative resulting balance is exactly what a negative_inventory
-		// review exists to surface. internal/inventory owns this table's
-		// domain meaning; this package writes to it directly via the
-		// shared sqlc layer rather than depending on internal/inventory as
-		// a Go package, the same established pattern already used for
-		// inventory_movements/inventory_balances here.
-		if balance.Quantity < 0 {
-			negReviewID, err := newID()
+		// A non-stocked service item (a snooker game, table time -- see
+		// catalogue.Variant's own doc comment on tracks_inventory) has no
+		// "restock" event, ever -- unconditionally deducting inventory for
+		// it would open a fresh negative_inventory review on every single
+		// sale, forever. Skip the movement/balance/review pipeline
+		// entirely for such a variant; the sale itself still posts
+		// normally either way.
+		if r.tracksInventory {
+			movementID, err := newID()
 			if err != nil {
 				return Sale{}, err
 			}
-			if _, err := q.CreateInventoryReview(ctx, sqlc.CreateInventoryReviewParams{
-				ID: negReviewID, BusinessID: businessID, Type: "negative_inventory",
-				VariantID: r.variantID, LocationID: locationID, RelatedMovementID: pgUUID(movementID),
+			if _, err := q.CreateInventoryMovement(ctx, sqlc.CreateInventoryMovementParams{
+				ID: movementID, BusinessID: businessID, EventID: eventID,
+				VariantID: r.variantID, LocationID: locationID, QuantityDelta: -r.quantity,
 			}); err != nil {
-				return Sale{}, fmt.Errorf("create negative-inventory review: %w", err)
+				return Sale{}, fmt.Errorf("create inventory movement: %w", err)
+			}
+			balance, err := q.UpsertInventoryBalanceDelta(ctx, sqlc.UpsertInventoryBalanceDeltaParams{
+				BusinessID: businessID, VariantID: r.variantID, LocationID: locationID, Quantity: -r.quantity,
+			})
+			if err != nil {
+				return Sale{}, fmt.Errorf("update inventory balance: %w", err)
+			}
+			// A real, offline-capable oversell is never rejected -- the sale
+			// always posts as submitted (docs/ARCHITECTURE.md §8.5) -- but a
+			// negative resulting balance is exactly what a negative_inventory
+			// review exists to surface. internal/inventory owns this table's
+			// domain meaning; this package writes to it directly via the
+			// shared sqlc layer rather than depending on internal/inventory as
+			// a Go package, the same established pattern already used for
+			// inventory_movements/inventory_balances here.
+			if balance.Quantity < 0 {
+				negReviewID, err := newID()
+				if err != nil {
+					return Sale{}, err
+				}
+				if _, err := q.CreateInventoryReview(ctx, sqlc.CreateInventoryReviewParams{
+					ID: negReviewID, BusinessID: businessID, Type: "negative_inventory",
+					VariantID: r.variantID, LocationID: locationID, RelatedMovementID: pgUUID(movementID),
+				}); err != nil {
+					return Sale{}, fmt.Errorf("create negative-inventory review: %w", err)
+				}
 			}
 		}
 
@@ -500,6 +511,20 @@ func (s *Service) ReverseSale(ctx context.Context, userID, businessID, saleID, a
 				return fmt.Errorf("create reversal sale item: %w", err)
 			}
 			postedItems = append(postedItems, toSaleItem(postedItem))
+
+			// A non-stocked service item (tracks_inventory = false, see
+			// catalogue.Variant's own doc comment) was never deducted in
+			// the first place -- postSaleRound skips it -- so there is
+			// nothing to put back here either; putting stock "back" for it
+			// would just create a nonsensical positive balance out of
+			// nowhere.
+			variant, err := q.GetVariantWithProductNameByID(ctx, sqlc.GetVariantWithProductNameByIDParams{BusinessID: businessID, ID: item.VariantID})
+			if err != nil {
+				return fmt.Errorf("look up variant for reversal: %w", err)
+			}
+			if !variant.TracksInventory {
+				continue
+			}
 
 			// Putting stock back: the original sale moved -quantity, so the
 			// reversal moves +quantity of the original (== -quantity here,

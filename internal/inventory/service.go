@@ -78,6 +78,17 @@ func (s *Service) ReceiveStock(ctx context.Context, userID, businessID, location
 		}
 
 		for _, line := range lines {
+			variant, err := q.GetVariantByID(ctx, sqlc.GetVariantByIDParams{BusinessID: businessID, ID: line.VariantID})
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return ErrVariantNotFound
+				}
+				return fmt.Errorf("look up variant: %w", err)
+			}
+			if !variant.TracksInventory {
+				return ErrVariantNotTracked
+			}
+
 			lineID, err := newID()
 			if err != nil {
 				return err

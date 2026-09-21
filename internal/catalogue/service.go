@@ -196,7 +196,7 @@ func (s *Service) ApplyTemplates(ctx context.Context, userID, businessID uuid.UU
 					return err
 				}
 				variant, err := q.CreateVariant(ctx, sqlc.CreateVariantParams{
-					ID: variantID, BusinessID: businessID, ProductID: product.ID, Name: tv.Name,
+					ID: variantID, BusinessID: businessID, ProductID: product.ID, Name: tv.Name, TracksInventory: true,
 				})
 				if err != nil {
 					return fmt.Errorf("create variant %q from template: %w", tv.Name, err)
@@ -389,7 +389,7 @@ func (s *Service) UpdateProduct(ctx context.Context, userID, businessID, product
 // moment it exists (Phase 3 acceptance criterion "Exactly one current
 // price exists per variant"). It returns ErrVariantNameTaken if name is
 // already used for this product.
-func (s *Service) CreateVariant(ctx context.Context, userID, businessID, productID uuid.UUID, name string, initialPriceKobo int64) (VariantWithPrice, error) {
+func (s *Service) CreateVariant(ctx context.Context, userID, businessID, productID uuid.UUID, name string, initialPriceKobo int64, tracksInventory bool) (VariantWithPrice, error) {
 	variantID, err := newID()
 	if err != nil {
 		return VariantWithPrice{}, err
@@ -405,7 +405,9 @@ func (s *Service) CreateVariant(ctx context.Context, userID, businessID, product
 	)
 	err = store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
 		var err error
-		variant, err = q.CreateVariant(ctx, sqlc.CreateVariantParams{ID: variantID, BusinessID: businessID, ProductID: productID, Name: name})
+		variant, err = q.CreateVariant(ctx, sqlc.CreateVariantParams{
+			ID: variantID, BusinessID: businessID, ProductID: productID, Name: name, TracksInventory: tracksInventory,
+		})
 		if err != nil {
 			return fmt.Errorf("create variant: %w", err)
 		}
@@ -430,15 +432,23 @@ func (s *Service) CreateVariant(ctx context.Context, userID, businessID, product
 type UpdateVariantParams struct {
 	Name   string
 	Active bool
+	// TracksInventory -- see Variant's own doc comment. Full-replacement,
+	// matching this codebase's PATCH convention: the caller resends the
+	// whole mutable set, not a partial merge.
+	TracksInventory bool
 }
 
-// UpdateVariant renames and/or (de)activates variantID. A variant is never
-// hard-deleted -- deactivating it is the only removal path, so its price
-// history never dangles.
+// UpdateVariant renames, (de)activates, and/or changes the
+// tracks-inventory flag of variantID. A variant is never hard-deleted --
+// deactivating it is the only removal path, so its price history never
+// dangles.
 func (s *Service) UpdateVariant(ctx context.Context, userID, businessID, variantID uuid.UUID, params UpdateVariantParams) (Variant, error) {
 	var updated sqlc.ProductVariant
 	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
-		row, err := q.UpdateVariant(ctx, sqlc.UpdateVariantParams{BusinessID: businessID, ID: variantID, Name: params.Name, Active: params.Active})
+		row, err := q.UpdateVariant(ctx, sqlc.UpdateVariantParams{
+			BusinessID: businessID, ID: variantID, Name: params.Name, Active: params.Active,
+			TracksInventory: params.TracksInventory,
+		})
 		if err != nil {
 			return err
 		}

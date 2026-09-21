@@ -129,7 +129,7 @@ func TestReviewsCollectorCountsOpenSaleReviews(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProduct: %v", err)
 	}
-	variant, err := catalogueSvc.CreateVariant(ctx, owner.ID, biz.ID, product.ID, "Bottle", 80000)
+	variant, err := catalogueSvc.CreateVariant(ctx, owner.ID, biz.ID, product.ID, "Bottle", 80000, true)
 	if err != nil {
 		t.Fatalf("CreateVariant: %v", err)
 	}

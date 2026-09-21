@@ -90,6 +90,10 @@ func (api *API) receiveStock(w http.ResponseWriter, r *http.Request) {
 			api.badRequestResponse(w, r, "One or more variant IDs do not exist.")
 			return
 		}
+		if errors.Is(err, inventory.ErrVariantNotTracked) {
+			api.conflictResponse(w, r, err.Error())
+			return
+		}
 		api.internalErrorResponse(w, r, fmt.Errorf("receive stock: %w", err))
 		return
 	}

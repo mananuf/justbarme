@@ -316,13 +316,14 @@ type ProductPrice struct {
 }
 
 type ProductVariant struct {
-	ID         uuid.UUID          `json:"id"`
-	BusinessID uuid.UUID          `json:"business_id"`
-	ProductID  uuid.UUID          `json:"product_id"`
-	Name       string             `json:"name"`
-	Active     bool               `json:"active"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	ID              uuid.UUID          `json:"id"`
+	BusinessID      uuid.UUID          `json:"business_id"`
+	ProductID       uuid.UUID          `json:"product_id"`
+	Name            string             `json:"name"`
+	Active          bool               `json:"active"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	TracksInventory bool               `json:"tracks_inventory"`
 }
 
 type Sale struct {

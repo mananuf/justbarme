@@ -57,7 +57,7 @@ func newTenant(t *testing.T, ctx context.Context, catalogueSvc *catalogue.Servic
 	if err != nil {
 		t.Fatalf("CreateProduct: %v", err)
 	}
-	variant, err := catalogueSvc.CreateVariant(ctx, owner.ID, business.ID, product.ID, "50cl Bottle", 80000)
+	variant, err := catalogueSvc.CreateVariant(ctx, owner.ID, business.ID, product.ID, "50cl Bottle", 80000, true)
 	if err != nil {
 		t.Fatalf("CreateVariant: %v", err)
 	}
@@ -195,6 +195,28 @@ func TestReceiveStockRejectsUnknownVariant(t *testing.T) {
 	})
 	if err != inventory.ErrVariantNotFound {
 		t.Fatalf("expected ErrVariantNotFound, got %v", err)
+	}
+}
+
+func TestReceiveStockRejectsUntrackedVariant(t *testing.T) {
+	inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, _ := newTenant(t, ctx, catalogueSvc, identitySvc, pool)
+
+	product, err := catalogueSvc.CreateProduct(ctx, ownerID, businessID, uuid.Nil, uniqueName("Snooker"))
+	if err != nil {
+		t.Fatalf("CreateProduct: %v", err)
+	}
+	variant, err := catalogueSvc.CreateVariant(ctx, ownerID, businessID, product.ID, "Game", 50000, false)
+	if err != nil {
+		t.Fatalf("CreateVariant (untracked): %v", err)
+	}
+
+	_, err = inventorySvc.ReceiveStock(ctx, ownerID, businessID, locationID, []inventory.ReceiptLine{
+		{VariantID: variant.ID, Quantity: 1, TotalCostKobo: 100},
+	})
+	if err != inventory.ErrVariantNotTracked {
+		t.Fatalf("expected ErrVariantNotTracked, got %v", err)
 	}
 }
 

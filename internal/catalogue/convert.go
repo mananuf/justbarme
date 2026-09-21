@@ -68,7 +68,10 @@ func toProduct(p sqlc.Product) Product {
 }
 
 func toVariant(v sqlc.ProductVariant) Variant {
-	return Variant{ID: v.ID, BusinessID: v.BusinessID, ProductID: v.ProductID, Name: v.Name, Active: v.Active}
+	return Variant{
+		ID: v.ID, BusinessID: v.BusinessID, ProductID: v.ProductID, Name: v.Name, Active: v.Active,
+		TracksInventory: v.TracksInventory,
+	}
 }
 
 func toPrice(p sqlc.ProductPrice) Price {

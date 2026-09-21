@@ -52,6 +52,10 @@ export interface CatalogueVariant {
   // docs/PHASE_STOCK_RECEIVING.md. Always 0 for a variant with no stock
   // receipts yet.
   currentStock: number;
+  // False for a non-stocked service item (a snooker game, table time) --
+  // see internal/catalogue.Variant's own doc comment. Such a variant is
+  // never "restocked" and never shows a meaningful currentStock number.
+  tracksInventory: boolean;
 }
 
 export interface CatalogueProduct {
@@ -67,6 +71,7 @@ interface RawVariant {
   active: boolean;
   current_price: { amount_kobo: number };
   current_stock: number;
+  tracks_inventory: boolean;
 }
 
 interface RawProduct {
@@ -89,6 +94,7 @@ function toCatalogueProduct(p: RawProduct): CatalogueProduct {
       active: v.active,
       currentPriceKobo: v.current_price.amount_kobo,
       currentStock: v.current_stock,
+      tracksInventory: v.tracks_inventory,
     })),
   };
 }
@@ -148,11 +154,16 @@ export async function createVariant(
   initialPriceKobo: number,
   businessId: string,
   csrfToken: string,
+  tracksInventory = true,
 ): Promise<CatalogueVariant> {
   const raw = await apiRequest<RawVariant>(`/api/v1/products/${productId}/variants`, {
     method: 'POST',
     headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
-    body: JSON.stringify({ name, initial_price_kobo: initialPriceKobo }),
+    body: JSON.stringify({
+      name,
+      initial_price_kobo: initialPriceKobo,
+      tracks_inventory: tracksInventory,
+    }),
   });
   return {
     id: raw.id,
@@ -160,6 +171,7 @@ export async function createVariant(
     active: raw.active,
     currentPriceKobo: raw.current_price.amount_kobo,
     currentStock: raw.current_stock,
+    tracksInventory: raw.tracks_inventory,
   };
 }
 
@@ -264,14 +276,18 @@ export async function updateProduct(
 // active only; price changes go through setVariantPrice instead.
 export async function updateVariant(
   variantId: string,
-  params: { name: string; active: boolean },
+  params: { name: string; active: boolean; tracksInventory: boolean },
   businessId: string,
   csrfToken: string,
 ): Promise<CatalogueVariant> {
   const raw = await apiRequest<RawVariant>(`/api/v1/variants/${variantId}`, {
     method: 'PATCH',
     headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
-    body: JSON.stringify({ name: params.name, active: params.active }),
+    body: JSON.stringify({
+      name: params.name,
+      active: params.active,
+      tracks_inventory: params.tracksInventory,
+    }),
   });
   return {
     id: raw.id,
@@ -279,5 +295,6 @@ export async function updateVariant(
     active: raw.active,
     currentPriceKobo: raw.current_price.amount_kobo,
     currentStock: raw.current_stock,
+    tracksInventory: raw.tracks_inventory,
   };
 }

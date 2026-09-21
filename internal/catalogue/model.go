@@ -59,6 +59,12 @@ type Variant struct {
 	ProductID  uuid.UUID
 	Name       string
 	Active     bool
+	// TracksInventory is false for a non-stocked service item (a snooker
+	// game, table time) -- internal/sales.postSaleRound skips the
+	// inventory movement/balance/negative-review pipeline entirely for
+	// such a variant, and internal/inventory.ReceiveStock refuses to
+	// "restock" it. Defaults true for an ordinary physical drink.
+	TracksInventory bool
 }
 
 // Price is one append-oriented effective-dated row. ValidTo is nil while

@@ -59,7 +59,7 @@ func newTenant(
 	if err != nil {
 		t.Fatalf("CreateProduct: %v", err)
 	}
-	variant, err := catalogueSvc.CreateVariant(ctx, owner.ID, business.ID, product.ID, "50cl Bottle", 80000)
+	variant, err := catalogueSvc.CreateVariant(ctx, owner.ID, business.ID, product.ID, "50cl Bottle", 80000, true)
 	if err != nil {
 		t.Fatalf("CreateVariant: %v", err)
 	}

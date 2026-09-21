@@ -13,16 +13,17 @@ import (
 )
 
 const createVariant = `-- name: CreateVariant :one
-INSERT INTO product_variants (id, business_id, product_id, name)
-VALUES ($1, $2, $3, $4)
-RETURNING id, business_id, product_id, name, active, created_at, updated_at
+INSERT INTO product_variants (id, business_id, product_id, name, tracks_inventory)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, business_id, product_id, name, active, created_at, updated_at, tracks_inventory
 `
 
 type CreateVariantParams struct {
-	ID         uuid.UUID `json:"id"`
-	BusinessID uuid.UUID `json:"business_id"`
-	ProductID  uuid.UUID `json:"product_id"`
-	Name       string    `json:"name"`
+	ID              uuid.UUID `json:"id"`
+	BusinessID      uuid.UUID `json:"business_id"`
+	ProductID       uuid.UUID `json:"product_id"`
+	Name            string    `json:"name"`
+	TracksInventory bool      `json:"tracks_inventory"`
 }
 
 func (q *Queries) CreateVariant(ctx context.Context, arg CreateVariantParams) (ProductVariant, error) {
@@ -31,6 +32,7 @@ func (q *Queries) CreateVariant(ctx context.Context, arg CreateVariantParams) (P
 		arg.BusinessID,
 		arg.ProductID,
 		arg.Name,
+		arg.TracksInventory,
 	)
 	var i ProductVariant
 	err := row.Scan(
@@ -41,12 +43,13 @@ func (q *Queries) CreateVariant(ctx context.Context, arg CreateVariantParams) (P
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TracksInventory,
 	)
 	return i, err
 }
 
 const getVariantByID = `-- name: GetVariantByID :one
-SELECT id, business_id, product_id, name, active, created_at, updated_at FROM product_variants WHERE business_id = $1 AND id = $2
+SELECT id, business_id, product_id, name, active, created_at, updated_at, tracks_inventory FROM product_variants WHERE business_id = $1 AND id = $2
 `
 
 type GetVariantByIDParams struct {
@@ -65,12 +68,13 @@ func (q *Queries) GetVariantByID(ctx context.Context, arg GetVariantByIDParams) 
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TracksInventory,
 	)
 	return i, err
 }
 
 const getVariantWithProductNameByID = `-- name: GetVariantWithProductNameByID :one
-SELECT product_variants.id, product_variants.business_id, product_variants.product_id, product_variants.name, product_variants.active, product_variants.created_at, product_variants.updated_at, products.name AS product_name
+SELECT product_variants.id, product_variants.business_id, product_variants.product_id, product_variants.name, product_variants.active, product_variants.created_at, product_variants.updated_at, product_variants.tracks_inventory, products.name AS product_name
 FROM product_variants
 JOIN products ON products.business_id = product_variants.business_id AND products.id = product_variants.product_id
 WHERE product_variants.business_id = $1 AND product_variants.id = $2
@@ -82,14 +86,15 @@ type GetVariantWithProductNameByIDParams struct {
 }
 
 type GetVariantWithProductNameByIDRow struct {
-	ID          uuid.UUID          `json:"id"`
-	BusinessID  uuid.UUID          `json:"business_id"`
-	ProductID   uuid.UUID          `json:"product_id"`
-	Name        string             `json:"name"`
-	Active      bool               `json:"active"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-	ProductName string             `json:"product_name"`
+	ID              uuid.UUID          `json:"id"`
+	BusinessID      uuid.UUID          `json:"business_id"`
+	ProductID       uuid.UUID          `json:"product_id"`
+	Name            string             `json:"name"`
+	Active          bool               `json:"active"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	TracksInventory bool               `json:"tracks_inventory"`
+	ProductName     string             `json:"product_name"`
 }
 
 // Joins in the owning product's name for callers that need a full
@@ -107,13 +112,14 @@ func (q *Queries) GetVariantWithProductNameByID(ctx context.Context, arg GetVari
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TracksInventory,
 		&i.ProductName,
 	)
 	return i, err
 }
 
 const listVariantsByBusiness = `-- name: ListVariantsByBusiness :many
-SELECT id, business_id, product_id, name, active, created_at, updated_at FROM product_variants WHERE business_id = $1 ORDER BY product_id, name
+SELECT id, business_id, product_id, name, active, created_at, updated_at, tracks_inventory FROM product_variants WHERE business_id = $1 ORDER BY product_id, name
 `
 
 func (q *Queries) ListVariantsByBusiness(ctx context.Context, businessID uuid.UUID) ([]ProductVariant, error) {
@@ -133,6 +139,7 @@ func (q *Queries) ListVariantsByBusiness(ctx context.Context, businessID uuid.UU
 			&i.Active,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.TracksInventory,
 		); err != nil {
 			return nil, err
 		}
@@ -145,7 +152,7 @@ func (q *Queries) ListVariantsByBusiness(ctx context.Context, businessID uuid.UU
 }
 
 const listVariantsByProduct = `-- name: ListVariantsByProduct :many
-SELECT id, business_id, product_id, name, active, created_at, updated_at FROM product_variants WHERE business_id = $1 AND product_id = $2 ORDER BY name
+SELECT id, business_id, product_id, name, active, created_at, updated_at, tracks_inventory FROM product_variants WHERE business_id = $1 AND product_id = $2 ORDER BY name
 `
 
 type ListVariantsByProductParams struct {
@@ -170,6 +177,7 @@ func (q *Queries) ListVariantsByProduct(ctx context.Context, arg ListVariantsByP
 			&i.Active,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.TracksInventory,
 		); err != nil {
 			return nil, err
 		}
@@ -183,16 +191,17 @@ func (q *Queries) ListVariantsByProduct(ctx context.Context, arg ListVariantsByP
 
 const updateVariant = `-- name: UpdateVariant :one
 UPDATE product_variants
-SET name = $3, active = $4, updated_at = now()
+SET name = $3, active = $4, tracks_inventory = $5, updated_at = now()
 WHERE business_id = $1 AND id = $2
-RETURNING id, business_id, product_id, name, active, created_at, updated_at
+RETURNING id, business_id, product_id, name, active, created_at, updated_at, tracks_inventory
 `
 
 type UpdateVariantParams struct {
-	BusinessID uuid.UUID `json:"business_id"`
-	ID         uuid.UUID `json:"id"`
-	Name       string    `json:"name"`
-	Active     bool      `json:"active"`
+	BusinessID      uuid.UUID `json:"business_id"`
+	ID              uuid.UUID `json:"id"`
+	Name            string    `json:"name"`
+	Active          bool      `json:"active"`
+	TracksInventory bool      `json:"tracks_inventory"`
 }
 
 func (q *Queries) UpdateVariant(ctx context.Context, arg UpdateVariantParams) (ProductVariant, error) {
@@ -201,6 +210,7 @@ func (q *Queries) UpdateVariant(ctx context.Context, arg UpdateVariantParams) (P
 		arg.ID,
 		arg.Name,
 		arg.Active,
+		arg.TracksInventory,
 	)
 	var i ProductVariant
 	err := row.Scan(
@@ -211,6 +221,7 @@ func (q *Queries) UpdateVariant(ctx context.Context, arg UpdateVariantParams) (P
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TracksInventory,
 	)
 	return i, err
 }

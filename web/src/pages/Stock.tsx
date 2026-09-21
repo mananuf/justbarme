@@ -31,11 +31,23 @@ import {
 import { getRememberedCrateSize, setRememberedCrateSize } from '../lib/stockPreferences';
 import { useSession } from '../lib/session';
 
-// Default variant name for a brand-new custom product -- asking for a
-// selling price is the one field this flow needs; a bottle-size name can
-// be renamed later in Settings, and defaulting it silently keeps this to
-// one field instead of two.
-const DEFAULT_VARIANT_NAME = 'Bottle';
+// Standard bottle sizes for a brand-new custom product. 35cl/50cl/70cl/75cl
+// are the sizes actually used across internal/catalogue.NigerianBarCatalogue's
+// curated Nigerian-market research (beer/soft drinks=50cl, whiskey=70cl,
+// gin/spirits/bitters/water=75cl, one imported beer=35cl) -- merged here
+// with a broader set so anything genuinely different still has a one-tap
+// option before falling back to free text.
+const STANDARD_SIZES = [
+  '33cl',
+  '35cl',
+  '45cl',
+  '50cl',
+  '60cl',
+  '70cl',
+  '75cl',
+  '1L',
+  '1.5L',
+] as const;
 
 function PrimaryButton({ children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
@@ -180,7 +192,8 @@ type Phase = 'search' | 'price' | 'receive' | 'done';
 type Mode = 'restock' | 'count' | 'adjust';
 
 export function Stock() {
-  const { csrfToken, selectedBusinessId } = useSession();
+  const { csrfToken, selectedBusinessId, memberships } = useSession();
+  const isOwner = memberships.find((m) => m.businessId === selectedBusinessId)?.role === 'owner';
   const isOnline = useConnectivity();
 
   const [mode, setMode] = useState<Mode>('restock');
@@ -223,9 +236,32 @@ export function Stock() {
   const [history, setHistory] = useState<StockHistoryEntry[] | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
 
+  // Quick price edit on the "Your products" restock list -- owner only
+  // (catalogue:manage). editingPriceVariantId identifies which row (if
+  // any) currently shows an editable price instead of the plain badge.
+  const [editingPriceVariantId, setEditingPriceVariantId] = useState<string | null>(null);
+  const [editingPriceValue, setEditingPriceValue] = useState('');
+  const [savingPriceVariantId, setSavingPriceVariantId] = useState<string | null>(null);
+  const [priceEditError, setPriceEditError] = useState<string | null>(null);
+
   const [target, setTarget] = useState<Target | null>(null);
   const [variantId, setVariantId] = useState<string | null>(null);
   const [sellingPriceNaira, setSellingPriceNaira] = useState('');
+
+  // New-custom-product sizing (target.kind === 'custom' only -- a
+  // template's variant name already comes from the platform catalogue).
+  // Standard sizes are the ones actually seeded in
+  // internal/catalogue.NigerianBarCatalogue (35/50/70/75cl) merged with
+  // a broader "just in case" set, plus a Can container option and a
+  // free-text escape hatch for anything genuinely nonstandard.
+  const [selectedSize, setSelectedSize] = useState<(typeof STANDARD_SIZES)[number]>('50cl');
+  const [containerType, setContainerType] = useState<'Bottle' | 'Can'>('Bottle');
+  const [useCustomSize, setUseCustomSize] = useState(false);
+  const [customSizeName, setCustomSizeName] = useState('');
+  // A service item (a snooker/pool game, table time) has no size at all --
+  // see internal/catalogue.Variant's tracks_inventory doc comment.
+  const [isServiceItem, setIsServiceItem] = useState(false);
+  const [serviceItemName, setServiceItemName] = useState('');
 
   const [unitMode, setUnitMode] = useState<'crate' | 'bottle'>('crate');
   const [crateSize, setCrateSize] = useState('');
@@ -233,7 +269,11 @@ export function Stock() {
   const [bottleCount, setBottleCount] = useState('');
   const [totalCostNaira, setTotalCostNaira] = useState('');
 
-  const [lastResult, setLastResult] = useState<{ label: string; newBalance: number } | null>(null);
+  const [lastResult, setLastResult] = useState<{
+    label: string;
+    newBalance: number;
+    isServiceItem?: boolean;
+  } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -273,6 +313,11 @@ export function Stock() {
     for (const product of ownProducts) {
       if (query && !product.name.toLowerCase().includes(query)) continue;
       for (const variant of product.variants) {
+        // A service item (tracks_inventory=false) has nothing to
+        // restock, ever -- see internal/catalogue.Variant's own doc
+        // comment -- so it's deliberately absent from this list. Its
+        // price is still editable from Settings.
+        if (!variant.tracksInventory) continue;
         rows.push({
           variantId: variant.id,
           label: `${product.name} — ${variant.name}`,
@@ -297,7 +342,10 @@ export function Stock() {
     const rows: SimpleVariant[] = [];
     for (const product of ownProducts) {
       for (const variant of product.variants) {
-        if (!variant.active) continue;
+        // Neither counting nor reporting a stock issue makes sense for a
+        // non-stocked service item -- same reasoning as
+        // matchingOwnVariants above.
+        if (!variant.active || !variant.tracksInventory) continue;
         rows.push({
           variantId: variant.id,
           label: `${product.name} — ${variant.name}`,
@@ -449,6 +497,37 @@ export function Stock() {
     setPhase('receive');
   }
 
+  function startEditingPrice(row: { variantId: string; priceKobo: number }) {
+    setPriceEditError(null);
+    setEditingPriceVariantId(row.variantId);
+    setEditingPriceValue((row.priceKobo / 100).toString());
+  }
+
+  function cancelEditingPrice() {
+    setEditingPriceVariantId(null);
+    setPriceEditError(null);
+  }
+
+  async function saveEditingPrice(variantIdToSave: string) {
+    if (!selectedBusinessId || !csrfToken) return;
+    const priceKobo = Math.round(Number(editingPriceValue) * 100);
+    if (!priceKobo || priceKobo <= 0) {
+      setPriceEditError('Enter a price greater than zero.');
+      return;
+    }
+    setSavingPriceVariantId(variantIdToSave);
+    setPriceEditError(null);
+    try {
+      await setVariantPrice(variantIdToSave, priceKobo, selectedBusinessId, csrfToken);
+      setEditingPriceVariantId(null);
+      void loadCatalogue();
+    } catch (err) {
+      setPriceEditError(describeActionError(err, 'Could not update this price.'));
+    } finally {
+      setSavingPriceVariantId(null);
+    }
+  }
+
   function pickTemplate(t: CatalogueTemplate) {
     setTarget({ kind: 'template', template: t });
     const suggested = t.variants[0]?.suggestedPriceKobo ?? 0;
@@ -459,7 +538,19 @@ export function Stock() {
   function pickCustom() {
     setTarget({ kind: 'custom', name: search.trim() });
     setSellingPriceNaira('');
+    setSelectedSize('50cl');
+    setContainerType('Bottle');
+    setUseCustomSize(false);
+    setCustomSizeName('');
+    setIsServiceItem(false);
+    setServiceItemName('');
     setPhase('price');
+  }
+
+  function customVariantName(): string {
+    if (isServiceItem) return serviceItemName.trim();
+    if (useCustomSize) return customSizeName.trim();
+    return `${selectedSize} ${containerType}`;
   }
 
   async function confirmPrice() {
@@ -487,16 +578,29 @@ export function Stock() {
         const product = await createProduct(target.name, selectedBusinessId, csrfToken);
         const variant = await createVariant(
           product.id,
-          DEFAULT_VARIANT_NAME,
+          customVariantName(),
           priceKobo,
           selectedBusinessId,
           csrfToken,
+          !isServiceItem,
         );
         newVariantId = variant.id;
       }
       setVariantId(newVariantId);
       setCrateSize(getRememberedCrateSize(newVariantId));
-      setPhase('receive');
+      // A service item (tracks_inventory=false) can never be "received" --
+      // there's nothing to restock -- so skip straight to done instead of
+      // the crate/bottle counting phase.
+      if (target.kind === 'custom' && isServiceItem) {
+        setLastResult({
+          label: customVariantName() || target.name,
+          newBalance: 0,
+          isServiceItem: true,
+        });
+        setPhase('done');
+      } else {
+        setPhase('receive');
+      }
       void loadCatalogue();
     } catch (err) {
       setError(describeActionError(err, 'Could not save this product.'));
@@ -555,6 +659,12 @@ export function Stock() {
     setTotalCostNaira('');
     setError(null);
     setLastResult(null);
+    setSelectedSize('50cl');
+    setContainerType('Bottle');
+    setUseCustomSize(false);
+    setCustomSizeName('');
+    setIsServiceItem(false);
+    setServiceItemName('');
   }
 
   return (
@@ -899,18 +1009,63 @@ export function Stock() {
                 </div>
                 <div className="space-y-2">
                   {matchingOwnVariants.map((row) => (
-                    <button
+                    <div
                       key={row.variantId}
-                      onClick={() => pickExisting(row)}
-                      className="w-full flex items-center justify-between rounded-xl border border-jb-ink/10 bg-white px-4 py-3 text-left"
+                      className="w-full flex items-center justify-between gap-2 rounded-xl border border-jb-ink/10 bg-white px-4 py-3"
                     >
-                      <span className="text-[14px] text-jb-ink/85">{row.label}</span>
-                      <span className="text-[12.5px] text-jb-ink/40">
-                        ₦{formatNaira(row.priceKobo)}
-                      </span>
-                    </button>
+                      <button
+                        onClick={() => pickExisting(row)}
+                        className="flex-1 min-w-0 text-left text-[14px] text-jb-ink/85 truncate"
+                      >
+                        {row.label}
+                      </button>
+
+                      {editingPriceVariantId === row.variantId ? (
+                        <div
+                          className="flex items-center gap-1.5 shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <span className="text-[12.5px] text-jb-ink/40">₦</span>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            autoFocus
+                            value={editingPriceValue}
+                            onChange={(e) => setEditingPriceValue(e.target.value)}
+                            className="w-16 rounded-lg border border-jb-ink/15 px-2 py-1 text-[12.5px] focus:outline-none focus:border-jb-ink/40"
+                          />
+                          <button
+                            onClick={() => void saveEditingPrice(row.variantId)}
+                            disabled={savingPriceVariantId === row.variantId}
+                            className="text-[12px] font-medium text-jb-green disabled:opacity-40"
+                          >
+                            {savingPriceVariantId === row.variantId ? '…' : 'Save'}
+                          </button>
+                          <button
+                            onClick={cancelEditingPrice}
+                            className="text-[12px] text-jb-ink/40"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : isOwner ? (
+                        <button
+                          onClick={() => startEditingPrice(row)}
+                          className="shrink-0 text-[12.5px] text-jb-ink/40 hover:text-jb-ink/70 transition-colors underline decoration-dotted underline-offset-2"
+                        >
+                          ₦{formatNaira(row.priceKobo)}
+                        </button>
+                      ) : (
+                        <span className="shrink-0 text-[12.5px] text-jb-ink/40">
+                          ₦{formatNaira(row.priceKobo)}
+                        </span>
+                      )}
+                    </div>
                   ))}
                 </div>
+                {priceEditError && (
+                  <p className="text-[12px] text-red-700 mt-2">{priceEditError}</p>
+                )}
               </div>
             )}
 
@@ -952,6 +1107,104 @@ export function Stock() {
             <p className="text-[13px] text-jb-ink/45 mb-4">
               What do you sell this for? You can change this anytime later.
             </p>
+
+            {target.kind === 'custom' && (
+              <div className="mb-4">
+                <button
+                  onClick={() => setIsServiceItem((v) => !v)}
+                  className={`w-full text-left rounded-xl border px-4 py-3 mb-3 transition-colors ${
+                    isServiceItem
+                      ? 'border-jb-ink/30 bg-jb-ink/[0.04]'
+                      : 'border-jb-ink/15 bg-white'
+                  }`}
+                >
+                  <span className="text-[13.5px] font-medium text-jb-ink/80">
+                    {isServiceItem ? '☑' : '☐'} This is a service, not stock
+                  </span>
+                  <span className="block text-[11.5px] text-jb-ink/40 mt-0.5">
+                    e.g. a snooker/pool game, table time — nothing to restock, ever
+                  </span>
+                </button>
+
+                {isServiceItem ? (
+                  <label className="block">
+                    <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">
+                      What do you call it?
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="e.g. Game, Hour"
+                      value={serviceItemName}
+                      onChange={(e) => setServiceItemName(e.target.value)}
+                      className="w-full rounded-xl border border-jb-ink/15 bg-white px-4 py-3 text-[14px] focus:outline-none focus:border-jb-ink/40"
+                    />
+                  </label>
+                ) : (
+                  <div>
+                    <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">
+                      Size
+                    </span>
+                    {!useCustomSize ? (
+                      <>
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {STANDARD_SIZES.map((size) => (
+                            <button
+                              key={size}
+                              onClick={() => setSelectedSize(size)}
+                              className={`px-3.5 py-2 rounded-full text-[13px] border transition-colors ${
+                                selectedSize === size
+                                  ? 'border-jb-ink bg-jb-ink text-jb-cream'
+                                  : 'border-jb-ink/15 text-jb-ink/60 bg-white'
+                              }`}
+                            >
+                              {size}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex gap-2 p-1 rounded-xl bg-jb-ink/[0.05] mb-2">
+                          {(['Bottle', 'Can'] as const).map((c) => (
+                            <button
+                              key={c}
+                              onClick={() => setContainerType(c)}
+                              className={`flex-1 rounded-lg py-2 text-[12.5px] font-medium transition-colors ${
+                                containerType === c
+                                  ? 'bg-white text-jb-ink shadow-sm'
+                                  : 'text-jb-ink/45'
+                              }`}
+                            >
+                              {c}
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          onClick={() => setUseCustomSize(true)}
+                          className="text-[12px] text-jb-ink/40 underline underline-offset-2"
+                        >
+                          Not a standard size? Enter your own
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          type="text"
+                          placeholder="e.g. Half Bottle, Shot"
+                          value={customSizeName}
+                          onChange={(e) => setCustomSizeName(e.target.value)}
+                          className="w-full rounded-xl border border-jb-ink/15 bg-white px-4 py-3 text-[14px] focus:outline-none focus:border-jb-ink/40 mb-2"
+                        />
+                        <button
+                          onClick={() => setUseCustomSize(false)}
+                          className="text-[12px] text-jb-ink/40 underline underline-offset-2"
+                        >
+                          Use a standard size instead
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <label className="block mb-4">
               <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">
                 Selling price (₦)
@@ -972,7 +1225,13 @@ export function Stock() {
             )}
             <PrimaryButton
               onClick={() => void confirmPrice()}
-              disabled={submitting || !sellingPriceNaira.trim()}
+              disabled={
+                submitting ||
+                !sellingPriceNaira.trim() ||
+                (target.kind === 'custom' &&
+                  ((isServiceItem && !serviceItemName.trim()) ||
+                    (!isServiceItem && useCustomSize && !customSizeName.trim())))
+              }
             >
               {submitting ? 'Saving…' : 'Continue'}
             </PrimaryButton>
@@ -1104,8 +1363,16 @@ export function Stock() {
             <div className="w-14 h-14 rounded-full bg-jb-ink text-jb-cream flex items-center justify-center text-xl mb-5 mx-auto">
               ✓
             </div>
-            <h2 className="text-lg font-medium mb-1">{lastResult.label} restocked</h2>
-            <p className="text-[13px] text-jb-ink/45 mb-8">Now {lastResult.newBalance} in stock.</p>
+            <h2 className="text-lg font-medium mb-1">
+              {lastResult.isServiceItem
+                ? `${lastResult.label} added`
+                : `${lastResult.label} restocked`}
+            </h2>
+            <p className="text-[13px] text-jb-ink/45 mb-8">
+              {lastResult.isServiceItem
+                ? 'Ready to sell — no stock to track for this one.'
+                : `Now ${lastResult.newBalance} in stock.`}
+            </p>
             <div className="flex flex-col gap-2.5">
               <PrimaryButton onClick={reset}>Add another</PrimaryButton>
               <Link to="/dashboard" className="text-[13px] text-jb-ink/40 py-2">

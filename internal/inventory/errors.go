@@ -12,6 +12,11 @@ var (
 	ErrNoCountLines              = errors.New("a stock count must include at least one line")
 	ErrAdjustmentRequestNotFound = errors.New("adjustment request not found or already decided")
 	ErrInventoryReviewNotFound   = errors.New("inventory review not found or already resolved")
+	// ErrVariantNotTracked is returned by ReceiveStock when the variant is
+	// marked as a non-stocked service item (tracks_inventory = false, see
+	// catalogue.Variant's own doc comment) -- there is no such thing as
+	// "restocking" a snooker game.
+	ErrVariantNotTracked = errors.New("this item does not track inventory and cannot be restocked")
 )
 
 // pgErrorCode reports err's Postgres SQLSTATE code, if any. Duplicated

@@ -39,6 +39,9 @@ type variantResponse struct {
 	// docs/PHASE_STOCK_RECEIVING.md. A variant with no stock receipts yet
 	// is simply absent from the balances map, and reads as 0 here.
 	CurrentStock int64 `json:"current_stock"`
+	// TracksInventory is false for a non-stocked service item (a snooker
+	// game, table time) -- see catalogue.Variant's own doc comment.
+	TracksInventory bool `json:"tracks_inventory"`
 }
 
 type productResponse struct {
@@ -65,7 +68,7 @@ func toPriceResponse(p catalogue.Price) priceResponse {
 func toVariantResponse(v catalogue.VariantWithPrice, balances map[uuid.UUID]int64) variantResponse {
 	return variantResponse{
 		ID: v.ID.String(), Name: v.Name, Active: v.Active, CurrentPrice: toPriceResponse(v.CurrentPrice),
-		CurrentStock: balances[v.ID],
+		CurrentStock: balances[v.ID], TracksInventory: v.TracksInventory,
 	}
 }
 
@@ -415,6 +418,11 @@ func (api *API) updateProduct(w http.ResponseWriter, r *http.Request) {
 type createVariantRequest struct {
 	Name             string `json:"name"`
 	InitialPriceKobo int64  `json:"initial_price_kobo"`
+	// TracksInventory defaults to true (an ordinary physical drink) when
+	// omitted -- only a deliberate "this is a service, not stock" choice
+	// (a snooker game, table time) sends false. See catalogue.Variant's
+	// own doc comment.
+	TracksInventory *bool `json:"tracks_inventory"`
 }
 
 // createVariant implements POST /api/v1/products/{product_id}/variants,
@@ -455,7 +463,8 @@ func (api *API) createVariant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	variant, err := api.catalogue.CreateVariant(r.Context(), principal.UserID, business.BusinessID, productID, req.Name, req.InitialPriceKobo)
+	tracksInventory := req.TracksInventory == nil || *req.TracksInventory
+	variant, err := api.catalogue.CreateVariant(r.Context(), principal.UserID, business.BusinessID, productID, req.Name, req.InitialPriceKobo, tracksInventory)
 	if err != nil {
 		catalogueErrorResponse(api, w, r, err, "create variant")
 		return
@@ -466,8 +475,9 @@ func (api *API) createVariant(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateVariantRequest struct {
-	Name   string `json:"name"`
-	Active bool   `json:"active"`
+	Name            string `json:"name"`
+	Active          bool   `json:"active"`
+	TracksInventory bool   `json:"tracks_inventory"`
 }
 
 // updateVariant implements PATCH /api/v1/variants/{variant_id}. Owner-only
@@ -506,7 +516,7 @@ func (api *API) updateVariant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	variant, err := api.catalogue.UpdateVariant(r.Context(), principal.UserID, business.BusinessID, variantID, catalogue.UpdateVariantParams{
-		Name: req.Name, Active: req.Active,
+		Name: req.Name, Active: req.Active, TracksInventory: req.TracksInventory,
 	})
 	if err != nil {
 		catalogueErrorResponse(api, w, r, err, "update variant")
@@ -518,7 +528,7 @@ func (api *API) updateVariant(w http.ResponseWriter, r *http.Request) {
 		api.internalErrorResponse(w, r, fmt.Errorf("load current price after update: %w", err))
 		return
 	}
-	payload := variantResponse{ID: variant.ID.String(), Name: variant.Name, Active: variant.Active}
+	payload := variantResponse{ID: variant.ID.String(), Name: variant.Name, Active: variant.Active, TracksInventory: variant.TracksInventory}
 	if len(history) > 0 {
 		payload.CurrentPrice = toPriceResponse(history[0])
 	}

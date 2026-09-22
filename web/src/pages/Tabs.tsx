@@ -103,6 +103,18 @@ export function Tabs() {
       .catch((err: unknown) => setLoadError(describeActionError(err, 'Could not load tabs.')));
   };
 
+  // Re-fetched after every quantity change (see handleAdjustQuantity) so
+  // currentStock always reflects rounds already posted on this bill --
+  // that's what lets the out-of-stock check below be a plain
+  // `currentStock <= 0` rather than also subtracting currentOrderQuantities
+  // (which would double-count a round posted earlier this same session).
+  const refreshProducts = () => {
+    if (!selectedBusinessId) return;
+    listProducts(selectedBusinessId)
+      .then(setProducts)
+      .catch(() => undefined);
+  };
+
   useEffect(() => {
     if (!selectedBusinessId) return;
     refreshBills();
@@ -145,6 +157,11 @@ export function Tabs() {
     };
   }, [activeBillId, selectedBusinessId]);
 
+  // Unlike Sell.tsx's not-yet-posted draft cart, each round here posts
+  // immediately (see handleAdjustQuantity), and refreshProducts() re-fetches
+  // right after -- so currentStock already nets out everything posted on
+  // this bill so far. outOfStock is therefore a plain currentStock<=0, with
+  // no separate subtraction of currentOrderQuantities.
   const variants: PickableVariant[] = useMemo(
     () =>
       (products ?? []).flatMap((p) =>
@@ -154,6 +171,7 @@ export function Tabs() {
             variantId: v.id,
             description: `${p.name} — ${v.name}`,
             priceKobo: v.currentPriceKobo,
+            outOfStock: v.tracksInventory && v.currentStock <= 0,
           })),
       ),
     [products],
@@ -233,6 +251,7 @@ export function Tabs() {
     delta: number,
   ) {
     if (!selectedBusinessId || !csrfToken || busy || delta === 0) return;
+    if (delta > 0 && variants.find((v) => v.variantId === variant.variantId)?.outOfStock) return;
     setBusy(true);
     setActionError(null);
     try {
@@ -265,6 +284,7 @@ export function Tabs() {
       }
       await refreshBillDetail(billId);
       refreshBills();
+      refreshProducts();
     } catch (err) {
       setActionError(describeActionError(err, 'Could not update this item.'));
     } finally {
@@ -609,6 +629,7 @@ export function Tabs() {
                       cartQuantities={currentOrderQuantities}
                       inCartLabel="on this tab"
                       onAdd={(v) => void handleAdjustQuantity(activeBillId, v, 1)}
+                      scrollMaxHeightClassName="max-h-[38vh]"
                       emptyMessage={
                         <p className="text-[13px] text-jb-ink/45">
                           You haven&apos;t stocked anything yet.{' '}
@@ -635,7 +656,10 @@ export function Tabs() {
       {activeBillId !== null && activeDetail && activeBill && canEditItems && (
         <CartPanel
           label="CURRENT ORDER"
-          lines={currentOrderLines}
+          lines={currentOrderLines.map((l) => ({
+            ...l,
+            atStockLimit: variants.find((v) => v.variantId === l.variantId)?.outOfStock,
+          }))}
           emptyMessage="Tap a drink above to add it here."
           onChangeQty={(variantId, delta) => {
             const line = currentOrderLines.find((l) => l.variantId === variantId);

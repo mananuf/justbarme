@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { listProducts, type CatalogueProduct } from '../api/catalogue';
@@ -64,6 +64,7 @@ export function Sell() {
   }, [isOnline, selectedBusinessId, csrfToken]);
 
   const addOne = (variant: PickableVariant) => {
+    if (variant.outOfStock) return;
     setCart((c) => {
       const existing = c.find((l) => l.variantId === variant.variantId);
       if (existing)
@@ -83,6 +84,7 @@ export function Sell() {
   };
 
   const changeQty = (variantId: string, delta: number) => {
+    if (delta > 0 && variants.find((v) => v.variantId === variantId)?.outOfStock) return;
     setCart((c) =>
       c
         .map((l) => (l.variantId === variantId ? { ...l, quantity: l.quantity + delta } : l))
@@ -125,18 +127,24 @@ export function Sell() {
     }
   }
 
-  const variants: PickableVariant[] = useMemo(
-    () =>
-      (products ?? []).flatMap((p) =>
-        p.variants
-          .filter((v) => v.active)
-          .map((v) => ({
-            variantId: v.id,
-            description: `${p.name} — ${v.name}`,
-            priceKobo: v.currentPriceKobo,
-          })),
-      ),
-    [products],
+  // A drink's price is fetched fresh, but this uncommitted local cart
+  // hasn't posted yet -- currentStock still reflects the server's real
+  // stock, so outOfStock has to subtract what's already sitting in the
+  // cart itself (unlike Tabs.tsx, where each round posts immediately and
+  // is already reflected in a freshly re-fetched currentStock). Not
+  // memoized -- it has to recompute whenever `cart` changes anyway, and
+  // this catalogue is small enough that recomputing on every render costs
+  // nothing worth guarding against.
+  const inCart = new Map(cart.map((l) => [l.variantId, l.quantity]));
+  const variants: PickableVariant[] = (products ?? []).flatMap((p) =>
+    p.variants
+      .filter((v) => v.active)
+      .map((v) => ({
+        variantId: v.id,
+        description: `${p.name} — ${v.name}`,
+        priceKobo: v.currentPriceKobo,
+        outOfStock: v.tracksInventory && v.currentStock - (inCart.get(v.id) ?? 0) <= 0,
+      })),
   );
 
   if (done) {
@@ -222,7 +230,10 @@ export function Sell() {
           disappears behind the product list. */}
       <CartPanel
         label="THIS SALE"
-        lines={cart}
+        lines={cart.map((l) => ({
+          ...l,
+          atStockLimit: variants.find((v) => v.variantId === l.variantId)?.outOfStock,
+        }))}
         emptyMessage="Tap a drink above to add it here."
         onChangeQty={changeQty}
         footer={

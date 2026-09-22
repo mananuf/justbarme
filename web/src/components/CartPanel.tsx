@@ -5,6 +5,12 @@ export interface CartLine {
   description: string;
   unitPriceKobo: number;
   quantity: number;
+  // True when there's nothing left to add beyond what's already on this
+  // line -- see PickableVariant.outOfStock's doc comment for why this is
+  // computed by the caller rather than here. Disables the "+" button
+  // instead of silently letting a tap create a negative inventory
+  // balance.
+  atStockLimit?: boolean;
 }
 
 function formatNaira(kobo: number): string {
@@ -56,6 +62,11 @@ export function CartPanel({ label, lines, emptyMessage, onChangeQty, footer }: C
                 <div className="text-[11px] text-jb-ink/40">
                   ₦{formatNaira(line.unitPriceKobo)} each
                 </div>
+                {line.atStockLimit && (
+                  <div className="text-[11px] font-medium text-red-600 mt-0.5">
+                    No more in stock — add stock first
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-3">
                 <button
@@ -67,7 +78,8 @@ export function CartPanel({ label, lines, emptyMessage, onChangeQty, footer }: C
                 <span className="text-[14px] font-medium w-4 text-center">{line.quantity}</span>
                 <button
                   onClick={() => onChangeQty(line.variantId, 1)}
-                  className="w-7 h-7 rounded-full border border-jb-ink/20 flex items-center justify-center text-jb-ink"
+                  disabled={line.atStockLimit}
+                  className="w-7 h-7 rounded-full border border-jb-ink/20 flex items-center justify-center text-jb-ink disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   +
                 </button>

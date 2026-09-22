@@ -49,6 +49,11 @@ const STANDARD_SIZES = [
   '1.5L',
 ] as const;
 
+// No real crate exceeds this -- guards against a fat-fingered "per crate"
+// entry silently producing an absurd total unit count (e.g. typing an
+// extra digit turning 12 into 120).
+const MAX_BOTTLES_PER_CRATE = 30;
+
 function PrimaryButton({ children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
@@ -567,6 +572,21 @@ export function Stock() {
     return `${selectedSize} ${containerType}`;
   }
 
+  // A catalogue template always ships exactly one suggested variant (see
+  // internal/catalogue.NigerianBarCatalogue's own doc comment) -- picking
+  // one skips straight to asking for a price with no separate size-picker
+  // step, so the size has to be surfaced here instead, or the owner has no
+  // way to see which size is actually about to be created/restocked.
+  function targetLabel(t: Target): string {
+    if (t.kind === 'existing') return t.label;
+    if (t.kind === 'template') {
+      const variant = t.template.variants[0];
+      return variant ? `${t.template.name} — ${variant.name}` : t.template.name;
+    }
+    const size = customVariantName();
+    return size ? `${t.name} — ${size}` : t.name;
+  }
+
   async function confirmPrice() {
     if (!target || target.kind === 'existing' || !selectedBusinessId || !csrfToken) return;
     const priceKobo = Math.round(Number(sellingPriceNaira) * 100);
@@ -645,12 +665,7 @@ export function Stock() {
       if (unitMode === 'crate') setRememberedCrateSize(variantId, crateSize);
       const line = receipt.lines[0];
       setLastResult({
-        label:
-          target?.kind === 'existing'
-            ? target.label
-            : target?.kind === 'template'
-              ? target.template.name
-              : (target?.name ?? ''),
+        label: target ? targetLabel(target) : '',
         newBalance: line?.newBalance ?? totalUnits,
       });
       setPhase('done');
@@ -1160,9 +1175,7 @@ export function Stock() {
 
         {mode === 'restock' && phase === 'price' && target && target.kind !== 'existing' && (
           <div>
-            <h2 className="text-lg font-medium mb-1">
-              {target.kind === 'template' ? target.template.name : target.name}
-            </h2>
+            <h2 className="text-lg font-medium mb-1">{targetLabel(target)}</h2>
             <p className="text-[13px] text-jb-ink/45 mb-4">
               What do you sell this for? You can change this anytime later.
             </p>
@@ -1305,13 +1318,7 @@ export function Stock() {
 
         {mode === 'restock' && phase === 'receive' && target && (
           <div>
-            <h2 className="text-lg font-medium mb-1">
-              {target.kind === 'existing'
-                ? target.label
-                : target.kind === 'template'
-                  ? target.template.name
-                  : target.name}
-            </h2>
+            <h2 className="text-lg font-medium mb-1">{targetLabel(target)}</h2>
             <p className="text-[13px] text-jb-ink/45 mb-4">How did you buy this?</p>
 
             <div className="flex gap-2 mb-4 p-1 rounded-xl bg-jb-ink/[0.05]">
@@ -1334,33 +1341,48 @@ export function Stock() {
             </div>
 
             {unitMode === 'crate' ? (
-              <div className="flex gap-3 mb-4">
-                <label className="flex-1">
-                  <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">
-                    Per crate
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    placeholder="e.g. 12"
-                    value={crateSize}
-                    onChange={(e) => setCrateSize(e.target.value)}
-                    className="w-full rounded-xl border border-jb-ink/15 bg-white px-4 py-3.5 text-[15px] text-jb-ink focus:outline-none focus:border-jb-ink/40 transition-colors"
-                  />
-                </label>
-                <label className="flex-1">
-                  <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">
-                    Crates
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    placeholder="e.g. 4"
-                    value={crateCount}
-                    onChange={(e) => setCrateCount(e.target.value)}
-                    className="w-full rounded-xl border border-jb-ink/15 bg-white px-4 py-3.5 text-[15px] text-jb-ink focus:outline-none focus:border-jb-ink/40 transition-colors"
-                  />
-                </label>
+              <div className="mb-4">
+                <div className="flex gap-3">
+                  <label className="flex-1">
+                    <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">
+                      Per crate
+                    </span>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="e.g. 12"
+                      min={1}
+                      max={MAX_BOTTLES_PER_CRATE}
+                      value={crateSize}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        const parsed = Number(value);
+                        setCrateSize(
+                          value !== '' && !Number.isNaN(parsed) && parsed > MAX_BOTTLES_PER_CRATE
+                            ? String(MAX_BOTTLES_PER_CRATE)
+                            : value,
+                        );
+                      }}
+                      className="w-full rounded-xl border border-jb-ink/15 bg-white px-4 py-3.5 text-[15px] text-jb-ink focus:outline-none focus:border-jb-ink/40 transition-colors"
+                    />
+                  </label>
+                  <label className="flex-1">
+                    <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">
+                      Crates
+                    </span>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="e.g. 4"
+                      value={crateCount}
+                      onChange={(e) => setCrateCount(e.target.value)}
+                      className="w-full rounded-xl border border-jb-ink/15 bg-white px-4 py-3.5 text-[15px] text-jb-ink focus:outline-none focus:border-jb-ink/40 transition-colors"
+                    />
+                  </label>
+                </div>
+                <p className="text-[11px] text-jb-ink/40 mt-1.5">
+                  Up to {MAX_BOTTLES_PER_CRATE} bottles per crate.
+                </p>
               </div>
             ) : (
               <label className="block mb-4">

@@ -154,6 +154,34 @@ func (s *Service) StockDiscrepancies(ctx context.Context, userID, businessID uui
 	return out, nil
 }
 
+// StockPurchasesByProduct returns restocking totals grouped by variant
+// within [start, end) -- see StockPurchase's own doc comment for why this
+// answers a question neither the Expenses nor Margin report can.
+func (s *Service) StockPurchasesByProduct(ctx context.Context, userID, businessID uuid.UUID, start, end time.Time) ([]StockPurchase, error) {
+	var rows []sqlc.SumStockPurchasesByProductRow
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		r, err := q.SumStockPurchasesByProduct(ctx, sqlc.SumStockPurchasesByProductParams{
+			BusinessID: businessID, ReceivedAt: pgTimestamptz(start), ReceivedAt_2: pgTimestamptz(end),
+		})
+		if err != nil {
+			return err
+		}
+		rows = r
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("stock purchases by product: %w", err)
+	}
+	out := make([]StockPurchase, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, StockPurchase{
+			VariantID: r.VariantID, VariantName: r.VariantName, ProductName: r.ProductName,
+			QuantityReceived: r.QuantityReceived, TotalKobo: r.TotalKobo, ReceiptCount: r.ReceiptCount,
+		})
+	}
+	return out, nil
+}
+
 // GrossMarginByProduct backs the FIFO gross-margin report
 // (docs/PHASE_FIFO_COSTING.md §8) -- revenue and resolved cost of goods
 // sold per product/variant within [start, end), plus the unresolved-unit

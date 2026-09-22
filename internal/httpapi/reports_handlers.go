@@ -256,6 +256,54 @@ func (api *API) reportStock(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type stockPurchaseResponse struct {
+	VariantID        string `json:"variant_id"`
+	VariantName      string `json:"variant_name"`
+	ProductName      string `json:"product_name"`
+	QuantityReceived int64  `json:"quantity_received"`
+	TotalKobo        int64  `json:"total_kobo"`
+	ReceiptCount     int64  `json:"receipt_count"`
+}
+
+// reportStockPurchases implements GET /api/v1/reports/stock-purchases
+// (reports:read) -- how much was actually spent restocking, per product,
+// within a range. Deliberately a separate endpoint from reportStock
+// (count discrepancies) and reportGrossMargin (COGS of sold units only) --
+// see internal/reports.StockPurchase's own doc comment for why neither
+// answers this question.
+func (api *API) reportStockPurchases(w http.ResponseWriter, r *http.Request) {
+	principal, ok := tenancy.PrincipalFromContext(r.Context())
+	if !ok {
+		api.internalErrorResponse(w, r, errors.New("reportStockPurchases ran without requireAuth"))
+		return
+	}
+	business, ok := api.requireCapability(w, r, tenancy.CapabilityReportsRead)
+	if !ok {
+		return
+	}
+	start, end, valid := parseReportRange(r)
+	if !valid {
+		api.badRequestResponse(w, r, "start_at and end_at must both be RFC 3339 timestamps.")
+		return
+	}
+
+	rows, err := api.reports.StockPurchasesByProduct(r.Context(), principal.UserID, business.BusinessID, start, end)
+	if err != nil {
+		api.internalErrorResponse(w, r, fmt.Errorf("stock purchases report: %w", err))
+		return
+	}
+	out := make([]stockPurchaseResponse, 0, len(rows))
+	for _, p := range rows {
+		out = append(out, stockPurchaseResponse{
+			VariantID: p.VariantID.String(), VariantName: p.VariantName, ProductName: p.ProductName,
+			QuantityReceived: p.QuantityReceived, TotalKobo: p.TotalKobo, ReceiptCount: p.ReceiptCount,
+		})
+	}
+	if err := writeJSON(w, http.StatusOK, envelope{"data": out}, nil); err != nil {
+		api.logger.Error("write stock purchases report response", "request_id", RequestID(r.Context()), "error", err)
+	}
+}
+
 type grossMarginResponse struct {
 	VariantID        string `json:"variant_id"`
 	VariantName      string `json:"variant_name"`

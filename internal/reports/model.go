@@ -78,3 +78,19 @@ type StockDiscrepancy struct {
 	CountedAt        time.Time
 	CountedBy        uuid.UUID
 }
+
+// StockPurchase is one variant's restocking totals within a range -- how
+// much was actually spent buying stock, distinct from GrossMargin's COGS
+// (which only covers stock that has since been sold). Answers "how much
+// did I spend restocking?", a question neither the Expenses report (a
+// stock receipt is deliberately never an expense -- docs/PHASE_EXPENSES_
+// DASHBOARD_ACTIVITY_REPORTS.md: "expenses don't touch inventory at all")
+// nor the Margin report (COGS-of-sold-units only) can answer on their own.
+type StockPurchase struct {
+	VariantID        uuid.UUID
+	VariantName      string
+	ProductName      string
+	QuantityReceived int64
+	TotalKobo        int64
+	ReceiptCount     int64
+}

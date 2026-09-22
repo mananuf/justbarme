@@ -190,6 +190,51 @@ export async function reportStock(
   }));
 }
 
+export interface StockPurchase {
+  variantId: string;
+  variantName: string;
+  productName: string;
+  quantityReceived: number;
+  totalKobo: number;
+  receiptCount: number;
+}
+
+interface RawStockPurchase {
+  variant_id: string;
+  variant_name: string;
+  product_name: string;
+  quantity_received: number;
+  total_kobo: number;
+  receipt_count: number;
+}
+
+// reportStockPurchases wraps GET /api/v1/reports/stock-purchases
+// (reports:read) -- how much was actually spent restocking, per product,
+// within a range. Distinct from reportStock (count discrepancies) and
+// reportGrossMargin (cost of goods already sold only) -- see
+// internal/reports.StockPurchase's own doc comment for why neither of
+// those answers "how much did I spend restocking?"
+export async function reportStockPurchases(
+  businessId: string,
+  startAt: string,
+  endAt: string,
+): Promise<StockPurchase[]> {
+  const raw = await apiRequest<RawStockPurchase[]>(
+    `/api/v1/reports/stock-purchases?${rangeParams(startAt, endAt)}`,
+    {
+      headers: { 'X-Business-ID': businessId },
+    },
+  );
+  return raw.map((r) => ({
+    variantId: r.variant_id,
+    variantName: r.variant_name,
+    productName: r.product_name,
+    quantityReceived: r.quantity_received,
+    totalKobo: r.total_kobo,
+    receiptCount: r.receipt_count,
+  }));
+}
+
 // GrossMargin is one product's revenue/cost picture within a range
 // (docs/PHASE_FIFO_COSTING.md §8). unresolvedUnits is the honesty flag
 // this report exists to never hide -- a nonzero value means

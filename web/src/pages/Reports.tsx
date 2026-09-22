@@ -8,12 +8,14 @@ import {
   reportSales,
   reportStaffSales,
   reportStock,
+  reportStockPurchases,
   type ExpensesByCategory,
   type GrossMargin,
   type ProductQuantity,
   type SalesDay,
   type StaffSales,
   type StockDiscrepancy,
+  type StockPurchase,
 } from '../api/reports';
 import { listBills, type Bill } from '../api/tabs';
 import { TimeGranularityView } from '../components/TimeGranularityView';
@@ -74,6 +76,7 @@ export function Reports() {
   const [staffSales, setStaffSales] = useState<StaffSales[] | null>(null);
   const [expensesByCategory, setExpensesByCategory] = useState<ExpensesByCategory[] | null>(null);
   const [discrepancies, setDiscrepancies] = useState<StockDiscrepancy[] | null>(null);
+  const [stockPurchases, setStockPurchases] = useState<StockPurchase[] | null>(null);
   const [outstandingBills, setOutstandingBills] = useState<Bill[] | null>(null);
 
   useEffect(() => {
@@ -139,6 +142,11 @@ export function Reports() {
           .catch((err: unknown) =>
             setError(describeActionError(err, 'Could not load the stock report.')),
           );
+        reportStockPurchases(selectedBusinessId, startAt, endAt)
+          .then((d) => setStockPurchases(d))
+          .catch((err: unknown) =>
+            setError(describeActionError(err, 'Could not load the stock report.')),
+          );
         break;
       case 'outstanding':
         listBills(selectedBusinessId, 'outstanding')
@@ -176,6 +184,8 @@ export function Reports() {
 
   const maxExpense = Math.max(1, ...(expensesByCategory ?? []).map((c) => c.totalKobo));
   const maxProduct = Math.max(1, ...(products ?? []).map((p) => p.unitsSold));
+  const maxStockPurchase = Math.max(1, ...(stockPurchases ?? []).map((p) => p.totalKobo));
+  const totalStockSpend = (stockPurchases ?? []).reduce((sum, p) => sum + p.totalKobo, 0);
 
   return (
     <div className="min-h-screen bg-jb-cream text-jb-ink pb-16">
@@ -351,35 +361,81 @@ export function Reports() {
         )}
 
         {tab === 'stock' && (
-          <div className="rounded-xl border border-jb-ink/10 bg-white/60 divide-y divide-jb-ink/[0.06] overflow-hidden">
-            {discrepancies === null && (
-              <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">Loading…</p>
-            )}
-            {discrepancies !== null && discrepancies.length === 0 && (
-              <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">
-                No discrepancies in this range.
-              </p>
-            )}
-            {(discrepancies ?? []).map((d) => (
-              <div key={d.id} className="px-4 py-3.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[13px] text-jb-ink/80">
-                    {d.productName} — {d.variantName}
-                  </span>
-                  <span
-                    className={`text-[13px] font-medium ${d.variance < 0 ? 'text-red-700/80' : 'text-jb-green-dark'}`}
-                  >
-                    {d.variance > 0 ? '+' : ''}
-                    {d.variance}
-                  </span>
-                </div>
-                <div className="text-[11px] text-jb-ink/40 mt-0.5">
-                  Expected {d.expectedQuantity}, counted {d.physicalQuantity}
-                  {d.isStale && ' · stale'} · {d.countedByName || 'Unknown'}
-                </div>
+          <>
+            <div className="rounded-xl bg-jb-ink text-jb-cream p-4 mb-4">
+              <div className="text-[11px] text-jb-cream/60 mb-1">
+                Spent restocking, this range
               </div>
-            ))}
-          </div>
+              <div className="text-[20px] font-medium">₦{formatNaira(totalStockSpend)}</div>
+            </div>
+
+            <div className="text-[11px] font-medium text-jb-ink/40 uppercase tracking-wide mb-2">
+              Restocking by product
+            </div>
+            <div className="rounded-xl border border-jb-ink/10 bg-white/60 divide-y divide-jb-ink/[0.06] overflow-hidden mb-6">
+              {stockPurchases === null && (
+                <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">Loading…</p>
+              )}
+              {stockPurchases !== null && stockPurchases.length === 0 && (
+                <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">
+                  No stock purchases in this range.
+                </p>
+              )}
+              {(stockPurchases ?? []).map((p) => (
+                <div key={p.variantId} className="px-4 py-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[13px] text-jb-ink/80">
+                      {p.productName} — {p.variantName}
+                    </span>
+                    <span className="text-[13px] text-jb-ink/60">₦{formatNaira(p.totalKobo)}</span>
+                  </div>
+                  <div className="text-[11px] text-jb-ink/40 mb-1.5">
+                    {p.quantityReceived} unit{p.quantityReceived === 1 ? '' : 's'} ·{' '}
+                    {p.receiptCount} receipt{p.receiptCount === 1 ? '' : 's'}
+                  </div>
+                  <div className="h-1.5 rounded-full bg-jb-ink/[0.06] overflow-hidden">
+                    <div
+                      className="h-full bg-jb-gold rounded-full"
+                      style={{ width: `${(p.totalKobo / maxStockPurchase) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="text-[11px] font-medium text-jb-ink/40 uppercase tracking-wide mb-2">
+              Count discrepancies
+            </div>
+            <div className="rounded-xl border border-jb-ink/10 bg-white/60 divide-y divide-jb-ink/[0.06] overflow-hidden">
+              {discrepancies === null && (
+                <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">Loading…</p>
+              )}
+              {discrepancies !== null && discrepancies.length === 0 && (
+                <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">
+                  No discrepancies in this range.
+                </p>
+              )}
+              {(discrepancies ?? []).map((d) => (
+                <div key={d.id} className="px-4 py-3.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[13px] text-jb-ink/80">
+                      {d.productName} — {d.variantName}
+                    </span>
+                    <span
+                      className={`text-[13px] font-medium ${d.variance < 0 ? 'text-red-700/80' : 'text-jb-green-dark'}`}
+                    >
+                      {d.variance > 0 ? '+' : ''}
+                      {d.variance}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-jb-ink/40 mt-0.5">
+                    Expected {d.expectedQuantity}, counted {d.physicalQuantity}
+                    {d.isStale && ' · stale'} · {d.countedByName || 'Unknown'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
         )}
 
         {tab === 'outstanding' && (

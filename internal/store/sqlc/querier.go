@@ -259,6 +259,12 @@ type Querier interface {
 	// excludes reversal rows, since a correction isn't "one more sale" for
 	// display purposes.
 	SumSalesTotalSince(ctx context.Context, arg SumSalesTotalSinceParams) (SumSalesTotalSinceRow, error)
+	// How much was actually spent restocking, per variant, within a range --
+	// distinct from GrossMarginByProduct's COGS (only stock that's since been
+	// sold) and never counted in the Expenses report (a stock receipt is
+	// deliberately not an expense). No fan-out risk: stock_receipt_lines is
+	// already one row per variant per receipt, the finest grain here.
+	SumStockPurchasesByProduct(ctx context.Context, arg SumStockPurchasesByProductParams) ([]SumStockPurchasesByProductRow, error)
 	// Together with SumSalesTotalByBillID and SumPaymentsByBillID (sales minus
 	// payments minus write-offs), this is the rebuildable-projection source of
 	// truth persisted into bills.balance_kobo by internal/sales.Service.

@@ -67,6 +67,26 @@ WHERE cl.business_id = $1 AND cl.variance != 0
   AND sc.started_at >= $2 AND sc.started_at < $3
 ORDER BY sc.started_at DESC;
 
+-- name: SumStockPurchasesByProduct :many
+-- How much was actually spent restocking, per variant, within a range --
+-- distinct from GrossMarginByProduct's COGS (only stock that's since been
+-- sold) and never counted in the Expenses report (a stock receipt is
+-- deliberately not an expense). No fan-out risk: stock_receipt_lines is
+-- already one row per variant per receipt, the finest grain here.
+SELECT
+    v.id AS variant_id, v.name AS variant_name, p.name AS product_name,
+    COALESCE(SUM(l.quantity), 0)::bigint AS quantity_received,
+    COALESCE(SUM(l.total_cost_kobo), 0)::bigint AS total_kobo,
+    COUNT(DISTINCT l.receipt_id)::bigint AS receipt_count
+FROM stock_receipt_lines l
+JOIN stock_receipts r ON r.business_id = l.business_id AND r.id = l.receipt_id
+JOIN product_variants v ON v.business_id = l.business_id AND v.id = l.variant_id
+JOIN products p ON p.business_id = v.business_id AND p.id = v.product_id
+WHERE l.business_id = $1
+  AND r.received_at >= $2 AND r.received_at < $3
+GROUP BY v.id, v.name, p.name
+ORDER BY total_kobo DESC;
+
 -- name: GrossMarginByProduct :many
 -- FIFO gross margin (docs/PHASE_FIFO_COSTING.md §8). The allocation_totals
 -- CTE pre-aggregates to exactly one row per sale_item BEFORE joining --

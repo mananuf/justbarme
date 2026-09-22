@@ -279,3 +279,77 @@ func TestGrossMarginByProductComputesRealCostAndFlagsUnresolvedUnits(t *testing.
 		t.Fatalf("expected gross margin 640,000, got %d", row.GrossMarginKobo())
 	}
 }
+
+// TestStockPurchasesByProductSumsAcrossReceiptsAndVariants confirms the
+// restocking-spend report answers "how much did I spend restocking?" --
+// distinct from GrossMarginByProduct's COGS-of-sold-units-only figure.
+func TestStockPurchasesByProductSumsAcrossReceiptsAndVariants(t *testing.T) {
+	reportsSvc, _, _, inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	// newTenant already received 48 units of one variant at 3,600,000 kobo.
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
+
+	// A second receipt for the same variant should sum into one row, not
+	// create a duplicate.
+	if _, err := inventorySvc.ReceiveStock(ctx, ownerID, businessID, locationID, []inventory.ReceiptLine{
+		{VariantID: variantID, Quantity: 12, TotalCostKobo: 900_000},
+	}); err != nil {
+		t.Fatalf("ReceiveStock (second receipt): %v", err)
+	}
+
+	// A second variant's own receipt should appear as its own row.
+	product2, err := catalogueSvc.CreateProduct(ctx, ownerID, businessID, uuid.Nil, uniqueName("Star Lager"))
+	if err != nil {
+		t.Fatalf("CreateProduct: %v", err)
+	}
+	variant2, err := catalogueSvc.CreateVariant(ctx, ownerID, businessID, product2.ID, "60cl Bottle", 90000, true)
+	if err != nil {
+		t.Fatalf("CreateVariant: %v", err)
+	}
+	if _, err := inventorySvc.ReceiveStock(ctx, ownerID, businessID, locationID, []inventory.ReceiptLine{
+		{VariantID: variant2.ID, Quantity: 24, TotalCostKobo: 1_200_000},
+	}); err != nil {
+		t.Fatalf("ReceiveStock (second variant): %v", err)
+	}
+
+	rows, err := reportsSvc.StockPurchasesByProduct(ctx, ownerID, businessID, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("StockPurchasesByProduct: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected two product rows, got %d: %+v", len(rows), rows)
+	}
+
+	byVariant := make(map[uuid.UUID]reports.StockPurchase, len(rows))
+	for _, r := range rows {
+		byVariant[r.VariantID] = r
+	}
+
+	first, ok := byVariant[variantID]
+	if !ok {
+		t.Fatalf("missing row for first variant: %+v", rows)
+	}
+	if first.QuantityReceived != 60 { // 48 + 12
+		t.Fatalf("expected quantity 60, got %d", first.QuantityReceived)
+	}
+	if first.TotalKobo != 4_500_000 { // 3,600,000 + 900,000
+		t.Fatalf("expected total 4,500,000, got %d", first.TotalKobo)
+	}
+	if first.ReceiptCount != 2 {
+		t.Fatalf("expected 2 receipts, got %d", first.ReceiptCount)
+	}
+
+	second, ok := byVariant[variant2.ID]
+	if !ok {
+		t.Fatalf("missing row for second variant: %+v", rows)
+	}
+	if second.QuantityReceived != 24 {
+		t.Fatalf("expected quantity 24, got %d", second.QuantityReceived)
+	}
+	if second.TotalKobo != 1_200_000 {
+		t.Fatalf("expected total 1,200,000, got %d", second.TotalKobo)
+	}
+	if second.ReceiptCount != 1 {
+		t.Fatalf("expected 1 receipt, got %d", second.ReceiptCount)
+	}
+}

@@ -365,3 +365,66 @@ func (q *Queries) SumSalesByDay(ctx context.Context, arg SumSalesByDayParams) ([
 	}
 	return items, nil
 }
+
+const sumStockPurchasesByProduct = `-- name: SumStockPurchasesByProduct :many
+SELECT
+    v.id AS variant_id, v.name AS variant_name, p.name AS product_name,
+    COALESCE(SUM(l.quantity), 0)::bigint AS quantity_received,
+    COALESCE(SUM(l.total_cost_kobo), 0)::bigint AS total_kobo,
+    COUNT(DISTINCT l.receipt_id)::bigint AS receipt_count
+FROM stock_receipt_lines l
+JOIN stock_receipts r ON r.business_id = l.business_id AND r.id = l.receipt_id
+JOIN product_variants v ON v.business_id = l.business_id AND v.id = l.variant_id
+JOIN products p ON p.business_id = v.business_id AND p.id = v.product_id
+WHERE l.business_id = $1
+  AND r.received_at >= $2 AND r.received_at < $3
+GROUP BY v.id, v.name, p.name
+ORDER BY total_kobo DESC
+`
+
+type SumStockPurchasesByProductParams struct {
+	BusinessID   uuid.UUID          `json:"business_id"`
+	ReceivedAt   pgtype.Timestamptz `json:"received_at"`
+	ReceivedAt_2 pgtype.Timestamptz `json:"received_at_2"`
+}
+
+type SumStockPurchasesByProductRow struct {
+	VariantID        uuid.UUID `json:"variant_id"`
+	VariantName      string    `json:"variant_name"`
+	ProductName      string    `json:"product_name"`
+	QuantityReceived int64     `json:"quantity_received"`
+	TotalKobo        int64     `json:"total_kobo"`
+	ReceiptCount     int64     `json:"receipt_count"`
+}
+
+// How much was actually spent restocking, per variant, within a range --
+// distinct from GrossMarginByProduct's COGS (only stock that's since been
+// sold) and never counted in the Expenses report (a stock receipt is
+// deliberately not an expense). No fan-out risk: stock_receipt_lines is
+// already one row per variant per receipt, the finest grain here.
+func (q *Queries) SumStockPurchasesByProduct(ctx context.Context, arg SumStockPurchasesByProductParams) ([]SumStockPurchasesByProductRow, error) {
+	rows, err := q.db.Query(ctx, sumStockPurchasesByProduct, arg.BusinessID, arg.ReceivedAt, arg.ReceivedAt_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SumStockPurchasesByProductRow{}
+	for rows.Next() {
+		var i SumStockPurchasesByProductRow
+		if err := rows.Scan(
+			&i.VariantID,
+			&i.VariantName,
+			&i.ProductName,
+			&i.QuantityReceived,
+			&i.TotalKobo,
+			&i.ReceiptCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

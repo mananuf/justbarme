@@ -79,6 +79,34 @@ export function Reports() {
   const [stockPurchases, setStockPurchases] = useState<StockPurchase[] | null>(null);
   const [outstandingBills, setOutstandingBills] = useState<Bill[] | null>(null);
 
+  // Stock tab gets its own adjustable date range (plain YYYY-MM-DD, native
+  // <input type="date">) rather than the fixed "last 30 days" every other
+  // non-Sales tab uses -- unlike Sales, this isn't a daily-continuous
+  // heatmap dataset, so a simple start/end picker is the better fit than
+  // pulling in TimeGranularityView. Defaults match the same 30-day window
+  // so nothing changes until the owner actually adjusts it.
+  const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const defaultStockStartStr = useMemo(() => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - 29);
+    return d.toISOString().slice(0, 10);
+  }, []);
+  const [stockRangeStart, setStockRangeStart] = useState(defaultStockStartStr);
+  const [stockRangeEnd, setStockRangeEnd] = useState(todayStr);
+  // A plain product/variant name filter -- the catalogue is already
+  // searchable everywhere else in the app (Stock.tsx, ProductGrid), so
+  // this matches that existing pattern rather than inventing a new one.
+  const [stockSearch, setStockSearch] = useState('');
+
+  const stockRange = useMemo(() => {
+    const start = new Date(`${stockRangeStart}T00:00:00.000Z`);
+    // end is exclusive in the query, so add one day to make the picked
+    // end date's own receipts included.
+    const end = new Date(`${stockRangeEnd}T00:00:00.000Z`);
+    end.setUTCDate(end.getUTCDate() + 1);
+    return { startAt: start.toISOString(), endAt: end.toISOString() };
+  }, [stockRangeStart, stockRangeEnd]);
+
   useEffect(() => {
     if (!selectedBusinessId) return;
     const { startAt, endAt } = range;
@@ -134,7 +162,7 @@ export function Reports() {
           );
         break;
       case 'stock':
-        reportStock(selectedBusinessId, startAt, endAt)
+        reportStock(selectedBusinessId, stockRange.startAt, stockRange.endAt)
           .then((d) => {
             setDiscrepancies(d);
             setError(null);
@@ -142,7 +170,7 @@ export function Reports() {
           .catch((err: unknown) =>
             setError(describeActionError(err, 'Could not load the stock report.')),
           );
-        reportStockPurchases(selectedBusinessId, startAt, endAt)
+        reportStockPurchases(selectedBusinessId, stockRange.startAt, stockRange.endAt)
           .then((d) => setStockPurchases(d))
           .catch((err: unknown) =>
             setError(describeActionError(err, 'Could not load the stock report.')),
@@ -159,7 +187,7 @@ export function Reports() {
           );
         break;
     }
-  }, [selectedBusinessId, tab, range, salesRange]);
+  }, [selectedBusinessId, tab, range, salesRange, stockRange]);
 
   const salesDailyValues: DayValue[] = useMemo(
     () => (salesDays ?? []).map((d) => ({ day: d.day, value: d.totalKobo })),
@@ -184,8 +212,20 @@ export function Reports() {
 
   const maxExpense = Math.max(1, ...(expensesByCategory ?? []).map((c) => c.totalKobo));
   const maxProduct = Math.max(1, ...(products ?? []).map((p) => p.unitsSold));
-  const maxStockPurchase = Math.max(1, ...(stockPurchases ?? []).map((p) => p.totalKobo));
-  const totalStockSpend = (stockPurchases ?? []).reduce((sum, p) => sum + p.totalKobo, 0);
+
+  const stockQuery = stockSearch.trim().toLowerCase();
+  const matchesStockQuery = (productName: string, variantName: string) =>
+    !stockQuery ||
+    productName.toLowerCase().includes(stockQuery) ||
+    variantName.toLowerCase().includes(stockQuery);
+  const filteredStockPurchases = (stockPurchases ?? []).filter((p) =>
+    matchesStockQuery(p.productName, p.variantName),
+  );
+  const filteredDiscrepancies = (discrepancies ?? []).filter((d) =>
+    matchesStockQuery(d.productName, d.variantName),
+  );
+  const maxStockPurchase = Math.max(1, ...filteredStockPurchases.map((p) => p.totalKobo));
+  const totalStockSpend = filteredStockPurchases.reduce((sum, p) => sum + p.totalKobo, 0);
 
   return (
     <div className="min-h-screen bg-jb-cream text-jb-ink pb-16">
@@ -224,7 +264,9 @@ export function Reports() {
         </div>
 
         {error && <p className="text-[13px] text-red-700 mb-3">{error}</p>}
-        {tab !== 'sales' && <p className="text-[11px] text-jb-ink/40 mb-3">Last 30 days</p>}
+        {tab !== 'sales' && tab !== 'stock' && (
+          <p className="text-[11px] text-jb-ink/40 mb-3">Last 30 days</p>
+        )}
 
         {tab === 'sales' &&
           (salesDays === null ? (
@@ -362,6 +404,38 @@ export function Reports() {
 
         {tab === 'stock' && (
           <>
+            <div className="flex gap-2 mb-3">
+              <label className="flex-1">
+                <span className="block text-[11px] text-jb-ink/40 mb-1">From</span>
+                <input
+                  type="date"
+                  value={stockRangeStart}
+                  max={stockRangeEnd}
+                  onChange={(e) => setStockRangeStart(e.target.value)}
+                  className="w-full rounded-lg border border-jb-ink/15 bg-white px-3 py-2 text-[13px] text-jb-ink focus:outline-none focus:border-jb-ink/40"
+                />
+              </label>
+              <label className="flex-1">
+                <span className="block text-[11px] text-jb-ink/40 mb-1">To</span>
+                <input
+                  type="date"
+                  value={stockRangeEnd}
+                  min={stockRangeStart}
+                  max={todayStr}
+                  onChange={(e) => setStockRangeEnd(e.target.value)}
+                  className="w-full rounded-lg border border-jb-ink/15 bg-white px-3 py-2 text-[13px] text-jb-ink focus:outline-none focus:border-jb-ink/40"
+                />
+              </label>
+            </div>
+            <input
+              type="text"
+              inputMode="search"
+              placeholder="Filter by product…"
+              value={stockSearch}
+              onChange={(e) => setStockSearch(e.target.value)}
+              className="w-full rounded-xl border border-jb-ink/15 bg-white px-4 py-2.5 text-[13.5px] text-jb-ink placeholder:text-jb-ink/30 focus:outline-none focus:border-jb-ink/40 transition-colors mb-4"
+            />
+
             <div className="rounded-xl bg-jb-ink text-jb-cream p-4 mb-4">
               <div className="text-[11px] text-jb-cream/60 mb-1">
                 Spent restocking, this range
@@ -376,12 +450,14 @@ export function Reports() {
               {stockPurchases === null && (
                 <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">Loading…</p>
               )}
-              {stockPurchases !== null && stockPurchases.length === 0 && (
+              {stockPurchases !== null && filteredStockPurchases.length === 0 && (
                 <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">
-                  No stock purchases in this range.
+                  {stockQuery
+                    ? `No restocking matches "${stockSearch.trim()}" in this range.`
+                    : 'No stock purchases in this range.'}
                 </p>
               )}
-              {(stockPurchases ?? []).map((p) => (
+              {filteredStockPurchases.map((p) => (
                 <div key={p.variantId} className="px-4 py-3">
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[13px] text-jb-ink/80">
@@ -410,12 +486,14 @@ export function Reports() {
               {discrepancies === null && (
                 <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">Loading…</p>
               )}
-              {discrepancies !== null && discrepancies.length === 0 && (
+              {discrepancies !== null && filteredDiscrepancies.length === 0 && (
                 <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">
-                  No discrepancies in this range.
+                  {stockQuery
+                    ? `No discrepancies match "${stockSearch.trim()}" in this range.`
+                    : 'No discrepancies in this range.'}
                 </p>
               )}
-              {(discrepancies ?? []).map((d) => (
+              {filteredDiscrepancies.map((d) => (
                 <div key={d.id} className="px-4 py-3.5">
                   <div className="flex items-center justify-between">
                     <span className="text-[13px] text-jb-ink/80">

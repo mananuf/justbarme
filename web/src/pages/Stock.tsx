@@ -9,6 +9,7 @@ import {
   listCatalogueTemplates,
   listProducts,
   setVariantPrice,
+  updateVariant,
   type CatalogueProduct,
   type CatalogueTemplate,
 } from '../api/catalogue';
@@ -547,10 +548,31 @@ export function Stock() {
     }
   }
 
+  // A catalogue template's own variant name (e.g. "70cl Bottle") is just a
+  // platform-researched suggestion, not necessarily what this bar actually
+  // buys -- parsed back into the same size/container picker state a custom
+  // product uses, so the owner sees it pre-selected and can change it
+  // before it's created, rather than it being silently locked in.
+  function initSizeStateFromVariantName(name: string) {
+    const match = /^(\d+(?:\.\d+)?(?:cl|L))\s+(Bottle|Can)$/.exec(name.trim());
+    const size = match?.[1];
+    const container = match?.[2] as 'Bottle' | 'Can' | undefined;
+    if (size && container && (STANDARD_SIZES as readonly string[]).includes(size)) {
+      setSelectedSize(size as (typeof STANDARD_SIZES)[number]);
+      setContainerType(container);
+      setUseCustomSize(false);
+      setCustomSizeName('');
+    } else {
+      setUseCustomSize(true);
+      setCustomSizeName(name.trim());
+    }
+  }
+
   function pickTemplate(t: CatalogueTemplate) {
     setTarget({ kind: 'template', template: t });
     const suggested = t.variants[0]?.suggestedPriceKobo ?? 0;
     setSellingPriceNaira(suggested > 0 ? String(suggested / 100) : '');
+    initSizeStateFromVariantName(t.variants[0]?.name ?? '50cl Bottle');
     setPhase('price');
   }
 
@@ -572,19 +594,15 @@ export function Stock() {
     return `${selectedSize} ${containerType}`;
   }
 
-  // A catalogue template always ships exactly one suggested variant (see
-  // internal/catalogue.NigerianBarCatalogue's own doc comment) -- picking
-  // one skips straight to asking for a price with no separate size-picker
-  // step, so the size has to be surfaced here instead, or the owner has no
-  // way to see which size is actually about to be created/restocked.
+  // A template's suggested size is just a starting point (see
+  // initSizeStateFromVariantName) -- this reflects whatever the owner has
+  // actually picked in the size UI, live, the same way a custom product's
+  // label already did, rather than always showing the template's default.
   function targetLabel(t: Target): string {
     if (t.kind === 'existing') return t.label;
-    if (t.kind === 'template') {
-      const variant = t.template.variants[0];
-      return variant ? `${t.template.name} — ${variant.name}` : t.template.name;
-    }
+    const name = t.kind === 'template' ? t.template.name : t.name;
     const size = customVariantName();
-    return size ? `${t.name} — ${size}` : t.name;
+    return size ? `${name} — ${size}` : name;
   }
 
   async function confirmPrice() {
@@ -603,10 +621,19 @@ export function Stock() {
         const variant = product?.variants[0];
         if (!variant) throw new Error('template apply returned no variant');
         newVariantId = variant.id;
-        // The template's suggested price is what apply used -- override it
-        // only if the owner actually changed the number.
+        // The template's suggested price/size is what apply used -- override
+        // either only if the owner actually changed it.
         if (priceKobo !== variant.currentPriceKobo) {
           await setVariantPrice(newVariantId, priceKobo, selectedBusinessId, csrfToken);
+        }
+        const desiredName = customVariantName();
+        if (desiredName && desiredName !== variant.name) {
+          await updateVariant(
+            newVariantId,
+            { name: desiredName, active: variant.active, tracksInventory: variant.tracksInventory },
+            selectedBusinessId,
+            csrfToken,
+          );
         }
       } else {
         const product = await createProduct(target.name, selectedBusinessId, csrfToken);
@@ -1180,25 +1207,27 @@ export function Stock() {
               What do you sell this for? You can change this anytime later.
             </p>
 
-            {target.kind === 'custom' && (
+            {(target.kind === 'custom' || target.kind === 'template') && (
               <div className="mb-4">
-                <button
-                  onClick={() => setIsServiceItem((v) => !v)}
-                  className={`w-full text-left rounded-xl border px-4 py-3 mb-3 transition-colors ${
-                    isServiceItem
-                      ? 'border-jb-ink/30 bg-jb-ink/[0.04]'
-                      : 'border-jb-ink/15 bg-white'
-                  }`}
-                >
-                  <span className="text-[13.5px] font-medium text-jb-ink/80">
-                    {isServiceItem ? '☑' : '☐'} This is a service, not stock
-                  </span>
-                  <span className="block text-[11.5px] text-jb-ink/40 mt-0.5">
-                    e.g. a snooker/pool game, table time — nothing to restock, ever
-                  </span>
-                </button>
+                {target.kind === 'custom' && (
+                  <button
+                    onClick={() => setIsServiceItem((v) => !v)}
+                    className={`w-full text-left rounded-xl border px-4 py-3 mb-3 transition-colors ${
+                      isServiceItem
+                        ? 'border-jb-ink/30 bg-jb-ink/[0.04]'
+                        : 'border-jb-ink/15 bg-white'
+                    }`}
+                  >
+                    <span className="text-[13.5px] font-medium text-jb-ink/80">
+                      {isServiceItem ? '☑' : '☐'} This is a service, not stock
+                    </span>
+                    <span className="block text-[11.5px] text-jb-ink/40 mt-0.5">
+                      e.g. a snooker/pool game, table time — nothing to restock, ever
+                    </span>
+                  </button>
+                )}
 
-                {isServiceItem ? (
+                {target.kind === 'custom' && isServiceItem ? (
                   <label className="block">
                     <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">
                       What do you call it?
@@ -1300,9 +1329,10 @@ export function Stock() {
               disabled={
                 submitting ||
                 !sellingPriceNaira.trim() ||
-                (target.kind === 'custom' &&
-                  ((isServiceItem && !serviceItemName.trim()) ||
-                    (!isServiceItem && useCustomSize && !customSizeName.trim())))
+                (target.kind === 'custom' && isServiceItem && !serviceItemName.trim()) ||
+                (!(target.kind === 'custom' && isServiceItem) &&
+                  useCustomSize &&
+                  !customSizeName.trim())
               }
             >
               {submitting ? 'Saving…' : 'Continue'}

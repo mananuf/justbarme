@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import {
   getBusiness,
@@ -30,6 +30,11 @@ import { useSession } from '../lib/session';
 // the backend for the catalogue half.
 export function Settings() {
   const { csrfToken, selectedBusinessId } = useSession();
+  // Arriving from Stock.tsx's "view details" eye icon links here with
+  // ?product=<id> so the owner lands on the right card instead of
+  // scrolling through the whole catalogue.
+  const [searchParams] = useSearchParams();
+  const highlightProductId = searchParams.get('product');
 
   const [business, setBusiness] = useState<BusinessSettings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -84,6 +89,13 @@ export function Settings() {
       );
   };
   useEffect(loadCatalogue, [selectedBusinessId]);
+
+  useEffect(() => {
+    if (!highlightProductId || !products) return;
+    document
+      .getElementById(`product-${highlightProductId}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [highlightProductId, products]);
 
   async function handleSaveBranding() {
     if (!selectedBusinessId || !csrfToken) return;
@@ -435,7 +447,15 @@ export function Settings() {
           <p className="text-[13px] text-jb-ink/40">No products yet.</p>
         )}
         {(products ?? []).map((product) => (
-          <div key={product.id} className="rounded-xl border border-jb-ink/10 bg-white/60 p-4 mb-3">
+          <div
+            key={product.id}
+            id={`product-${product.id}`}
+            className={`rounded-xl border bg-white/60 p-4 mb-3 transition-colors ${
+              product.id === highlightProductId
+                ? 'border-jb-green ring-2 ring-jb-green/40'
+                : 'border-jb-ink/10'
+            }`}
+          >
             <div className="flex items-center gap-2 mb-2">
               <input
                 type="text"

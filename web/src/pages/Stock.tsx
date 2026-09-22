@@ -244,6 +244,10 @@ export function Stock() {
   const [savingPriceVariantId, setSavingPriceVariantId] = useState<string | null>(null);
   const [priceEditError, setPriceEditError] = useState<string | null>(null);
 
+  // "Your products" row detail view -- an eye icon expands stock/status
+  // for whichever variant this points at; only one row at a time.
+  const [viewingVariantId, setViewingVariantId] = useState<string | null>(null);
+
   const [target, setTarget] = useState<Target | null>(null);
   const [variantId, setVariantId] = useState<string | null>(null);
   const [sellingPriceNaira, setSellingPriceNaira] = useState('');
@@ -309,7 +313,14 @@ export function Stock() {
 
   const matchingOwnVariants = useMemo(() => {
     if (!ownProducts) return [];
-    const rows: { variantId: string; label: string; priceKobo: number }[] = [];
+    const rows: {
+      variantId: string;
+      productId: string;
+      label: string;
+      priceKobo: number;
+      currentStock: number;
+      active: boolean;
+    }[] = [];
     for (const product of ownProducts) {
       if (query && !product.name.toLowerCase().includes(query)) continue;
       for (const variant of product.variants) {
@@ -320,8 +331,11 @@ export function Stock() {
         if (!variant.tracksInventory) continue;
         rows.push({
           variantId: variant.id,
+          productId: product.id,
           label: `${product.name} — ${variant.name}`,
           priceKobo: variant.currentPriceKobo,
+          currentStock: variant.currentStock,
+          active: variant.active,
         });
       }
     }
@@ -1011,54 +1025,99 @@ export function Stock() {
                   {matchingOwnVariants.map((row) => (
                     <div
                       key={row.variantId}
-                      className="w-full flex items-center justify-between gap-2 rounded-xl border border-jb-ink/10 bg-white px-4 py-3"
+                      className="rounded-xl border border-jb-ink/10 bg-white overflow-hidden"
                     >
-                      <button
-                        onClick={() => pickExisting(row)}
-                        className="flex-1 min-w-0 text-left text-[14px] text-jb-ink/85 truncate"
-                      >
-                        {row.label}
-                      </button>
-
-                      {editingPriceVariantId === row.variantId ? (
-                        <div
-                          className="flex items-center gap-1.5 shrink-0"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <span className="text-[12.5px] text-jb-ink/40">₦</span>
-                          <input
-                            type="number"
-                            inputMode="decimal"
-                            autoFocus
-                            value={editingPriceValue}
-                            onChange={(e) => setEditingPriceValue(e.target.value)}
-                            className="w-16 rounded-lg border border-jb-ink/15 px-2 py-1 text-[12.5px] focus:outline-none focus:border-jb-ink/40"
-                          />
-                          <button
-                            onClick={() => void saveEditingPrice(row.variantId)}
-                            disabled={savingPriceVariantId === row.variantId}
-                            className="text-[12px] font-medium text-jb-green disabled:opacity-40"
-                          >
-                            {savingPriceVariantId === row.variantId ? '…' : 'Save'}
-                          </button>
-                          <button
-                            onClick={cancelEditingPrice}
-                            className="text-[12px] text-jb-ink/40"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      ) : isOwner ? (
+                      <div className="w-full flex items-center justify-between gap-2 px-4 py-3">
                         <button
-                          onClick={() => startEditingPrice(row)}
-                          className="shrink-0 text-[12.5px] text-jb-ink/40 hover:text-jb-ink/70 transition-colors underline decoration-dotted underline-offset-2"
+                          onClick={() => pickExisting(row)}
+                          className="flex-1 min-w-0 text-left text-[14px] text-jb-ink/85 truncate"
                         >
-                          ₦{formatNaira(row.priceKobo)}
+                          {row.label}
                         </button>
-                      ) : (
-                        <span className="shrink-0 text-[12.5px] text-jb-ink/40">
-                          ₦{formatNaira(row.priceKobo)}
-                        </span>
+
+                        <button
+                          onClick={() =>
+                            setViewingVariantId((prev) =>
+                              prev === row.variantId ? null : row.variantId,
+                            )
+                          }
+                          aria-label={
+                            viewingVariantId === row.variantId ? 'Hide details' : 'View details'
+                          }
+                          aria-expanded={viewingVariantId === row.variantId}
+                          className="shrink-0 text-jb-ink/35 hover:text-jb-ink/70 transition-colors"
+                        >
+                          <svg
+                            viewBox="0 0 20 20"
+                            className="w-4 h-4"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.6"
+                            aria-hidden="true"
+                          >
+                            <path d="M1.5 10S4.5 4 10 4s8.5 6 8.5 6-3 6-8.5 6-8.5-6-8.5-6Z" />
+                            <circle cx="10" cy="10" r="2.4" />
+                          </svg>
+                        </button>
+
+                        {editingPriceVariantId === row.variantId ? (
+                          <div
+                            className="flex items-center gap-1.5 shrink-0"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <span className="text-[12.5px] text-jb-ink/40">₦</span>
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              autoFocus
+                              value={editingPriceValue}
+                              onChange={(e) => setEditingPriceValue(e.target.value)}
+                              className="w-16 rounded-lg border border-jb-ink/15 px-2 py-1 text-[12.5px] focus:outline-none focus:border-jb-ink/40"
+                            />
+                            <button
+                              onClick={() => void saveEditingPrice(row.variantId)}
+                              disabled={savingPriceVariantId === row.variantId}
+                              className="text-[12px] font-medium text-jb-green disabled:opacity-40"
+                            >
+                              {savingPriceVariantId === row.variantId ? '…' : 'Save'}
+                            </button>
+                            <button
+                              onClick={cancelEditingPrice}
+                              className="text-[12px] text-jb-ink/40"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ) : isOwner ? (
+                          <button
+                            onClick={() => startEditingPrice(row)}
+                            className="shrink-0 text-[12.5px] text-jb-ink/40 hover:text-jb-ink/70 transition-colors underline decoration-dotted underline-offset-2"
+                          >
+                            ₦{formatNaira(row.priceKobo)}
+                          </button>
+                        ) : (
+                          <span className="shrink-0 text-[12.5px] text-jb-ink/40">
+                            ₦{formatNaira(row.priceKobo)}
+                          </span>
+                        )}
+                      </div>
+
+                      {viewingVariantId === row.variantId && (
+                        <div className="px-4 pb-3 pt-0.5 border-t border-jb-ink/[0.06] bg-jb-ink/[0.02]">
+                          <div className="flex items-center gap-3 text-[12px] text-jb-ink/50 mt-2.5">
+                            <span>{row.currentStock} in stock</span>
+                            <span>·</span>
+                            <span>{row.active ? 'Active' : 'Deactivated'}</span>
+                          </div>
+                          {isOwner && (
+                            <Link
+                              to={`/dashboard/settings?product=${row.productId}`}
+                              className="inline-block mt-2 text-[12px] font-medium text-jb-green hover:text-jb-green-dark transition-colors"
+                            >
+                              Edit this drink →
+                            </Link>
+                          )}
+                        </div>
                       )}
                     </div>
                   ))}

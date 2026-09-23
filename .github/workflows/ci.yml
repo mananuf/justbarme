@@ -1,8 +1,11 @@
 # docs/PHASE_PILOT_RELEASE.md §6, confirmed: `make check`/`npm run check`
 # on every push and PR, then build+push images and deploy to staging
-# automatically on every merge to main. Production is a deliberate,
-# separate promotion -- see deploy-production.yml -- never driven by the
-# same push that deploys staging.
+# automatically on every push to the `staging` branch. `main` is reserved
+# for production-ready code only -- pushing there runs checks like any
+# other branch but never builds or deploys anything; promoting to
+# production is always the deliberate, separate step in
+# deploy-production.yml, applied to an image tag that already ran on
+# staging -- never the same push that deploys staging.
 name: CI
 
 on:
@@ -74,7 +77,7 @@ jobs:
 
   build-and-push:
     needs: [backend, frontend]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/staging' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -119,9 +122,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Requires STAGING_SSH_HOST/USER/KEY repository secrets --
-      # see docs/DEPLOYMENT.md §5. Until they're set, this step fails at
-      # the SSH connection, which is expected on a repo with no staging
-      # VPS provisioned yet, not a workflow bug.
+      # see docs/DEPLOYMENT.md §5. The staging VPS's own /opt/justbarme
+      # checkout must be on the `staging` branch too (not `main`) -- this
+      # step's `git pull` just fast-forwards whatever branch is currently
+      # checked out there.
       - uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.STAGING_SSH_HOST }}

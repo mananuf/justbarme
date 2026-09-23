@@ -437,9 +437,7 @@ export function Reports() {
             />
 
             <div className="rounded-xl bg-jb-ink text-jb-cream p-4 mb-4">
-              <div className="text-[11px] text-jb-cream/60 mb-1">
-                Spent restocking, this range
-              </div>
+              <div className="text-[11px] text-jb-cream/60 mb-1">Spent restocking, this range</div>
               <div className="text-[20px] font-medium">₦{formatNaira(totalStockSpend)}</div>
             </div>
 

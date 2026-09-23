@@ -46,7 +46,12 @@ export function DashboardTour({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Dashboard walkthrough">
+    <div
+      className="fixed inset-0 z-50"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Dashboard walkthrough"
+    >
       {rect && (
         <div
           className="fixed rounded-2xl pointer-events-none transition-all duration-200"
@@ -74,7 +79,10 @@ export function DashboardTour({ onDone }: { onDone: () => void }) {
           <h2 className="text-[16px] font-medium text-jb-ink mb-1">{step.title}</h2>
           <p className="text-[13px] text-jb-ink/60 leading-relaxed mb-4">{step.body}</p>
           <div className="flex items-center justify-between">
-            <button onClick={finish} className="text-[13px] text-jb-ink/40 hover:text-jb-ink py-2 transition-colors">
+            <button
+              onClick={finish}
+              className="text-[13px] text-jb-ink/40 hover:text-jb-ink py-2 transition-colors"
+            >
               Skip tour
             </button>
             <div className="flex items-center gap-2">

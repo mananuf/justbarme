@@ -5,7 +5,9 @@ import { checkLease, type LeasePayload } from './lease';
 
 async function issueTestLease(payload: LeasePayload, privateKey: CryptoKey): Promise<string> {
   const payloadBytes = new TextEncoder().encode(JSON.stringify(payload));
-  const signature = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, payloadBytes));
+  const signature = new Uint8Array(
+    await crypto.subtle.sign({ name: 'Ed25519' }, privateKey, payloadBytes),
+  );
   return ['v1', base64UrlEncode(payloadBytes), base64UrlEncode(signature)].join('.');
 }
 
@@ -29,7 +31,9 @@ describe('checkLease', () => {
       'sign',
       'verify',
     ]);
-    const publicKeyB64 = base64Encode(new Uint8Array(await crypto.subtle.exportKey('raw', publicKey)));
+    const publicKeyB64 = base64Encode(
+      new Uint8Array(await crypto.subtle.exportKey('raw', publicKey)),
+    );
 
     const token = await issueTestLease(samplePayload(), privateKey);
     const result = await checkLease(token, publicKeyB64);
@@ -45,7 +49,9 @@ describe('checkLease', () => {
       'sign',
       'verify',
     ]);
-    const publicKeyB64 = base64Encode(new Uint8Array(await crypto.subtle.exportKey('raw', publicKey)));
+    const publicKeyB64 = base64Encode(
+      new Uint8Array(await crypto.subtle.exportKey('raw', publicKey)),
+    );
 
     const token = await issueTestLease(
       samplePayload({ expires_at: new Date(Date.now() - 1000).toISOString() }),
@@ -60,7 +66,9 @@ describe('checkLease', () => {
   it('rejects a lease signed by a different key', async () => {
     const real = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
     const attacker = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
-    const realPublicKeyB64 = base64Encode(new Uint8Array(await crypto.subtle.exportKey('raw', real.publicKey)));
+    const realPublicKeyB64 = base64Encode(
+      new Uint8Array(await crypto.subtle.exportKey('raw', real.publicKey)),
+    );
 
     const token = await issueTestLease(samplePayload(), attacker.privateKey);
     const result = await checkLease(token, realPublicKeyB64);
@@ -73,7 +81,9 @@ describe('checkLease', () => {
       'sign',
       'verify',
     ]);
-    const publicKeyB64 = base64Encode(new Uint8Array(await crypto.subtle.exportKey('raw', publicKey)));
+    const publicKeyB64 = base64Encode(
+      new Uint8Array(await crypto.subtle.exportKey('raw', publicKey)),
+    );
 
     const token = await issueTestLease(samplePayload({ role: 'staff' }), privateKey);
     const [version, payloadPart, sigPart] = token.split('.');

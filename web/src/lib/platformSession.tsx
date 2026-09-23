@@ -103,7 +103,9 @@ export function PlatformSessionProvider({ children }: { children: ReactNode }) {
     [state, login, logout],
   );
 
-  return <PlatformSessionContext.Provider value={value}>{children}</PlatformSessionContext.Provider>;
+  return (
+    <PlatformSessionContext.Provider value={value}>{children}</PlatformSessionContext.Provider>
+  );
 }
 
 // eslint-disable-next-line react-refresh/only-export-components

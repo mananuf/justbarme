@@ -3,7 +3,9 @@ import { db, type DeviceRecord } from './db';
 
 export class DeviceCryptoUnsupportedError extends Error {
   constructor() {
-    super('This browser cannot generate the Ed25519 keys justbarme needs for offline device enrollment.');
+    super(
+      'This browser cannot generate the Ed25519 keys justbarme needs for offline device enrollment.',
+    );
     this.name = 'DeviceCryptoUnsupportedError';
   }
 }

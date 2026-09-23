@@ -3,7 +3,7 @@
 # image carries only the compiled binary and CA certificates, never the Go
 # toolchain or source tree.
 
-FROM golang:1.26-alpine AS build
+FROM golang:1.26.6-alpine AS build
 WORKDIR /src
 
 # Dependencies first, so an unrelated source change doesn't invalidate

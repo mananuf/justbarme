@@ -44,24 +44,47 @@ export async function checkLease(token: string, publicKeyB64: string): Promise<L
     payloadBytes = base64UrlDecode(parts[1]!);
     signatureBytes = base64UrlDecode(parts[2]!);
   } catch {
-    return { payload: null, signatureVerified: false, expired: true, error: 'malformed lease encoding' };
+    return {
+      payload: null,
+      signatureVerified: false,
+      expired: true,
+      error: 'malformed lease encoding',
+    };
   }
 
   let payload: LeasePayload;
   try {
     payload = JSON.parse(new TextDecoder().decode(payloadBytes)) as LeasePayload;
   } catch {
-    return { payload: null, signatureVerified: false, expired: true, error: 'malformed lease payload' };
+    return {
+      payload: null,
+      signatureVerified: false,
+      expired: true,
+      error: 'malformed lease payload',
+    };
   }
 
-  const expired = Number.isNaN(Date.parse(payload.expires_at)) || Date.parse(payload.expires_at) <= Date.now();
+  const expired =
+    Number.isNaN(Date.parse(payload.expires_at)) || Date.parse(payload.expires_at) <= Date.now();
 
   try {
     const keyBytes = base64Decode(publicKeyB64);
-    const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'Ed25519' }, false, ['verify']);
-    const signatureVerified = await crypto.subtle.verify({ name: 'Ed25519' }, key, signatureBytes, payloadBytes);
+    const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'Ed25519' }, false, [
+      'verify',
+    ]);
+    const signatureVerified = await crypto.subtle.verify(
+      { name: 'Ed25519' },
+      key,
+      signatureBytes,
+      payloadBytes,
+    );
     return { payload, signatureVerified, expired };
   } catch {
-    return { payload, signatureVerified: false, expired, error: 'signature could not be verified on this device' };
+    return {
+      payload,
+      signatureVerified: false,
+      expired,
+      error: 'signature could not be verified on this device',
+    };
   }
 }

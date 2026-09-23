@@ -1,6 +1,6 @@
 module github.com/mananuf/justbarme
 
-go 1.26.0
+go 1.26.6
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.0
@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1
 	github.com/go-chi/chi/v5 v5.1.0
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.7.2
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/prometheus/client_golang v1.24.1
 	golang.org/x/crypto v0.31.0
 	golang.org/x/image v0.46.0

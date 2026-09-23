@@ -109,17 +109,30 @@ that's the signal to stop and look, not to assume the deploy worked.
 ## 4. Backups and the restore drill
 
 `scripts/backup.sh` does the nightly `pg_dump`-and-push-to-R2 (or B2, or
-any S3-compatible target) `docs/PHASE_PILOT_RELEASE.md` §2 calls for.
-Cron entry on each VPS (adjust the env values to that environment's own):
+any S3-compatible target) `docs/PHASE_PILOT_RELEASE.md` §2 calls for. It
+sources this VPS's own `.env` for `POSTGRES_DB`/`POSTGRES_USER` and the R2
+access key/secret/endpoint (the same ones the app's own object-storage
+config already uses) — the only thing genuinely new to add there is:
 
 ```
-0 2 * * * COMPOSE_PROJECT_DIR=/opt/justbarme POSTGRES_DB=justbarme POSTGRES_USER=justbarme BACKUP_S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com BACKUP_S3_BUCKET=justbarme-backups-production /opt/justbarme/scripts/backup.sh >> /var/log/justbarme-backup.log 2>&1
+BACKUP_S3_BUCKET=justbarme-backups-staging   # or -production, on that VPS
 ```
 
-Use a **separate** bucket (or at minimum a separate prefix) per
-environment, and never point staging's backup at production's bucket —
-same "don't cross the streams" reasoning as `docs/ARCHITECTURE.md` §16.4's
-staging/production data separation.
+Sourcing `.env` (rather than requiring every caller to export these by
+hand) is what lets `scripts/deploy-release.sh` call this unattended from
+CI — a GitHub Actions SSH step has no way to set backup-specific
+environment variables inline the way a hand-written cron entry can.
+Cron entry on each VPS is now just:
+
+```
+0 2 * * * COMPOSE_PROJECT_DIR=/opt/justbarme /opt/justbarme/scripts/backup.sh >> /var/log/justbarme-backup.log 2>&1
+```
+
+Use a **separate** `BACKUP_S3_BUCKET` (or at minimum a separate prefix)
+per environment — and separate from the logo-upload bucket too — and
+never point staging's backup at production's bucket, same "don't cross
+the streams" reasoning as `docs/ARCHITECTURE.md` §16.4's staging/production
+data separation.
 
 **The restore drill is a real, required task, not just a line in this
 file** — `docs/PHASE_PILOT_RELEASE.md` §2 names it as something that "needs

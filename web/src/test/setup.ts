@@ -35,3 +35,14 @@ class MockIntersectionObserver implements IntersectionObserver {
 }
 
 vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+
+// jsdom does not implement scrollIntoView. DashboardTour calls it (inside
+// a requestAnimationFrame callback, so it can fire after the test that
+// triggered it has already finished) to center the spotlighted element --
+// only needs to exist and be inert under tests, same reasoning as
+// IntersectionObserver above. Without this, that later callback throws an
+// unhandled exception that fails the whole run even though every test
+// itself already passed.
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => undefined;
+}

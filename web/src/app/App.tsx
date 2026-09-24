@@ -2,6 +2,7 @@ import { Link, Outlet, Route, Routes } from 'react-router-dom';
 
 import { RequireAuth } from '../components/RequireAuth';
 import { RequirePlatformAuth } from '../components/RequirePlatformAuth';
+import { UpdateAvailableBanner } from '../components/UpdateAvailableBanner';
 import { SessionProvider } from '../lib/session';
 import { PlatformSessionProvider } from '../lib/platformSession';
 import { Landing } from '../pages/Landing';
@@ -42,6 +43,7 @@ function NotFound() {
 export function App() {
   return (
     <SessionProvider>
+      <UpdateAvailableBanner />
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />

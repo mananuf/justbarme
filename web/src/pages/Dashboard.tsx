@@ -59,6 +59,7 @@ function MoreMenuItems({
       </Link>
       {isOwner && (
         <Link
+          id="more-reports"
           to="/dashboard/reports"
           onClick={onNavigate}
           className="px-4 py-3.5 flex flex-col hover:bg-jb-ink/[0.03] transition-colors"
@@ -78,6 +79,7 @@ function MoreMenuItems({
         </Link>
       )}
       <Link
+        id="more-team"
         to="/dashboard/team"
         onClick={onNavigate}
         className="px-4 py-3.5 flex flex-col hover:bg-jb-ink/[0.03] transition-colors"
@@ -99,6 +101,7 @@ function MoreMenuItems({
       )}
       {isOwner && (
         <Link
+          id="more-settings"
           to="/dashboard/settings"
           onClick={onNavigate}
           className="px-4 py-3.5 flex flex-col hover:bg-jb-ink/[0.03] transition-colors"
@@ -296,10 +299,11 @@ export function Dashboard() {
           <span className="text-xl leading-none">+</span> Quick Sell
         </Link>
 
-        <div id="stock" className="grid grid-cols-2 gap-3 mb-4 scroll-mt-20">
+        <div className="grid grid-cols-2 gap-3 mb-4 scroll-mt-20">
           <Link
+            id="alerts"
             to="/dashboard/reviews"
-            className="rounded-xl bg-white/70 border border-jb-ink/[0.08] p-4 active:scale-[0.98] transition-transform"
+            className="rounded-xl bg-white/70 border border-jb-ink/[0.08] p-4 active:scale-[0.98] transition-transform scroll-mt-20"
           >
             <div className="text-[11px] text-jb-ink/45">Alerts</div>
             <div className="text-[15px] font-medium text-jb-ink mt-1">
@@ -433,7 +437,20 @@ export function Dashboard() {
       )}
 
       <AppBottomNav />
-      {showTour && <DashboardTour onDone={() => setShowTour(false)} />}
+      {showTour && (
+        <DashboardTour
+          onDone={() => setShowTour(false)}
+          // The "#more-*" steps point at links that only exist once the
+          // More accordion is open -- this expands it right as the tour
+          // reaches them (DashboardTour's own polling logic tolerates the
+          // one-render delay before those anchors actually mount). Left
+          // open afterward rather than re-collapsed -- a minor nicety, not
+          // worth the extra state to restore it.
+          onStepChange={(target) => {
+            if (target.startsWith('#more-')) setMoreOpen(true);
+          }}
+        />
+      )}
     </div>
   );
 }

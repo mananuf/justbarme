@@ -2,34 +2,65 @@ import { useEffect, useState } from 'react';
 
 import { TOUR_STEPS, markDashboardTourSeen } from '../lib/dashboardTour';
 
-// A short, self-guided tour of the Dashboard shown once, automatically, the
-// first time a new owner reaches it -- the "walkthrough" onboarding leads
-// into, so a brand-new signup never lands on a screen full of buttons with
-// no idea what they do. Deliberately not a real product-tour library: this
-// targets four fixed, already-stable anchors (#quick-sell, #stock, #bills,
-// #more -- the same IDs AppBottomNav's own links jump to), so a small
+// A self-guided tour of the Dashboard shown once, automatically, the first
+// time a new owner reaches it -- the "walkthrough" onboarding leads into,
+// so a brand-new signup never lands on a screen full of buttons (and now,
+// after a lot of real features accumulated, several sections) with no idea
+// what they do. Deliberately not a real product-tour library: every step
+// targets a fixed, stable anchor ID somewhere in the app shell, so a small
 // hand-rolled spotlight is simpler and lighter than pulling in a dependency
 // built for arbitrary, dynamic tours.
-export function DashboardTour({ onDone }: { onDone: () => void }) {
+//
+// Some steps (the "#more-*" ones) point at links that only exist in the DOM
+// once the More accordion is actually open -- see onStepChange below, which
+// Dashboard.tsx uses to expand it right as the tour reaches those steps.
+// Because that expansion happens in the *parent's* next render, not this
+// component's, a single querySelector immediately after the step changes
+// can genuinely race ahead of it -- so this polls for a few frames before
+// concluding an anchor really isn't on screen (e.g. a Staff viewer without
+// Reports/Settings) and skipping past it.
+export function DashboardTour({
+  onDone,
+  onStepChange,
+}: {
+  onDone: () => void;
+  onStepChange?: (target: string) => void;
+}) {
   const [stepIndex, setStepIndex] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const step = TOUR_STEPS[stepIndex]!;
 
   useEffect(() => {
-    const frame = requestAnimationFrame(() => {
+    onStepChange?.(step.target);
+    let cancelled = false;
+    let attempt = 0;
+    let frame: number;
+
+    function tryFind() {
+      if (cancelled) return;
       const target = document.querySelector(step.target);
-      if (!target) {
-        // The anchor isn't on screen (e.g. a narrower Dashboard variant) --
-        // skip straight past this step rather than spotlighting nothing.
+      if (target) {
+        target.scrollIntoView({ block: 'center', behavior: 'instant' });
+        setRect(target.getBoundingClientRect());
+        return;
+      }
+      attempt += 1;
+      if (attempt >= 12) {
+        // Genuinely not on this screen (e.g. an owner-only step for a Staff
+        // viewer) -- skip past it rather than spotlighting nothing.
         setRect(null);
         setStepIndex((i) => (i < TOUR_STEPS.length - 1 ? i + 1 : i));
         return;
       }
-      target.scrollIntoView({ block: 'center', behavior: 'instant' });
-      setRect(target.getBoundingClientRect());
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [step.target]);
+      frame = requestAnimationFrame(tryFind);
+    }
+
+    frame = requestAnimationFrame(tryFind);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
+  }, [step.target, onStepChange]);
 
   function finish() {
     markDashboardTourSeen();
@@ -78,13 +109,20 @@ export function DashboardTour({ onDone }: { onDone: () => void }) {
           </div>
           <h2 className="text-[16px] font-medium text-jb-ink mb-1">{step.title}</h2>
           <p className="text-[13px] text-jb-ink/60 leading-relaxed mb-4">{step.body}</p>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-end">
+            {/* Skip tour -- commented out, not deleted, per an explicit
+                owner request: with this many real features added since the
+                original short tour, every new signup should actually see
+                all of it at least once rather than reflexively skipping.
+                Restore this button (and swap the wrapper back to
+                justify-between) if that changes.
             <button
               onClick={finish}
               className="text-[13px] text-jb-ink/40 hover:text-jb-ink py-2 transition-colors"
             >
               Skip tour
             </button>
+            */}
             <div className="flex items-center gap-2">
               {stepIndex > 0 && (
                 <button

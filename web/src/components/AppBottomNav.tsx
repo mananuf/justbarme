@@ -1,11 +1,11 @@
 import { Link, useLocation } from 'react-router-dom';
 
 const NAV_ITEMS = [
-  { label: 'Home', href: '/dashboard', icon: 'home' },
-  { label: 'Sell', href: '/dashboard/sell', icon: 'sell' },
-  { label: 'Stock', href: '/dashboard/stock', icon: 'stock' },
-  { label: 'Bills', href: '/dashboard/tabs', icon: 'bills' },
-  { label: 'More', href: '/dashboard#more', icon: 'more' },
+  { label: 'Home', href: '/dashboard', icon: 'home', id: 'nav-home' },
+  { label: 'Sell', href: '/dashboard/sell', icon: 'sell', id: 'nav-sell' },
+  { label: 'Stock', href: '/dashboard/stock', icon: 'stock', id: 'nav-stock' },
+  { label: 'Bills', href: '/dashboard/tabs', icon: 'bills', id: 'nav-bills' },
+  { label: 'More', href: '/dashboard#more', icon: 'more', id: 'nav-more' },
 ] as const;
 
 // Every page the More accordion links to -- landing on any of these (not
@@ -91,6 +91,7 @@ export function AppBottomNav() {
           return (
             <Link
               key={item.label}
+              id={item.id}
               to={item.href}
               className="flex-1 flex flex-col items-center gap-1 py-1"
             >

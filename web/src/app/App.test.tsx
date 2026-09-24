@@ -203,7 +203,7 @@ describe('signup', () => {
 });
 
 describe('dashboard tour', () => {
-  it('shows the walkthrough on a first visit and dismisses on skip', async () => {
+  it('shows the walkthrough on a first visit, has no skip option, and dismisses once completed', async () => {
     const user = userEvent.setup();
     stubFetch({ '/api/v1/me': ME_OK, '/api/v1/health/ready': HEALTH_READY });
     renderApp('/dashboard');
@@ -211,10 +211,29 @@ describe('dashboard tour', () => {
     await waitFor(() =>
       expect(screen.getByRole('dialog', { name: /dashboard walkthrough/i })).toBeInTheDocument(),
     );
-    await user.click(screen.getByRole('button', { name: /skip tour/i }));
-    expect(
-      screen.queryByRole('dialog', { name: /dashboard walkthrough/i }),
-    ).not.toBeInTheDocument();
+    // Skip was deliberately removed so every new signup sees the full tour.
+    expect(screen.queryByRole('button', { name: /skip tour/i })).not.toBeInTheDocument();
+
+    // Click through every step -- some steps (the "#more-*" ones) only
+    // resolve their spotlight target after DashboardTour's own polling
+    // finds it, so wait for each "Next"/"Got it" button rather than
+    // assuming it's already there.
+    for (let i = 0; i < 20; i++) {
+      const gotIt = screen.queryByRole('button', { name: /^got it$/i });
+      if (gotIt) {
+        await user.click(gotIt);
+        break;
+      }
+      const nextButton = await screen.findByRole('button', { name: /^next$/i });
+      await user.click(nextButton);
+    }
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: /dashboard walkthrough/i }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(localStorage.getItem('jb_dashboard_tour_seen')).toBe('true');
   });
 
   it('does not show again once already seen', async () => {

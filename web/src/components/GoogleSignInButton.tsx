@@ -64,6 +64,20 @@ export function GoogleSignInButton({ onSuccess, onError }: GoogleSignInButtonPro
   const containerRef = useRef<HTMLDivElement | null>(null);
   const clientId = import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID;
 
+  // Callers (Login/SignUp) pass inline handlers that aren't memoized -- a
+  // stale-closure-avoiding ref, rather than putting them in the init
+  // effect's own deps, is what keeps every keystroke on those forms from
+  // re-running initialize()/renderButton() (each one duplicating Google's
+  // own button and re-registering its callback). Found live: staging's
+  // console showed google.accounts.id.initialize() called dozens of times
+  // while a signup form was just being typed into.
+  const onSuccessRef = useRef(onSuccess);
+  const onErrorRef = useRef(onError);
+  useEffect(() => {
+    onSuccessRef.current = onSuccess;
+    onErrorRef.current = onError;
+  }, [onSuccess, onError]);
+
   useEffect(() => {
     if (!clientId || !containerRef.current) return;
     let cancelled = false;
@@ -78,9 +92,9 @@ export function GoogleSignInButton({ onSuccess, onError }: GoogleSignInButtonPro
             void (async () => {
               try {
                 await continueWithGoogle(response.credential);
-                onSuccess();
+                onSuccessRef.current();
               } catch (err) {
-                onError(describeActionError(err, 'Could not reach justbarme.'));
+                onErrorRef.current(describeActionError(err, 'Could not reach justbarme.'));
               }
             })();
           },
@@ -102,7 +116,7 @@ export function GoogleSignInButton({ onSuccess, onError }: GoogleSignInButtonPro
     return () => {
       cancelled = true;
     };
-  }, [clientId, continueWithGoogle, onSuccess, onError]);
+  }, [clientId, continueWithGoogle]);
 
   if (!clientId) {
     return null;

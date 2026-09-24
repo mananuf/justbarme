@@ -254,6 +254,7 @@ type platformAuditEntryResponse struct {
 	StaffID          string `json:"staff_id"`
 	Action           string `json:"action"`
 	TargetBusinessID string `json:"target_business_id,omitempty"`
+	TargetStaffID    string `json:"target_staff_id,omitempty"`
 	Reason           string `json:"reason,omitempty"`
 	CreatedAt        string `json:"created_at"`
 }
@@ -279,6 +280,9 @@ func (api *API) listPlatformAuditLog(w http.ResponseWriter, r *http.Request) {
 		}
 		if e.TargetBusinessID != uuid.Nil {
 			row.TargetBusinessID = e.TargetBusinessID.String()
+		}
+		if e.TargetStaffID != uuid.Nil {
+			row.TargetStaffID = e.TargetStaffID.String()
 		}
 		out = append(out, row)
 	}

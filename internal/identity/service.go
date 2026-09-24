@@ -443,6 +443,29 @@ func (s *Service) GetBusiness(ctx context.Context, userID, businessID uuid.UUID)
 	return toBusiness(found), nil
 }
 
+// ListMembersForBusiness lists businessID's active members. It runs under the
+// ordinary tenant-isolation policy, so callers must already be authorized to
+// see this business -- either as a member, or as platform staff holding
+// platform:businesses:read_activity (see internal/httpapi's platform
+// handlers). userID is only recorded as app.user_id; pass uuid.Nil when
+// there is no business user acting.
+func (s *Service) ListMembersForBusiness(ctx context.Context, userID, businessID uuid.UUID) ([]MemberSummary, error) {
+	var rows []sqlc.ListMembersForBusinessRow
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		var err error
+		rows, err = q.ListMembersForBusiness(ctx, businessID)
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list business members: %w", err)
+	}
+	out := make([]MemberSummary, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, MemberSummary{Name: r.UserName, Role: r.Role, JoinedAt: r.JoinedAt.Time})
+	}
+	return out, nil
+}
+
 // CreateSession issues a new opaque session and CSRF token pair for userID.
 // The raw tokens are returned exactly once, here, at issuance — only their
 // hashes are ever persisted or returned again.

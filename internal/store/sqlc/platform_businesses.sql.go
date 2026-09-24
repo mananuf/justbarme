@@ -11,6 +11,17 @@ import (
 	"github.com/google/uuid"
 )
 
+const countUsers = `-- name: CountUsers :one
+SELECT count(*) FROM users
+`
+
+func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countUsers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const listAllBusinesses = `-- name: ListAllBusinesses :many
 SELECT id, name, timezone, currency, phone, address, receipt_wording, receipt_footer, payment_instructions, logo_object_key, status, created_at, updated_at FROM businesses ORDER BY created_at DESC
 `

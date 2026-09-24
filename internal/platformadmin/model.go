@@ -34,9 +34,9 @@ type Session struct {
 }
 
 // Business is the platform-oversight view of a business: name and status
-// only, not any of its tenant-owned catalogue/sales/member data (reading
-// those requires a still-unbuilt, separately audited impersonation flow —
-// see CLAUDE.md).
+// only. Its tenant-owned data is reachable solely through the audited
+// aggregate activity summary (GET /platform/businesses/{id}/activity),
+// composed at the HTTP layer -- never through this type.
 type Business struct {
 	ID        uuid.UUID
 	Name      string
@@ -53,6 +53,7 @@ type AuditEntry struct {
 	StaffID          uuid.UUID
 	Action           string
 	TargetBusinessID uuid.UUID
+	TargetStaffID    uuid.UUID
 	Reason           string
 	RequestID        string
 	CreatedAt        time.Time
@@ -62,4 +63,18 @@ const (
 	ActionLogin               = "login"
 	ActionBusinessSuspended   = "business.suspended"
 	ActionBusinessReactivated = "business.reactivated"
+	// ActionBusinessActivityViewed is logged on every read of a business's
+	// tenant-owned aggregate data, not just mutations.
+	ActionBusinessActivityViewed = "business.activity_viewed"
+	ActionStaffCreated           = "staff.created"
+	ActionStaffRevoked           = "staff.revoked"
 )
+
+// Stats is the platform-wide overview, derived only from non-tenant tables.
+type Stats struct {
+	TotalBusinesses     int
+	ActiveBusinesses    int
+	SuspendedBusinesses int
+	NewBusinessesLast7d int
+	TotalUsers          int64
+}

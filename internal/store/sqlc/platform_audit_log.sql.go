@@ -13,9 +13,9 @@ import (
 )
 
 const createPlatformAuditEntry = `-- name: CreatePlatformAuditEntry :one
-INSERT INTO platform_audit_log (id, platform_staff_id, action, target_business_id, reason, request_id)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, platform_staff_id, action, target_business_id, reason, request_id, created_at
+INSERT INTO platform_audit_log (id, platform_staff_id, action, target_business_id, target_staff_id, reason, request_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, platform_staff_id, action, target_business_id, reason, request_id, created_at, target_staff_id
 `
 
 type CreatePlatformAuditEntryParams struct {
@@ -23,6 +23,7 @@ type CreatePlatformAuditEntryParams struct {
 	PlatformStaffID  uuid.UUID   `json:"platform_staff_id"`
 	Action           string      `json:"action"`
 	TargetBusinessID pgtype.UUID `json:"target_business_id"`
+	TargetStaffID    pgtype.UUID `json:"target_staff_id"`
 	Reason           pgtype.Text `json:"reason"`
 	RequestID        pgtype.Text `json:"request_id"`
 }
@@ -33,6 +34,7 @@ func (q *Queries) CreatePlatformAuditEntry(ctx context.Context, arg CreatePlatfo
 		arg.PlatformStaffID,
 		arg.Action,
 		arg.TargetBusinessID,
+		arg.TargetStaffID,
 		arg.Reason,
 		arg.RequestID,
 	)
@@ -45,12 +47,13 @@ func (q *Queries) CreatePlatformAuditEntry(ctx context.Context, arg CreatePlatfo
 		&i.Reason,
 		&i.RequestID,
 		&i.CreatedAt,
+		&i.TargetStaffID,
 	)
 	return i, err
 }
 
 const listPlatformAuditLog = `-- name: ListPlatformAuditLog :many
-SELECT id, platform_staff_id, action, target_business_id, reason, request_id, created_at FROM platform_audit_log ORDER BY created_at DESC LIMIT $1
+SELECT id, platform_staff_id, action, target_business_id, reason, request_id, created_at, target_staff_id FROM platform_audit_log ORDER BY created_at DESC LIMIT $1
 `
 
 func (q *Queries) ListPlatformAuditLog(ctx context.Context, limit int32) ([]PlatformAuditLog, error) {
@@ -70,6 +73,7 @@ func (q *Queries) ListPlatformAuditLog(ctx context.Context, limit int32) ([]Plat
 			&i.Reason,
 			&i.RequestID,
 			&i.CreatedAt,
+			&i.TargetStaffID,
 		); err != nil {
 			return nil, err
 		}

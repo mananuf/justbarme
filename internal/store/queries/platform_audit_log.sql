@@ -1,6 +1,6 @@
 -- name: CreatePlatformAuditEntry :one
-INSERT INTO platform_audit_log (id, platform_staff_id, action, target_business_id, reason, request_id)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO platform_audit_log (id, platform_staff_id, action, target_business_id, target_staff_id, reason, request_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: ListPlatformAuditLog :many

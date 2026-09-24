@@ -378,6 +378,13 @@ func NewHandler(deps Dependencies) http.Handler {
 				router.Post("/businesses/{business_id}/suspend", api.suspendPlatformBusiness)
 				router.Post("/businesses/{business_id}/reactivate", api.reactivatePlatformBusiness)
 
+				router.Get("/businesses/{business_id}/activity", api.getPlatformBusinessActivity)
+				router.Get("/stats", api.getPlatformStats)
+
+				router.Get("/staff", api.listPlatformStaff)
+				router.Post("/staff", api.createPlatformStaff)
+				router.Post("/staff/{staff_id}/revoke", api.revokePlatformStaff)
+
 				router.Get("/audit-log", api.listPlatformAuditLog)
 			})
 		})

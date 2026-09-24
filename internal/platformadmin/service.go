@@ -322,3 +322,173 @@ func (s *Service) ListAuditLog(ctx context.Context, limit int32) ([]AuditEntry, 
 	}
 	return out, nil
 }
+
+// RecordBusinessActivityViewed logs that staffID opened businessID's
+// aggregate activity summary. Unlike RecordLogin this is NOT best-effort:
+// callers must write it before returning any tenant data, so an
+// unrecordable read is a refused read, never an undetectable one.
+func (s *Service) RecordBusinessActivityViewed(ctx context.Context, staffID, businessID uuid.UUID, requestID string) error {
+	id, err := newID()
+	if err != nil {
+		return err
+	}
+	err = store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+		_, err := q.CreatePlatformAuditEntry(ctx, sqlc.CreatePlatformAuditEntryParams{
+			ID: id, PlatformStaffID: staffID, Action: ActionBusinessActivityViewed,
+			TargetBusinessID: pgUUID(businessID), RequestID: pgText(requestID),
+		})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("record business activity view: %w", err)
+	}
+	return nil
+}
+
+// GetBusiness returns one business's oversight summary, or
+// ErrBusinessNotFound.
+func (s *Service) GetBusiness(ctx context.Context, businessID uuid.UUID) (Business, error) {
+	var row sqlc.Business
+	err := store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+		var err error
+		row, err = q.GetBusinessByID(ctx, businessID)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Business{}, ErrBusinessNotFound
+		}
+		return Business{}, fmt.Errorf("get business: %w", err)
+	}
+	return toBusiness(row), nil
+}
+
+// Stats summarizes the whole platform from non-tenant tables only
+// (businesses, users) -- no RLS-scoped data is read.
+func (s *Service) Stats(ctx context.Context, now time.Time) (Stats, error) {
+	businesses, err := s.ListBusinesses(ctx)
+	if err != nil {
+		return Stats{}, err
+	}
+	out := Stats{TotalBusinesses: len(businesses)}
+	weekAgo := now.Add(-7 * 24 * time.Hour)
+	for _, b := range businesses {
+		if b.Status == "suspended" {
+			out.SuspendedBusinesses++
+		} else {
+			out.ActiveBusinesses++
+		}
+		if b.CreatedAt.After(weekAgo) {
+			out.NewBusinessesLast7d++
+		}
+	}
+	err = store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+		var err error
+		out.TotalUsers, err = q.CountUsers(ctx)
+		return err
+	})
+	if err != nil {
+		return Stats{}, fmt.Errorf("count users: %w", err)
+	}
+	return out, nil
+}
+
+// ListStaff returns every platform staff account, including revoked ones
+// (status is part of the row).
+func (s *Service) ListStaff(ctx context.Context) ([]Staff, error) {
+	var rows []sqlc.PlatformStaff
+	err := store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+		var err error
+		rows, err = q.ListPlatformStaff(ctx)
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list platform staff: %w", err)
+	}
+	out := make([]Staff, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, toStaff(r))
+	}
+	return out, nil
+}
+
+// CreateStaffAudited creates a platform staff account on behalf of
+// actingStaffID and records the audit entry in the same transaction.
+func (s *Service) CreateStaffAudited(ctx context.Context, actingStaffID uuid.UUID, email, displayName, password, role, requestID string) (Staff, error) {
+	id, err := newID()
+	if err != nil {
+		return Staff{}, err
+	}
+	auditID, err := newID()
+	if err != nil {
+		return Staff{}, err
+	}
+	hash, err := auth.HashPassword(password, auth.Argon2Params{
+		MemoryKiB: s.argon2.MemoryKiB, Iterations: s.argon2.Iterations, Parallelism: s.argon2.Parallelism,
+	})
+	if err != nil {
+		return Staff{}, fmt.Errorf("hash password: %w", err)
+	}
+
+	var created sqlc.PlatformStaff
+	err = store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+		row, err := q.CreatePlatformStaff(ctx, sqlc.CreatePlatformStaffParams{
+			ID: id, Email: email, DisplayName: displayName, PasswordHash: hash, Role: role,
+		})
+		if err != nil {
+			return err
+		}
+		created = row
+		_, err = q.CreatePlatformAuditEntry(ctx, sqlc.CreatePlatformAuditEntryParams{
+			ID: auditID, PlatformStaffID: actingStaffID, Action: ActionStaffCreated,
+			TargetStaffID: pgUUID(id), RequestID: pgText(requestID),
+		})
+		return err
+	})
+	if err != nil {
+		if pgErrorCode(err) == pgUniqueViolation {
+			return Staff{}, ErrEmailTaken
+		}
+		return Staff{}, fmt.Errorf("create platform staff: %w", err)
+	}
+	return toStaff(created), nil
+}
+
+// RevokeStaff disables targetID's account and ends every session it has,
+// atomically with the audit entry -- revocation takes effect immediately,
+// not merely at the next login. A staff member cannot revoke themselves, so
+// at least one superadmin (the actor) always remains.
+func (s *Service) RevokeStaff(ctx context.Context, actingStaffID, targetID uuid.UUID, reason, requestID string) (Staff, error) {
+	if actingStaffID == targetID {
+		return Staff{}, ErrCannotRevokeSelf
+	}
+	auditID, err := newID()
+	if err != nil {
+		return Staff{}, err
+	}
+	var updated sqlc.PlatformStaff
+	err = store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+		row, err := q.SetPlatformStaffStatus(ctx, sqlc.SetPlatformStaffStatusParams{ID: targetID, Status: "revoked"})
+		if err != nil {
+			return err
+		}
+		updated = row
+		if err := q.RevokeAllPlatformSessionsForStaff(ctx, sqlc.RevokeAllPlatformSessionsForStaffParams{
+			StaffID: targetID, RevokedReason: pgText("account revoked"),
+		}); err != nil {
+			return err
+		}
+		_, err = q.CreatePlatformAuditEntry(ctx, sqlc.CreatePlatformAuditEntryParams{
+			ID: auditID, PlatformStaffID: actingStaffID, Action: ActionStaffRevoked,
+			TargetStaffID: pgUUID(targetID), Reason: pgText(reason), RequestID: pgText(requestID),
+		})
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Staff{}, ErrStaffNotFound
+		}
+		return Staff{}, fmt.Errorf("revoke platform staff: %w", err)
+	}
+	return toStaff(updated), nil
+}

@@ -269,6 +269,7 @@ type PlatformAuditLog struct {
 	Reason           pgtype.Text        `json:"reason"`
 	RequestID        pgtype.Text        `json:"request_id"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	TargetStaffID    pgtype.UUID        `json:"target_staff_id"`
 }
 
 type PlatformSession struct {

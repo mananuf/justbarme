@@ -48,7 +48,7 @@ func cleanupStaff(t *testing.T, pool *pgxpool.Pool, staffID uuid.UUID) {
 			return
 		}
 		defer conn.Release()
-		_, _ = conn.Exec(context.Background(), "DELETE FROM platform_audit_log WHERE platform_staff_id = $1", staffID)
+		_, _ = conn.Exec(context.Background(), "DELETE FROM platform_audit_log WHERE platform_staff_id = $1 OR target_staff_id = $1", staffID)
 		_, _ = conn.Exec(context.Background(), "DELETE FROM platform_sessions WHERE staff_id = $1", staffID)
 		_, _ = conn.Exec(context.Background(), "DELETE FROM platform_staff WHERE id = $1", staffID)
 	})
@@ -305,5 +305,158 @@ func TestListBusinessesAndSuspendReactivateIsAtomicAndAudited(t *testing.T) {
 	}
 	if !sawSuspend || !sawReactivate {
 		t.Fatalf("expected both a suspend and a reactivate audit entry for this business, sawSuspend=%v sawReactivate=%v", sawSuspend, sawReactivate)
+	}
+}
+
+func TestCreateStaffAuditedRecordsAuditEntry(t *testing.T) {
+	svc, _, pool := testServices(t)
+	ctx := context.Background()
+
+	actor, err := svc.CreateStaff(ctx, uniqueEmail(), "Actor", "password123", platformadmin.RoleSuperadmin)
+	if err != nil {
+		t.Fatalf("CreateStaff: %v", err)
+	}
+	cleanupStaff(t, pool, actor.ID)
+
+	created, err := svc.CreateStaffAudited(ctx, actor.ID, uniqueEmail(), "New Hire", "password123", platformadmin.RoleSupport, "req-1")
+	if err != nil {
+		t.Fatalf("CreateStaffAudited: %v", err)
+	}
+	cleanupStaff(t, pool, created.ID)
+
+	entries, err := svc.ListAuditLog(ctx, 50)
+	if err != nil {
+		t.Fatalf("ListAuditLog: %v", err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Action == platformadmin.ActionStaffCreated && e.StaffID == actor.ID && e.TargetStaffID == created.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected a staff.created audit entry naming the actor and the new account")
+	}
+
+	if _, err := svc.CreateStaffAudited(ctx, actor.ID, created.Email, "Dup", "password123", platformadmin.RoleSupport, "req-2"); err != platformadmin.ErrEmailTaken {
+		t.Fatalf("expected ErrEmailTaken for a duplicate email, got %v", err)
+	}
+}
+
+func TestRevokeStaffEndsSessionsAndBlocksLogin(t *testing.T) {
+	svc, _, pool := testServices(t)
+	ctx := context.Background()
+
+	actor, err := svc.CreateStaff(ctx, uniqueEmail(), "Actor", "password123", platformadmin.RoleSuperadmin)
+	if err != nil {
+		t.Fatalf("CreateStaff: %v", err)
+	}
+	cleanupStaff(t, pool, actor.ID)
+	email := uniqueEmail()
+	target, err := svc.CreateStaff(ctx, email, "Target", "password123", platformadmin.RoleSupport)
+	if err != nil {
+		t.Fatalf("CreateStaff: %v", err)
+	}
+	cleanupStaff(t, pool, target.ID)
+
+	rawToken, _, _, err := svc.CreateSession(ctx, target.ID, "ua", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	revoked, err := svc.RevokeStaff(ctx, actor.ID, target.ID, "left the team", "req-3")
+	if err != nil {
+		t.Fatalf("RevokeStaff: %v", err)
+	}
+	if revoked.Status != "revoked" {
+		t.Fatalf("expected status revoked, got %q", revoked.Status)
+	}
+	if _, err := svc.GetActiveSessionByToken(ctx, rawToken); err != platformadmin.ErrSessionNotFound {
+		t.Fatalf("expected the revoked staff's existing session to stop working immediately, got %v", err)
+	}
+	if _, err := svc.Authenticate(ctx, email, "password123"); err != platformadmin.ErrInvalidCredentials {
+		t.Fatalf("expected a revoked account to be unable to log in, got %v", err)
+	}
+
+	if _, err := svc.RevokeStaff(ctx, actor.ID, actor.ID, "oops", "req-4"); err != platformadmin.ErrCannotRevokeSelf {
+		t.Fatalf("expected ErrCannotRevokeSelf, got %v", err)
+	}
+	if _, err := svc.RevokeStaff(ctx, actor.ID, uuid.New(), "nobody", "req-5"); err != platformadmin.ErrStaffNotFound {
+		t.Fatalf("expected ErrStaffNotFound for an unknown id, got %v", err)
+	}
+}
+
+func TestSupportCanReadActivityButNeverManageStaff(t *testing.T) {
+	support := platformadmin.ForRole(platformadmin.RoleSupport)
+	super := platformadmin.ForRole(platformadmin.RoleSuperadmin)
+	for _, c := range []platformadmin.Capability{
+		platformadmin.CapabilityBusinessesReadActivity, platformadmin.CapabilityStaffRead,
+	} {
+		if !support.Has(c) || !super.Has(c) {
+			t.Fatalf("both roles should hold read capability %s", c)
+		}
+	}
+	for _, c := range []platformadmin.Capability{
+		platformadmin.CapabilityStaffManage, platformadmin.CapabilityBusinessesSuspend,
+	} {
+		if support.Has(c) {
+			t.Fatalf("support must never hold write capability %s", c)
+		}
+		if !super.Has(c) {
+			t.Fatalf("superadmin should hold write capability %s", c)
+		}
+	}
+}
+
+func TestRecordBusinessActivityViewedAndStats(t *testing.T) {
+	svc, idsvc, pool := testServices(t)
+	ctx := context.Background()
+
+	staff, err := svc.CreateStaff(ctx, uniqueEmail(), "Viewer", "password123", platformadmin.RoleSupport)
+	if err != nil {
+		t.Fatalf("CreateStaff: %v", err)
+	}
+	cleanupStaff(t, pool, staff.ID)
+	owner, err := idsvc.CreateUser(ctx, uniqueEmail(), "", "Owner", "password123")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	biz, _, _, err := idsvc.CreateBusinessWithOwner(ctx, owner.ID, "Oversight Test Bar")
+	if err != nil {
+		t.Fatalf("CreateBusinessWithOwner: %v", err)
+	}
+	cleanupBusiness(t, pool, owner.ID, biz.ID)
+
+	if err := svc.RecordBusinessActivityViewed(ctx, staff.ID, biz.ID, "req-6"); err != nil {
+		t.Fatalf("RecordBusinessActivityViewed: %v", err)
+	}
+	entries, err := svc.ListAuditLog(ctx, 50)
+	if err != nil {
+		t.Fatalf("ListAuditLog: %v", err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Action == platformadmin.ActionBusinessActivityViewed && e.StaffID == staff.ID && e.TargetBusinessID == biz.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected a business.activity_viewed audit entry")
+	}
+
+	members, err := idsvc.ListMembersForBusiness(ctx, uuid.Nil, biz.ID)
+	if err != nil {
+		t.Fatalf("ListMembersForBusiness: %v", err)
+	}
+	if len(members) != 1 || members[0].Role != "owner" {
+		t.Fatalf("expected exactly the owner, got %+v", members)
+	}
+
+	stats, err := svc.Stats(ctx, time.Now())
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if stats.TotalBusinesses < 1 || stats.ActiveBusinesses < 1 || stats.NewBusinessesLast7d < 1 || stats.TotalUsers < 1 {
+		t.Fatalf("expected the just-created business/user to be counted, got %+v", stats)
 	}
 }

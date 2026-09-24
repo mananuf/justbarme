@@ -12,6 +12,7 @@ var (
 	ErrStaffNotFound      = errors.New("platform staff not found")
 	ErrSessionNotFound    = errors.New("session not found or expired")
 	ErrBusinessNotFound   = errors.New("business not found")
+	ErrCannotRevokeSelf   = errors.New("you cannot revoke your own account")
 )
 
 // pgErrorCode reports err's Postgres SQLSTATE code, if any. Duplicated from

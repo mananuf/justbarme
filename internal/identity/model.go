@@ -37,6 +37,15 @@ type Membership struct {
 	JoinedAt     time.Time
 }
 
+// MemberSummary is one active member of a business, for read-only oversight
+// views (the platform admin's per-business activity summary). Deliberately
+// carries no credentials or contact details.
+type MemberSummary struct {
+	Name     string
+	Role     string
+	JoinedAt time.Time
+}
+
 type Location struct {
 	ID         uuid.UUID
 	BusinessID uuid.UUID

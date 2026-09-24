@@ -13,3 +13,10 @@ FROM business_memberships bm
 JOIN businesses b ON b.id = bm.business_id
 WHERE bm.user_id = $1
 ORDER BY bm.created_at;
+
+-- name: ListMembersForBusiness :many
+SELECT bm.role, bm.status, bm.joined_at, u.display_name AS user_name
+FROM business_memberships bm
+JOIN users u ON u.id = bm.user_id
+WHERE bm.business_id = $1 AND bm.status = 'active'
+ORDER BY bm.joined_at;

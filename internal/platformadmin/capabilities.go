@@ -9,6 +9,17 @@ const (
 	CapabilityBusinessesRead    Capability = "platform:businesses:read"
 	CapabilityBusinessesSuspend Capability = "platform:businesses:suspend"
 	CapabilityAuditRead         Capability = "platform:audit:read"
+
+	// CapabilityBusinessesReadActivity reads a business's aggregate
+	// operational summary (sales, stock health, outstanding tabs, staff
+	// counts). Read-only and audited on every use -- see
+	// Service.RecordBusinessActivityViewed.
+	CapabilityBusinessesReadActivity Capability = "platform:businesses:read_activity"
+	CapabilityStaffRead              Capability = "platform:staff:read"
+	// CapabilityStaffManage creates and revokes platform staff accounts.
+	// Superadmin only, permanently: every platform *write* capability is
+	// superadmin-only by rule, never decided per feature.
+	CapabilityStaffManage Capability = "platform:staff:manage"
 )
 
 // Role names. Stored on platform_staff.role and checked verbatim.
@@ -21,6 +32,8 @@ const (
 var supportCapabilities = []Capability{
 	CapabilityBusinessesRead,
 	CapabilityAuditRead,
+	CapabilityBusinessesReadActivity,
+	CapabilityStaffRead,
 }
 
 // allCapabilities is every platform capability that exists. Superadmin
@@ -30,6 +43,9 @@ var allCapabilities = []Capability{
 	CapabilityBusinessesRead,
 	CapabilityBusinessesSuspend,
 	CapabilityAuditRead,
+	CapabilityBusinessesReadActivity,
+	CapabilityStaffRead,
+	CapabilityStaffManage,
 }
 
 // Set is an unordered collection of capabilities with O(1) membership

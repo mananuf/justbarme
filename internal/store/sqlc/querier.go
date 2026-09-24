@@ -28,6 +28,7 @@ type Querier interface {
 	// to read besides.
 	CountSalesByDay(ctx context.Context, arg CountSalesByDayParams) ([]CountSalesByDayRow, error)
 	CountStockReceiptsByDay(ctx context.Context, arg CountStockReceiptsByDayParams) ([]CountStockReceiptsByDayRow, error)
+	CountUsers(ctx context.Context) (int64, error)
 	CreateBill(ctx context.Context, arg CreateBillParams) (Bill, error)
 	CreateBillWriteOff(ctx context.Context, arg CreateBillWriteOffParams) (BillWriteOff, error)
 	CreateBusiness(ctx context.Context, arg CreateBusinessParams) (Business, error)
@@ -186,6 +187,7 @@ type Querier interface {
 	// decremented remaining_quantity, same locking pattern
 	// GetBillForUpdate already established for bill balances.
 	ListLotsForAllocation(ctx context.Context, arg ListLotsForAllocationParams) ([]StockLot, error)
+	ListMembersForBusiness(ctx context.Context, businessID uuid.UUID) ([]ListMembersForBusinessRow, error)
 	ListMembershipsForUser(ctx context.Context, userID uuid.UUID) ([]ListMembershipsForUserRow, error)
 	ListOpenBills(ctx context.Context, businessID uuid.UUID) ([]Bill, error)
 	ListOpenInventoryReviewsDetailed(ctx context.Context, businessID uuid.UUID) ([]ListOpenInventoryReviewsDetailedRow, error)
@@ -193,6 +195,7 @@ type Querier interface {
 	ListPaymentsByBillID(ctx context.Context, arg ListPaymentsByBillIDParams) ([]Payment, error)
 	ListPendingInventoryAdjustmentRequestsDetailed(ctx context.Context, businessID uuid.UUID) ([]ListPendingInventoryAdjustmentRequestsDetailedRow, error)
 	ListPlatformAuditLog(ctx context.Context, limit int32) ([]PlatformAuditLog, error)
+	ListPlatformStaff(ctx context.Context) ([]PlatformStaff, error)
 	ListPriceHistory(ctx context.Context, arg ListPriceHistoryParams) ([]ProductPrice, error)
 	// "Units sold" excludes a reversal's compensating negative-quantity lines
 	// -- same reasoning SumSalesTotalSince already applies to sale counts.
@@ -220,12 +223,14 @@ type Querier interface {
 	RejectInventoryAdjustmentRequest(ctx context.Context, arg RejectInventoryAdjustmentRequestParams) (InventoryAdjustmentRequest, error)
 	ResolveInventoryReview(ctx context.Context, arg ResolveInventoryReviewParams) (InventoryReview, error)
 	ResolveSaleReview(ctx context.Context, arg ResolveSaleReviewParams) (SaleReview, error)
+	RevokeAllPlatformSessionsForStaff(ctx context.Context, arg RevokeAllPlatformSessionsForStaffParams) error
 	RevokeBillShareLinkByBillID(ctx context.Context, arg RevokeBillShareLinkByBillIDParams) (BillShareLink, error)
 	RevokeDevice(ctx context.Context, arg RevokeDeviceParams) (Device, error)
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (Invitation, error)
 	RevokePlatformSession(ctx context.Context, arg RevokePlatformSessionParams) (int64, error)
 	RevokeSession(ctx context.Context, arg RevokeSessionParams) (int64, error)
 	SetBusinessStatus(ctx context.Context, arg SetBusinessStatusParams) (Business, error)
+	SetPlatformStaffStatus(ctx context.Context, arg SetPlatformStaffStatusParams) (PlatformStaff, error)
 	SetUserEmail(ctx context.Context, arg SetUserEmailParams) (User, error)
 	SetUserPhone(ctx context.Context, arg SetUserPhoneParams) (User, error)
 	// Net quantity of one variant currently on a bill, across every round

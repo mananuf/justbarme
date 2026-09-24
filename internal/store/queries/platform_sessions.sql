@@ -17,3 +17,8 @@ UPDATE platform_sessions SET csrf_token_hash = $2 WHERE id = $1;
 UPDATE platform_sessions
 SET revoked_at = now(), revoked_reason = $2
 WHERE id = $1 AND staff_id = $3 AND revoked_at IS NULL;
+
+-- name: RevokeAllPlatformSessionsForStaff :exec
+UPDATE platform_sessions
+SET revoked_at = now(), revoked_reason = $2
+WHERE staff_id = $1 AND revoked_at IS NULL;

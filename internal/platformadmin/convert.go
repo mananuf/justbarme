@@ -78,6 +78,7 @@ func toAuditEntry(a sqlc.PlatformAuditLog) AuditEntry {
 		StaffID:          a.PlatformStaffID,
 		Action:           a.Action,
 		TargetBusinessID: toUUID(a.TargetBusinessID),
+		TargetStaffID:    toUUID(a.TargetStaffID),
 		Reason:           toText(a.Reason),
 		RequestID:        toText(a.RequestID),
 		CreatedAt:        toTime(a.CreatedAt),

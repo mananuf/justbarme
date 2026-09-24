@@ -86,3 +86,61 @@ func (q *Queries) GetPlatformStaffByID(ctx context.Context, id uuid.UUID) (Platf
 	)
 	return i, err
 }
+
+const listPlatformStaff = `-- name: ListPlatformStaff :many
+SELECT id, email, display_name, password_hash, role, status, created_at, updated_at FROM platform_staff ORDER BY created_at
+`
+
+func (q *Queries) ListPlatformStaff(ctx context.Context) ([]PlatformStaff, error) {
+	rows, err := q.db.Query(ctx, listPlatformStaff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PlatformStaff{}
+	for rows.Next() {
+		var i PlatformStaff
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.DisplayName,
+			&i.PasswordHash,
+			&i.Role,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setPlatformStaffStatus = `-- name: SetPlatformStaffStatus :one
+UPDATE platform_staff SET status = $2, updated_at = now() WHERE id = $1 RETURNING id, email, display_name, password_hash, role, status, created_at, updated_at
+`
+
+type SetPlatformStaffStatusParams struct {
+	ID     uuid.UUID `json:"id"`
+	Status string    `json:"status"`
+}
+
+func (q *Queries) SetPlatformStaffStatus(ctx context.Context, arg SetPlatformStaffStatusParams) (PlatformStaff, error) {
+	row := q.db.QueryRow(ctx, setPlatformStaffStatus, arg.ID, arg.Status)
+	var i PlatformStaff
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayName,
+		&i.PasswordHash,
+		&i.Role,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

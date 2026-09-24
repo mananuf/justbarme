@@ -66,6 +66,46 @@ func (q *Queries) GetMembership(ctx context.Context, arg GetMembershipParams) (B
 	return i, err
 }
 
+const listMembersForBusiness = `-- name: ListMembersForBusiness :many
+SELECT bm.role, bm.status, bm.joined_at, u.display_name AS user_name
+FROM business_memberships bm
+JOIN users u ON u.id = bm.user_id
+WHERE bm.business_id = $1 AND bm.status = 'active'
+ORDER BY bm.joined_at
+`
+
+type ListMembersForBusinessRow struct {
+	Role     string             `json:"role"`
+	Status   string             `json:"status"`
+	JoinedAt pgtype.Timestamptz `json:"joined_at"`
+	UserName string             `json:"user_name"`
+}
+
+func (q *Queries) ListMembersForBusiness(ctx context.Context, businessID uuid.UUID) ([]ListMembersForBusinessRow, error) {
+	rows, err := q.db.Query(ctx, listMembersForBusiness, businessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMembersForBusinessRow{}
+	for rows.Next() {
+		var i ListMembersForBusinessRow
+		if err := rows.Scan(
+			&i.Role,
+			&i.Status,
+			&i.JoinedAt,
+			&i.UserName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMembershipsForUser = `-- name: ListMembershipsForUser :many
 SELECT bm.business_id, bm.user_id, bm.role, bm.status, bm.invited_at, bm.joined_at, bm.created_at, bm.updated_at, b.name AS business_name
 FROM business_memberships bm

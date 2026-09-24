@@ -75,6 +75,22 @@ func (q *Queries) GetActivePlatformSessionByTokenHash(ctx context.Context, token
 	return i, err
 }
 
+const revokeAllPlatformSessionsForStaff = `-- name: RevokeAllPlatformSessionsForStaff :exec
+UPDATE platform_sessions
+SET revoked_at = now(), revoked_reason = $2
+WHERE staff_id = $1 AND revoked_at IS NULL
+`
+
+type RevokeAllPlatformSessionsForStaffParams struct {
+	StaffID       uuid.UUID   `json:"staff_id"`
+	RevokedReason pgtype.Text `json:"revoked_reason"`
+}
+
+func (q *Queries) RevokeAllPlatformSessionsForStaff(ctx context.Context, arg RevokeAllPlatformSessionsForStaffParams) error {
+	_, err := q.db.Exec(ctx, revokeAllPlatformSessionsForStaff, arg.StaffID, arg.RevokedReason)
+	return err
+}
+
 const revokePlatformSession = `-- name: RevokePlatformSession :execrows
 UPDATE platform_sessions
 SET revoked_at = now(), revoked_reason = $2

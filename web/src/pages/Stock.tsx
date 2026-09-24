@@ -670,14 +670,28 @@ export function Stock() {
     }
   }
 
+  // Crates count allows half-crate steps (0.5, 1.5, 2.5, ...) so a receipt
+  // like "half a crate of Extra Smooth" can be entered as-is instead of
+  // forcing the owner to switch to Bottles and do the multiplication
+  // themselves. It's only ever a *display* convenience, though --
+  // stock_receipt_lines.quantity is an integer number of bottles, so a
+  // half crate only actually works out when crateSize is even (12 * 0.5 =
+  // 6, a real bottle count; 15 * 0.5 = 7.5 is not). crateCountIsHalfStep
+  // guards the input itself; crateTotalIsWholeBottles gates submission.
+  const crateCountIsHalfStep = crateCount === '' || Number.isInteger(Number(crateCount) * 2);
   const totalUnits =
     unitMode === 'crate'
       ? (Number(crateSize) || 0) * (Number(crateCount) || 0)
       : Number(bottleCount) || 0;
+  const crateTotalIsWholeBottles = unitMode !== 'crate' || Number.isInteger(totalUnits);
   const totalCostKobo = Math.round((Number(totalCostNaira) || 0) * 100);
   const perUnitPreview = totalUnits > 0 && totalCostNaira ? totalCostKobo / totalUnits / 100 : null;
   const canReceive =
-    totalUnits > 0 && totalCostNaira.trim() !== '' && !Number.isNaN(Number(totalCostNaira));
+    totalUnits > 0 &&
+    crateCountIsHalfStep &&
+    crateTotalIsWholeBottles &&
+    totalCostNaira.trim() !== '' &&
+    !Number.isNaN(Number(totalCostNaira));
 
   async function confirmReceive() {
     if (!variantId || !selectedBusinessId || !csrfToken || !canReceive) return;
@@ -1402,7 +1416,9 @@ export function Stock() {
                     </span>
                     <input
                       type="number"
-                      inputMode="numeric"
+                      inputMode="decimal"
+                      step={0.5}
+                      min={0.5}
                       placeholder="e.g. 4"
                       value={crateCount}
                       onChange={(e) => setCrateCount(e.target.value)}
@@ -1411,8 +1427,20 @@ export function Stock() {
                   </label>
                 </div>
                 <p className="text-[11px] text-jb-ink/40 mt-1.5">
-                  Up to {MAX_BOTTLES_PER_CRATE} bottles per crate.
+                  Up to {MAX_BOTTLES_PER_CRATE} bottles per crate. Bought half a crate? Enter 0.5
+                  (or 1.5, 2.5, and so on).
                 </p>
+                {!crateCountIsHalfStep && (
+                  <p className="text-[11px] text-jb-gold mt-1">
+                    Enter whole or half crates only, e.g. 1, 1.5, 2.
+                  </p>
+                )}
+                {crateCountIsHalfStep && !crateTotalIsWholeBottles && (
+                  <p className="text-[11px] text-jb-gold mt-1">
+                    That comes to {totalUnits} bottles, which isn't a whole number for a {crateSize}
+                    -bottle crate. Switch to Bottles and enter the exact count instead.
+                  </p>
+                )}
               </div>
             ) : (
               <label className="block mb-4">

@@ -158,16 +158,53 @@ func (api *API) getPublicBill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var items []publicBillItemResponse
+	// Net per variant across every round posted on the bill, not one row
+	// per round -- a bill is corrected in place (AddSaleRound/
+	// RemoveBillItem, see the Tabs and credit section of CLAUDE.md), so
+	// detail.Sales is the tab's own internal activity log, not a receipt.
+	// Without this, a shared link showed every individual round, including
+	// a removal's negative-quantity compensating row (a real bug, caught
+	// live from an actual shared receipt: "Trophy Stout x1, x1, x-1, x1"
+	// instead of a single net "x2" line). Same aggregation Tabs.tsx's own
+	// currentOrderLines already does for the owner-facing live order.
+	type billItemAccumulator struct {
+		description   string
+		unitPriceKobo int64
+		quantity      int64
+		lineTotalKobo int64
+	}
+	itemsByVariant := make(map[uuid.UUID]*billItemAccumulator)
+	var order []uuid.UUID
 	var totalKobo int64
 	for _, sale := range detail.Sales {
 		totalKobo += sale.TotalKobo
 		for _, item := range sale.Items {
-			items = append(items, publicBillItemResponse{
-				Description: item.Description, Quantity: item.Quantity,
-				UnitPriceKobo: item.UnitPriceKobo, LineTotalKobo: item.LineTotalKobo,
-			})
+			acc, ok := itemsByVariant[item.VariantID]
+			if !ok {
+				acc = &billItemAccumulator{}
+				itemsByVariant[item.VariantID] = acc
+				order = append(order, item.VariantID)
+			}
+			// Description/unit price reflect the most recently posted
+			// round for this variant (e.g. after a mid-tab price change);
+			// quantity and line total are always the true net.
+			acc.description = item.Description
+			acc.unitPriceKobo = item.UnitPriceKobo
+			acc.quantity += int64(item.Quantity)
+			acc.lineTotalKobo += item.LineTotalKobo
 		}
+	}
+	var items []publicBillItemResponse
+	for _, variantID := range order {
+		acc := itemsByVariant[variantID]
+		if acc.quantity <= 0 {
+			// Added then fully removed again -- nothing to show.
+			continue
+		}
+		items = append(items, publicBillItemResponse{
+			Description: acc.description, Quantity: int32(acc.quantity),
+			UnitPriceKobo: acc.unitPriceKobo, LineTotalKobo: acc.lineTotalKobo,
+		})
 	}
 
 	payload := envelope{"data": publicBillResponse{

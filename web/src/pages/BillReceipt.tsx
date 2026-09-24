@@ -113,7 +113,13 @@ export function BillReceipt() {
             </div>
 
             {bill.paymentInstructions && (
-              <div className="px-6 py-4 border-t border-jb-ink/10 text-sm text-jb-ink/70">
+              // whitespace-pre-line: this is the one free-text field in
+              // Settings that's a <textarea>, not a single-line <input> --
+              // an owner types their own line breaks (e.g. "BANK: ...",
+              // "ACCOUNT: ...", "NAME: ..." each on its own line), and a
+              // plain <div> collapses those, running them into one line on
+              // the actual customer-facing receipt.
+              <div className="px-6 py-4 border-t border-jb-ink/10 text-sm text-jb-ink/70 whitespace-pre-line">
                 {bill.paymentInstructions}
               </div>
             )}

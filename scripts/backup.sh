@@ -33,6 +33,13 @@ fi
 : "${BACKUP_S3_ENDPOINT:?set BACKUP_S3_ENDPOINT or JBM_STORAGE_ENDPOINT in .env (the R2 account endpoint)}"
 export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-${JBM_STORAGE_ACCESS_KEY_ID:-}}"
 export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-${JBM_STORAGE_SECRET_ACCESS_KEY:-}}"
+# AWS CLI v2.13+ defaults to sending a flexible-checksum header (CRC32) on
+# every upload; Cloudflare R2 (and other S3-compatible targets) doesn't
+# validate it the same way real S3 does, which silently turns into a
+# "SignatureDoesNotMatch" on PutObject -- confirmed live against this
+# exact bucket, not a hypothetical. `when_required` matches the older,
+# widely-compatible behavior and is still accepted by real AWS S3 too.
+export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
 
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 filename="justbarme-${timestamp}.sql.gz"

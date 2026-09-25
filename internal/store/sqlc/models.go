@@ -304,6 +304,7 @@ type Product struct {
 	Active     bool               `json:"active"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	TemplateID pgtype.UUID        `json:"template_id"`
 }
 
 type ProductPrice struct {

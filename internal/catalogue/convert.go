@@ -64,6 +64,7 @@ func toProduct(p sqlc.Product) Product {
 		CategoryID: toUUID(p.CategoryID),
 		Name:       p.Name,
 		Active:     p.Active,
+		TemplateID: toUUID(p.TemplateID),
 	}
 }
 

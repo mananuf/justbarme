@@ -3,6 +3,7 @@ package catalogue_test
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -543,5 +544,80 @@ func TestApplyTemplatesUnknownIDRollsBackEverything(t *testing.T) {
 	}
 	if len(products) != 0 {
 		t.Fatalf("expected no products committed after a failed ApplyTemplates call, got %d", len(products))
+	}
+}
+
+func TestProductKeepsTemplateLinkAcrossRenameAndAutoLinksExactNames(t *testing.T) {
+	svc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID := newTenant(t, ctx, identitySvc, pool)
+
+	templateName := uniqueName("Test Trophy Lager")
+	cleanupTemplate(t, pool, templateName)
+	if err := svc.SeedTemplates(ctx, []catalogue.TemplateSeed{
+		{
+			Name: templateName, CategoryName: uniqueName("Test Beer"), SortOrder: 1,
+			Variants: []catalogue.TemplateVariantSeed{{Name: "50cl Bottle", SuggestedPriceKobo: 120000, SortOrder: 1}},
+		},
+	}); err != nil {
+		t.Fatalf("SeedTemplates: %v", err)
+	}
+	templates, err := svc.ListTemplates(ctx)
+	if err != nil {
+		t.Fatalf("ListTemplates: %v", err)
+	}
+	var templateID uuid.UUID
+	for _, tpl := range templates {
+		if tpl.Name == templateName {
+			templateID = tpl.ID
+		}
+	}
+	if templateID == uuid.Nil {
+		t.Fatal("seeded template not found")
+	}
+
+	applied, err := svc.ApplyTemplates(ctx, ownerID, businessID, []uuid.UUID{templateID})
+	if err != nil {
+		t.Fatalf("ApplyTemplates: %v", err)
+	}
+	if applied[0].TemplateID != templateID {
+		t.Fatalf("expected the applied product to link to template %s, got %s", templateID, applied[0].TemplateID)
+	}
+
+	// The whole point: an owner renaming the product must not break the
+	// brand link.
+	renamed := "Our House Lager"
+	updated, err := svc.UpdateProduct(ctx, ownerID, businessID, applied[0].ID, catalogue.UpdateProductParams{Name: renamed, Active: true})
+	if err != nil {
+		t.Fatalf("UpdateProduct: %v", err)
+	}
+	if updated.Name != renamed || updated.TemplateID != templateID {
+		t.Fatalf("expected rename to keep the template link, got name %q template %s", updated.Name, updated.TemplateID)
+	}
+	reloaded, err := svc.GetProduct(ctx, ownerID, businessID, applied[0].ID)
+	if err != nil {
+		t.Fatalf("GetProduct: %v", err)
+	}
+	if reloaded.TemplateID != templateID {
+		t.Fatalf("expected the link to persist, got %s", reloaded.TemplateID)
+	}
+
+	custom, err := svc.CreateProduct(ctx, ownerID, businessID, uuid.Nil, uniqueName("Homemade Zobo"))
+	if err != nil {
+		t.Fatalf("CreateProduct custom: %v", err)
+	}
+	if custom.TemplateID != uuid.Nil {
+		t.Fatalf("expected no template link for a custom product, got %s", custom.TemplateID)
+	}
+
+	// Typed by hand but exactly a template's name (any case): still that
+	// brand. Second business, since the first already used this name.
+	_, otherBusinessID := newTenant(t, ctx, identitySvc, pool)
+	typed, err := svc.CreateProduct(ctx, ownerID, otherBusinessID, uuid.Nil, strings.ToUpper(templateName))
+	if err != nil {
+		t.Fatalf("CreateProduct typed: %v", err)
+	}
+	if typed.TemplateID != templateID {
+		t.Fatalf("expected a hand-typed exact template name to auto-link, got %s", typed.TemplateID)
 	}
 }

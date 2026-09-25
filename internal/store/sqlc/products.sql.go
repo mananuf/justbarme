@@ -13,9 +13,9 @@ import (
 )
 
 const createProduct = `-- name: CreateProduct :one
-INSERT INTO products (id, business_id, category_id, name)
-VALUES ($1, $2, $3, $4)
-RETURNING id, business_id, category_id, name, active, created_at, updated_at
+INSERT INTO products (id, business_id, category_id, name, template_id)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, business_id, category_id, name, active, created_at, updated_at, template_id
 `
 
 type CreateProductParams struct {
@@ -23,6 +23,7 @@ type CreateProductParams struct {
 	BusinessID uuid.UUID   `json:"business_id"`
 	CategoryID pgtype.UUID `json:"category_id"`
 	Name       string      `json:"name"`
+	TemplateID pgtype.UUID `json:"template_id"`
 }
 
 func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (Product, error) {
@@ -31,6 +32,7 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (P
 		arg.BusinessID,
 		arg.CategoryID,
 		arg.Name,
+		arg.TemplateID,
 	)
 	var i Product
 	err := row.Scan(
@@ -41,12 +43,13 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (P
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TemplateID,
 	)
 	return i, err
 }
 
 const getProductByID = `-- name: GetProductByID :one
-SELECT id, business_id, category_id, name, active, created_at, updated_at FROM products WHERE business_id = $1 AND id = $2
+SELECT id, business_id, category_id, name, active, created_at, updated_at, template_id FROM products WHERE business_id = $1 AND id = $2
 `
 
 type GetProductByIDParams struct {
@@ -65,12 +68,13 @@ func (q *Queries) GetProductByID(ctx context.Context, arg GetProductByIDParams) 
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TemplateID,
 	)
 	return i, err
 }
 
 const listProducts = `-- name: ListProducts :many
-SELECT id, business_id, category_id, name, active, created_at, updated_at FROM products WHERE business_id = $1 ORDER BY name
+SELECT id, business_id, category_id, name, active, created_at, updated_at, template_id FROM products WHERE business_id = $1 ORDER BY name
 `
 
 func (q *Queries) ListProducts(ctx context.Context, businessID uuid.UUID) ([]Product, error) {
@@ -90,6 +94,7 @@ func (q *Queries) ListProducts(ctx context.Context, businessID uuid.UUID) ([]Pro
 			&i.Active,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.TemplateID,
 		); err != nil {
 			return nil, err
 		}
@@ -105,7 +110,7 @@ const updateProduct = `-- name: UpdateProduct :one
 UPDATE products
 SET name = $3, category_id = $4, active = $5, updated_at = now()
 WHERE business_id = $1 AND id = $2
-RETURNING id, business_id, category_id, name, active, created_at, updated_at
+RETURNING id, business_id, category_id, name, active, created_at, updated_at, template_id
 `
 
 type UpdateProductParams struct {
@@ -133,6 +138,7 @@ func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (P
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TemplateID,
 	)
 	return i, err
 }

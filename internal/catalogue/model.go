@@ -50,6 +50,10 @@ type Product struct {
 	CategoryID uuid.UUID
 	Name       string
 	Active     bool
+	// TemplateID is the platform catalogue template this product came from,
+	// or uuid.Nil for a genuinely custom product. It survives renames --
+	// that is its whole point (see migration 000028).
+	TemplateID uuid.UUID
 }
 
 // Variant is the sold and stocked unit, e.g. "50cl Bottle".

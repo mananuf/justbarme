@@ -22,3 +22,6 @@ SELECT * FROM catalogue_templates WHERE id = ANY(sqlc.arg(ids)::uuid[]) ORDER BY
 SELECT * FROM catalogue_template_variants
 WHERE template_id = ANY(sqlc.arg(template_ids)::uuid[])
 ORDER BY template_id, sort_order, name;
+
+-- name: FindCatalogueTemplateIDByName :one
+SELECT id FROM catalogue_templates WHERE lower(name) = lower($1) ORDER BY name LIMIT 1;

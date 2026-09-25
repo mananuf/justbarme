@@ -184,6 +184,7 @@ func (s *Service) ApplyTemplates(ctx context.Context, userID, businessID uuid.UU
 			}
 			product, err := q.CreateProduct(ctx, sqlc.CreateProductParams{
 				ID: productID, BusinessID: businessID, CategoryID: pgUUID(categoryID), Name: t.Name,
+				TemplateID: pgUUID(t.ID),
 			})
 			if err != nil {
 				return fmt.Errorf("create product %q from template: %w", t.Name, err)
@@ -313,7 +314,20 @@ func (s *Service) CreateProduct(ctx context.Context, userID, businessID, categor
 	}
 	var created sqlc.Product
 	err = store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
-		row, err := q.CreateProduct(ctx, sqlc.CreateProductParams{ID: id, BusinessID: businessID, CategoryID: pgUUID(categoryID), Name: name})
+		// A product typed in by hand whose name exactly matches a platform
+		// template is still that brand -- link it, so an owner who didn't
+		// pick from the suggestions isn't silently invisible to any
+		// brand-level rollup. No match (or any lookup miss) just means a
+		// genuinely custom product with no link.
+		templateID := uuid.Nil
+		if found, err := q.FindCatalogueTemplateIDByName(ctx, name); err == nil {
+			templateID = found
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		row, err := q.CreateProduct(ctx, sqlc.CreateProductParams{
+			ID: id, BusinessID: businessID, CategoryID: pgUUID(categoryID), Name: name, TemplateID: pgUUID(templateID),
+		})
 		if err != nil {
 			return err
 		}

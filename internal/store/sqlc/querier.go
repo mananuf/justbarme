@@ -75,6 +75,7 @@ type Querier interface {
 	DecrementLotRemainingQuantity(ctx context.Context, arg DecrementLotRemainingQuantityParams) (StockLot, error)
 	DeleteIdentityVerification(ctx context.Context, id uuid.UUID) error
 	DeleteSignupVerification(ctx context.Context, id uuid.UUID) error
+	FindCatalogueTemplateIDByName(ctx context.Context, lower string) (uuid.UUID, error)
 	GetActiveBillShareLinkByTokenHash(ctx context.Context, tokenHash string) (BillShareLink, error)
 	GetActivePlatformSessionByTokenHash(ctx context.Context, tokenHash string) (PlatformSession, error)
 	GetActiveSessionByTokenHash(ctx context.Context, tokenHash string) (Session, error)

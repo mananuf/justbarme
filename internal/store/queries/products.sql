@@ -1,6 +1,6 @@
 -- name: CreateProduct :one
-INSERT INTO products (id, business_id, category_id, name)
-VALUES ($1, $2, $3, $4)
+INSERT INTO products (id, business_id, category_id, name, template_id)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: GetProductByID :one

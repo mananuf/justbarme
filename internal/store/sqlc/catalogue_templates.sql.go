@@ -11,6 +11,17 @@ import (
 	"github.com/google/uuid"
 )
 
+const findCatalogueTemplateIDByName = `-- name: FindCatalogueTemplateIDByName :one
+SELECT id FROM catalogue_templates WHERE lower(name) = lower($1) ORDER BY name LIMIT 1
+`
+
+func (q *Queries) FindCatalogueTemplateIDByName(ctx context.Context, lower string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, findCatalogueTemplateIDByName, lower)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const listCatalogueTemplateVariantsByTemplateIDs = `-- name: ListCatalogueTemplateVariantsByTemplateIDs :many
 SELECT id, template_id, name, suggested_price_kobo, sort_order, created_at FROM catalogue_template_variants
 WHERE template_id = ANY($1::uuid[])

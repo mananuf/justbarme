@@ -143,6 +143,7 @@ export function ActivityDetailSheet({
   csrfToken,
   onClose,
   onChanged,
+  forceNotFixable,
 }: {
   entry: ActivityEntry;
   isOwner: boolean;
@@ -150,8 +151,19 @@ export function ActivityDetailSheet({
   csrfToken: string | null;
   onClose: () => void;
   onChanged: () => void;
+  // Set by a caller that already knows this entry can't be fixed the
+  // generic way -- specifically Tabs.tsx for a round on a bill: reversing
+  // a round's sale directly would open a disconnected new bill rather
+  // than adjusting the shared tab (docs/PHASE_TABS_CREDIT.md's own
+  // "Editable orders" section notes this is a real, unbuilt gap). Takes
+  // priority over whatever the detail fetch itself would have decided.
+  forceNotFixable?: string;
 }) {
-  const { rows, error, fixable } = useDetailRows(entry, businessId);
+  const detail = useDetailRows(entry, businessId);
+  const { rows, error } = detail;
+  const fixable = forceNotFixable
+    ? { yes: false as const, reason: forceNotFixable }
+    : detail.fixable;
 
   const [fixing, setFixing] = useState(false);
   const [fixError, setFixError] = useState<string | null>(null);

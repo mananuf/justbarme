@@ -19,10 +19,12 @@ import {
   writeOffBill,
   type Bill,
   type BillDetail,
+  type BillRound,
   type Customer,
   type Table,
 } from '../api/tabs';
 import { AppBottomNav } from '../components/AppBottomNav';
+import { ActivityDetailSheet } from '../components/ActivityDetailSheet';
 import { CartPanel, type CartLine } from '../components/CartPanel';
 import { ProductGrid, type PickableVariant } from '../components/ProductGrid';
 import { useConnectivity } from '../hooks/useConnectivity';
@@ -103,6 +105,7 @@ export function Tabs() {
   // switching back to an older tab.
   const [paymentHintDismissed, setPaymentHintDismissed] = useState(() => hasSeenPaymentHint());
   const [voidHintBillId, setVoidHintBillId] = useState<string | null>(null);
+  const [openRound, setOpenRound] = useState<BillRound | null>(null);
 
   const refreshBillDetail = async (billId: string) => {
     if (!selectedBusinessId) return;
@@ -873,7 +876,11 @@ export function Tabs() {
               <div className="text-[11px] text-jb-ink/45 tracking-wide mb-2">ROUNDS</div>
               <div className="space-y-2">
                 {activeDetail.sales.map((round) => (
-                  <div key={round.id} className="rounded-xl border border-jb-ink/10 bg-white p-3">
+                  <button
+                    key={round.id}
+                    onClick={() => setOpenRound(round)}
+                    className="w-full text-left rounded-xl border border-jb-ink/10 bg-white p-3 hover:bg-jb-ink/[0.02] transition-colors"
+                  >
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-[11px] text-jb-ink/40">
                         {new Date(round.occurredAt).toLocaleTimeString()}
@@ -900,7 +907,7 @@ export function Tabs() {
                         {Math.abs(i.quantity)}× {i.description}
                       </div>
                     ))}
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -909,6 +916,30 @@ export function Tabs() {
       )}
 
       <AppBottomNav />
+
+      {openRound && selectedBusinessId && (
+        <ActivityDetailSheet
+          entry={{
+            id: openRound.id,
+            type: 'sale',
+            actorId: '',
+            actorName: openRound.sellerName,
+            occurredAt: openRound.occurredAt,
+            summary: openRound.totalKobo < 0 ? 'Correction' : 'Round',
+            amountKobo: openRound.totalKobo,
+          }}
+          isOwner={isOwner}
+          businessId={selectedBusinessId}
+          csrfToken={csrfToken}
+          onClose={() => setOpenRound(null)}
+          onChanged={() => activeBillId && void refreshBillDetail(activeBillId)}
+          forceNotFixable={
+            canEditItems
+              ? 'This is part of an open tab — use the +/- controls above to adjust it instead.'
+              : "This tab is already settled. Correcting a round on a settled tab isn't supported yet — contact support."
+          }
+        />
+      )}
     </div>
   );
 }

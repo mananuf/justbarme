@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
+import type { ActivityEntry } from '../api/activity';
 import { getDashboard, type DashboardData } from '../api/dashboard';
+import { ActivityDetailSheet } from '../components/ActivityDetailSheet';
 import { AppBottomNav } from '../components/AppBottomNav';
 import { DashboardTour } from '../components/DashboardTour';
 import { Logo } from '../components/Logo';
@@ -172,12 +174,13 @@ export function Dashboard() {
   const [showTour, setShowTour] = useState(() => !hasSeenDashboardTour());
   const isOnline = useConnectivity();
   const serviceHealth = useServiceHealth(isOnline);
-  const { user, memberships, selectedBusinessId, logout } = useSession();
+  const { user, memberships, selectedBusinessId, csrfToken, logout } = useSession();
   const navigate = useNavigate();
   const location = useLocation();
   const leaseStatus = useLeaseStatus();
 
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [openActivityEntry, setOpenActivityEntry] = useState<ActivityEntry | null>(null);
 
   // AppBottomNav's "More" tab (the ••• dots icon) links to /dashboard#more
   // -- from any other page that's a real navigation, but arriving here
@@ -190,9 +193,8 @@ export function Dashboard() {
     setMoreMenuPopupOpen(true);
   }, [location.hash]);
 
-  useEffect(() => {
+  const reloadDashboard = useCallback(() => {
     if (!selectedBusinessId) return;
-    let cancelled = false;
     // One round trip (docs/PHASE_EXPENSES_DASHBOARD_ACTIVITY_REPORTS.md
     // §3) replacing the three separate calls this used to make. The
     // response is capability-aware per section -- a Staff viewer gets
@@ -200,18 +202,16 @@ export function Dashboard() {
     // rather than the whole call failing, which is what used to happen
     // silently here.
     getDashboard(selectedBusinessId)
-      .then((d) => {
-        if (cancelled) return;
-        setDashboard(d);
-      })
+      .then(setDashboard)
       .catch(() => {
         // Best-effort: the dashboard still renders fine with these cards
         // simply empty if the call fails (e.g. offline).
       });
-    return () => {
-      cancelled = true;
-    };
   }, [selectedBusinessId]);
+
+  useEffect(() => {
+    reloadDashboard();
+  }, [reloadDashboard]);
 
   const business = memberships.find((m) => m.businessId === selectedBusinessId) ?? memberships[0];
 
@@ -357,9 +357,10 @@ export function Dashboard() {
               <p className="text-[12.5px] text-jb-ink/40 px-1">Nothing recorded yet.</p>
             )}
             {(dashboard?.recentActivity ?? []).map((entry) => (
-              <div
+              <button
                 key={entry.id}
-                className="flex items-center justify-between rounded-xl px-3.5 py-3 bg-white/60 border border-jb-ink/[0.05]"
+                onClick={() => setOpenActivityEntry(entry)}
+                className="w-full flex items-center justify-between rounded-xl px-3.5 py-3 bg-white/60 border border-jb-ink/[0.05] text-left hover:bg-white transition-colors"
               >
                 <div>
                   <div className="text-[13px] text-jb-ink/80">
@@ -377,7 +378,7 @@ export function Dashboard() {
                     </>
                   )}
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -449,6 +450,17 @@ export function Dashboard() {
           onStepChange={(target) => {
             if (target.startsWith('#more-')) setMoreOpen(true);
           }}
+        />
+      )}
+
+      {openActivityEntry && selectedBusinessId && (
+        <ActivityDetailSheet
+          entry={openActivityEntry}
+          isOwner={business?.role === 'owner'}
+          businessId={selectedBusinessId}
+          csrfToken={csrfToken}
+          onClose={() => setOpenActivityEntry(null)}
+          onChanged={reloadDashboard}
         />
       )}
     </div>

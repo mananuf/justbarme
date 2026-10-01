@@ -67,15 +67,23 @@ function useDetailRows(
             })),
             {
               label: 'Payment',
-              value: `${sale.payment.method} · ${naira(sale.payment.amountKobo)}`,
+              value:
+                sale.payment.amountKobo === 0
+                  ? 'Not yet paid'
+                  : `${sale.payment.method} · ${naira(sale.payment.amountKobo)}`,
             },
             { label: 'Total', value: naira(sale.totalKobo), negative: sale.totalKobo < 0 },
           ]);
-          setFixable(
-            sale.reversalOf
-              ? { yes: false, reason: 'This is itself a correction of another sale.' }
-              : { yes: true },
-          );
+          if (sale.reversalOf) {
+            setFixable({ yes: false, reason: 'This is itself a correction of another sale.' });
+          } else if (sale.otherSalesOnBill) {
+            setFixable({
+              yes: false,
+              reason: 'This is part of a shared tab — adjust it from the tab instead.',
+            });
+          } else {
+            setFixable({ yes: true });
+          }
         } else if (entry.type === 'expense') {
           const exp = await getExpense(entry.id, businessId);
           if (cancelled) return;

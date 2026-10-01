@@ -339,6 +339,12 @@ func loadSaleAggregate(ctx context.Context, q *sqlc.Queries, businessID, saleID 
 		sale.Payment = toPayment(paymentRows[0])
 	}
 
+	billSales, err := q.ListSalesByBillID(ctx, sqlc.ListSalesByBillIDParams{BusinessID: businessID, BillID: sale.BillID})
+	if err != nil {
+		return Sale{}, fmt.Errorf("list sales on bill: %w", err)
+	}
+	sale.OtherSalesOnBill = len(billSales) > 1
+
 	return sale, nil
 }
 
@@ -471,6 +477,9 @@ func (s *Service) ReverseSale(ctx context.Context, userID, businessID, saleID, a
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("check existing reversal: %w", err)
 		}
+		if original.OtherSalesOnBill {
+			return ErrSaleSharesBillWithOthers
+		}
 
 		original.ReversalOf = saleID
 		bill, err := q.CreateBill(ctx, sqlc.CreateBillParams{
@@ -569,19 +578,28 @@ func (s *Service) ReverseSale(ctx context.Context, userID, businessID, saleID, a
 			}
 		}
 
-		refundPayment, err := q.CreatePayment(ctx, sqlc.CreatePaymentParams{
-			ID: paymentID, BusinessID: businessID, BillID: bill.ID,
-			AmountKobo: -original.Payment.AmountKobo, Method: original.Payment.Method, ActorID: actorID,
-			ReversalOfPaymentID: pgUUID(original.Payment.ID),
-		})
-		if err != nil {
-			return fmt.Errorf("create refund payment: %w", err)
+		// A sale on a still-unpaid tab (one round in, nothing paid yet) has
+		// no payment row to refund -- payments.amount_kobo has a non-zero
+		// CHECK constraint, so inserting a 0-kobo "refund" of nothing would
+		// fail outright rather than just being pointless. Only post a
+		// refund when there was a real payment to reverse.
+		var refundPayment Payment
+		if original.Payment.ID != uuid.Nil && original.Payment.AmountKobo != 0 {
+			posted, err := q.CreatePayment(ctx, sqlc.CreatePaymentParams{
+				ID: paymentID, BusinessID: businessID, BillID: bill.ID,
+				AmountKobo: -original.Payment.AmountKobo, Method: original.Payment.Method, ActorID: actorID,
+				ReversalOfPaymentID: pgUUID(original.Payment.ID),
+			})
+			if err != nil {
+				return fmt.Errorf("create refund payment: %w", err)
+			}
+			refundPayment = toPayment(posted)
 		}
 
 		result = Sale{
 			ID: sale.ID, BusinessID: businessID, BillID: bill.ID, SellerID: actorID,
 			OccurredAt: now, ReceivedAt: now, TotalKobo: totalKobo, ReversalOf: saleID,
-			Items: postedItems, Payment: toPayment(refundPayment),
+			Items: postedItems, Payment: refundPayment,
 		}
 		return nil
 	})

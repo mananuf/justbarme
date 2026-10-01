@@ -35,6 +35,11 @@ export interface Sale {
   // never absent. Dashboard.tsx shows it in the recent-activity feed so a
   // multi-staff shift can tell whose sale is whose.
   sellerName: string;
+  // Only accurate when this Sale came from getSale -- true means this is
+  // one round of a shared tab, not a walk-in sale's own one-shot bill.
+  // ActivityDetailSheet uses this to hide "Fix" (the server itself also
+  // refuses the reversal, 409, for the same reason).
+  otherSalesOnBill: boolean;
 }
 
 interface RawSaleItem {
@@ -54,6 +59,7 @@ interface RawSale {
   items?: RawSaleItem[];
   payment: { amount_kobo: number; method: string };
   seller_name?: string;
+  other_sales_on_bill?: boolean;
 }
 
 function toSale(raw: RawSale): Sale {
@@ -72,6 +78,7 @@ function toSale(raw: RawSale): Sale {
     })),
     payment: { amountKobo: raw.payment.amount_kobo, method: raw.payment.method },
     sellerName: raw.seller_name ?? '',
+    otherSalesOnBill: raw.other_sales_on_bill ?? false,
   };
 }
 

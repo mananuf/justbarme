@@ -98,6 +98,13 @@ type Sale struct {
 	Items      []SaleItem
 	Payment    Payment
 	Reviews    []Review
+	// OtherSalesOnBill is true when this sale shares its bill with at
+	// least one other sale -- i.e. it's one round of a shared tab, not a
+	// walk-in sale's own one-shot bill. Populated only by
+	// loadSaleAggregate (GetSale's path), since that's the one place a
+	// caller needs to decide whether reversing this specific sale directly
+	// is even safe -- see ErrSaleSharesBillWithOthers.
+	OtherSalesOnBill bool
 }
 
 // Table is a business-configured label (T1-T5 style, docs/ARCHITECTURE.md

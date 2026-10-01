@@ -78,6 +78,13 @@ type saleResponse struct {
 	// Tabs.tsx shows who recorded which round on a shared tab, but not
 	// needed by any other sale-returning endpoint today.
 	SellerName string `json:"seller_name,omitempty"`
+	// OtherSalesOnBill is only accurate when populated via GetSale
+	// (loadSaleAggregate computes it) -- true means this sale is one round
+	// of a shared tab, not a walk-in sale's own one-shot bill, so reversing
+	// it directly isn't safe (ReverseSale itself refuses this with
+	// sales.ErrSaleSharesBillWithOthers; this field is what lets the
+	// frontend avoid offering the button in the first place).
+	OtherSalesOnBill bool `json:"other_sales_on_bill,omitempty"`
 }
 
 func toSaleResponse(s sales.Sale) saleResponse {
@@ -86,7 +93,7 @@ func toSaleResponse(s sales.Sale) saleResponse {
 		ReceivedAt: s.ReceivedAt.UTC().Format(time.RFC3339), TotalKobo: s.TotalKobo,
 		ReversalOf: uuidOrNil(s.ReversalOf),
 		Payment:    paymentResponse{AmountKobo: s.Payment.AmountKobo, Method: s.Payment.Method},
-		SellerID:   s.SellerID.String(),
+		SellerID:   s.SellerID.String(), OtherSalesOnBill: s.OtherSalesOnBill,
 	}
 	for _, i := range s.Items {
 		out.Items = append(out.Items, saleItemResponse{
@@ -107,7 +114,7 @@ func salesErrorResponse(api *API, w http.ResponseWriter, r *http.Request, err er
 	switch {
 	case errors.Is(err, sales.ErrVariantNotFound), errors.Is(err, sales.ErrSaleNotFound), errors.Is(err, sales.ErrReviewNotFound):
 		api.notFoundResponse(w, r)
-	case errors.Is(err, sales.ErrAlreadyReversed):
+	case errors.Is(err, sales.ErrAlreadyReversed), errors.Is(err, sales.ErrSaleSharesBillWithOthers):
 		api.conflictResponse(w, r, err.Error())
 	default:
 		api.internalErrorResponse(w, r, fmt.Errorf("%s: %w", action, err))

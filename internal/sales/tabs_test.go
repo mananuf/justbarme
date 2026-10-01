@@ -486,3 +486,84 @@ func TestConcurrentPaymentsNeverExceedBalance(t *testing.T) {
 		t.Fatalf("expected exactly one payment row, got %d", len(detail.Payments))
 	}
 }
+
+// TestReverseSaleRejectsWhenBillHasOtherSales covers a real bug found live:
+// Activity's generic "Fix" on an individual round of a shared tab used to
+// either crash (no payment yet to refund) or, worse, quietly succeed by
+// opening a disconnected new bill that never touched the actual tab. Both
+// are wrong for a sale that isn't the sole sale on its bill.
+func TestReverseSaleRejectsWhenBillHasOtherSales(t *testing.T) {
+	salesSvc, inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
+
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("OpenBill: %v", err)
+	}
+	round1, err := salesSvc.AddSaleRound(ctx, ownerID, businessID, bill.ID, ownerID, uuid.New(), time.Now(),
+		[]sales.SaleItemInput{{VariantID: variantID, Quantity: 1, UnitPriceKobo: 80000}})
+	if err != nil {
+		t.Fatalf("first AddSaleRound: %v", err)
+	}
+	if _, err := salesSvc.AddSaleRound(ctx, ownerID, businessID, bill.ID, ownerID, uuid.New(), time.Now(),
+		[]sales.SaleItemInput{{VariantID: variantID, Quantity: 1, UnitPriceKobo: 80000}}); err != nil {
+		t.Fatalf("second AddSaleRound: %v", err)
+	}
+
+	loaded, err := salesSvc.GetSale(ctx, ownerID, businessID, round1.ID)
+	if err != nil {
+		t.Fatalf("GetSale: %v", err)
+	}
+	if !loaded.OtherSalesOnBill {
+		t.Fatal("expected OtherSalesOnBill=true once a second round exists on the same bill")
+	}
+
+	if _, err := salesSvc.ReverseSale(ctx, ownerID, businessID, round1.ID, ownerID); err != sales.ErrSaleSharesBillWithOthers {
+		t.Fatalf("expected ErrSaleSharesBillWithOthers, got %v", err)
+	}
+}
+
+// TestReverseSaleWithNoPaymentYetDoesNotCrash covers the exact live bug:
+// a tab with exactly one round and nothing paid yet has no payment row at
+// all (payments.amount_kobo has a non-zero CHECK, so there's genuinely
+// nothing to post a 0-kobo "refund" of) -- reversing it used to hit that
+// constraint and 500. It should succeed cleanly with no payment on the
+// reversal either.
+func TestReverseSaleWithNoPaymentYetDoesNotCrash(t *testing.T) {
+	salesSvc, inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
+
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("OpenBill: %v", err)
+	}
+	round, err := salesSvc.AddSaleRound(ctx, ownerID, businessID, bill.ID, ownerID, uuid.New(), time.Now(),
+		[]sales.SaleItemInput{{VariantID: variantID, Quantity: 1, UnitPriceKobo: 80000}})
+	if err != nil {
+		t.Fatalf("AddSaleRound: %v", err)
+	}
+
+	loaded, err := salesSvc.GetSale(ctx, ownerID, businessID, round.ID)
+	if err != nil {
+		t.Fatalf("GetSale: %v", err)
+	}
+	if loaded.OtherSalesOnBill {
+		t.Fatal("expected OtherSalesOnBill=false with only one round on the bill")
+	}
+	if loaded.Payment.ID != uuid.Nil {
+		t.Fatalf("expected no payment yet, got %+v", loaded.Payment)
+	}
+
+	reversal, err := salesSvc.ReverseSale(ctx, ownerID, businessID, round.ID, ownerID)
+	if err != nil {
+		t.Fatalf("ReverseSale: %v", err)
+	}
+	if reversal.Payment.ID != uuid.Nil || reversal.Payment.AmountKobo != 0 {
+		t.Fatalf("expected no refund payment posted, got %+v", reversal.Payment)
+	}
+	if reversal.TotalKobo != -80000 {
+		t.Fatalf("expected reversal total -80000, got %d", reversal.TotalKobo)
+	}
+}

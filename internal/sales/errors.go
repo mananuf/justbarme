@@ -7,12 +7,21 @@ import (
 )
 
 var (
-	ErrNoItems           = errors.New("a sale must include at least one item")
-	ErrVariantNotFound   = errors.New("product variant not found")
-	ErrSaleNotFound      = errors.New("sale not found")
-	ErrAlreadyReversed   = errors.New("this sale has already been reversed")
-	ErrReviewNotFound    = errors.New("sale review not found or already resolved")
-	ErrInvalidPaymentAmt = errors.New("payment amount must equal the sale total")
+	ErrNoItems         = errors.New("a sale must include at least one item")
+	ErrVariantNotFound = errors.New("product variant not found")
+	ErrSaleNotFound    = errors.New("sale not found")
+	ErrAlreadyReversed = errors.New("this sale has already been reversed")
+	// ErrSaleSharesBillWithOthers is returned by ReverseSale for a sale
+	// that is one of several rounds on a shared tab (docs/PHASE_TABS_
+	// CREDIT.md's own "Editable orders" section names the underlying gap:
+	// ReverseSale always opens a disconnected new bill, which is correct
+	// for a walk-in sale's own one-shot bill but wrong once other rounds
+	// share it -- the refund/adjustment would land on a bill nobody is
+	// looking at instead of the shared tab). Use the tab's own +/-
+	// controls, or RemoveBillItem directly, instead.
+	ErrSaleSharesBillWithOthers = errors.New("this sale is part of a shared tab; adjust it from the tab instead of reversing it directly")
+	ErrReviewNotFound           = errors.New("sale review not found or already resolved")
+	ErrInvalidPaymentAmt        = errors.New("payment amount must equal the sale total")
 
 	ErrTableNotFound              = errors.New("table not found")
 	ErrTableLabelTaken            = errors.New("a table with this label already exists")

@@ -40,6 +40,11 @@ export interface Sale {
   // ActivityDetailSheet uses this to hide "Fix" (the server itself also
   // refuses the reversal, 409, for the same reason).
   otherSalesOnBill: boolean;
+  // Always populated -- every sale, including createSale's one-shot
+  // walk-in path, posts against a real bill underneath. The unified Sell
+  // flow navigates to /dashboard/tabs/{billId} after any sale as the one
+  // shared "here's what you just recorded" view.
+  billId: string;
 }
 
 interface RawSaleItem {
@@ -60,6 +65,7 @@ interface RawSale {
   payment: { amount_kobo: number; method: string };
   seller_name?: string;
   other_sales_on_bill?: boolean;
+  bill_id: string;
 }
 
 function toSale(raw: RawSale): Sale {
@@ -79,6 +85,7 @@ function toSale(raw: RawSale): Sale {
     payment: { amountKobo: raw.payment.amount_kobo, method: raw.payment.method },
     sellerName: raw.seller_name ?? '',
     otherSalesOnBill: raw.other_sales_on_bill ?? false,
+    billId: raw.bill_id,
   };
 }
 

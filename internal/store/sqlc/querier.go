@@ -84,6 +84,10 @@ type Querier interface {
 	GetActiveSessionByTokenHash(ctx context.Context, tokenHash string) (Session, error)
 	GetActivityFlagByID(ctx context.Context, arg GetActivityFlagByIDParams) (ActivityFlag, error)
 	GetBillByID(ctx context.Context, arg GetBillByIDParams) (Bill, error)
+	// Backs OpenBill's walk-in path (no table, no customer to resolve
+	// against) -- the same retried-POST-is-safe contract
+	// GetSaleByIdempotencyKey already gives sales.
+	GetBillByIdempotencyKey(ctx context.Context, arg GetBillByIdempotencyKeyParams) (Bill, error)
 	GetBillForUpdate(ctx context.Context, arg GetBillForUpdateParams) (Bill, error)
 	GetBusinessByID(ctx context.Context, id uuid.UUID) (Business, error)
 	GetCategoryByID(ctx context.Context, arg GetCategoryByIDParams) (Category, error)
@@ -110,7 +114,22 @@ type Querier interface {
 	GetInvitationByTokenHash(ctx context.Context, tokenHash string) (Invitation, error)
 	GetLocationByID(ctx context.Context, arg GetLocationByIDParams) (Location, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (BusinessMembership, error)
+	// Same find-or-open reasoning as GetOpenBillByTableID, keyed by customer
+	// instead of table (a named credit tab with no table attached).
+	GetOpenBillByCustomerID(ctx context.Context, arg GetOpenBillByCustomerIDParams) (Bill, error)
+	// Find-or-open: the most recently opened non-terminal bill against a
+	// table, so picking an already-occupied table resumes its tab instead of
+	// opening a second, concurrent one. There is no DB constraint today
+	// preventing two non-terminal bills on the same table (a pre-existing gap,
+	// not introduced here) -- ORDER BY opened_at DESC LIMIT 1 is a pragmatic
+	// "most recent wins" choice if that ever happens, not a correctness
+	// guarantee.
+	GetOpenBillByTableID(ctx context.Context, arg GetOpenBillByTableIDParams) (Bill, error)
 	GetPaymentByID(ctx context.Context, arg GetPaymentByIDParams) (Payment, error)
+	// Same retried-POST-is-safe contract as GetSaleByIdempotencyKey, for
+	// RecordPayment -- a queued offline payment replayed after it already
+	// landed returns the payment already posted rather than double-charging.
+	GetPaymentByIdempotencyKey(ctx context.Context, arg GetPaymentByIdempotencyKeyParams) (Payment, error)
 	GetPlatformStaffByEmail(ctx context.Context, email string) (PlatformStaff, error)
 	GetPlatformStaffByID(ctx context.Context, id uuid.UUID) (PlatformStaff, error)
 	GetPriceAt(ctx context.Context, arg GetPriceAtParams) (ProductPrice, error)
@@ -170,8 +189,14 @@ type Querier interface {
 	// that column, even though each branch's own FROM is unambiguous under
 	// real Postgres.
 	ListActivity(ctx context.Context, arg ListActivityParams) ([]ListActivityRow, error)
+	ListAllBills(ctx context.Context, businessID uuid.UUID) ([]Bill, error)
 	ListAllBusinesses(ctx context.Context) ([]Business, error)
 	ListAllocationsBySaleItem(ctx context.Context, arg ListAllocationsBySaleItemParams) ([]SaleItemLotAllocation, error)
+	// Backs the Bills screen's status filter (docs/PHASE_UNIFIED_SELL_BILLS.md)
+	// -- unlike ListOpenBills/ListOutstandingBills, this takes any one status
+	// literally, including 'settled'/'void' history a staff member might want
+	// to look back at.
+	ListBillsByStatus(ctx context.Context, arg ListBillsByStatusParams) ([]Bill, error)
 	ListCatalogueTemplateVariantsByTemplateIDs(ctx context.Context, templateIds []uuid.UUID) ([]CatalogueTemplateVariant, error)
 	ListCatalogueTemplates(ctx context.Context) ([]CatalogueTemplate, error)
 	ListCatalogueTemplatesByIDs(ctx context.Context, ids []uuid.UUID) ([]CatalogueTemplate, error)

@@ -72,6 +72,13 @@ type saleResponse struct {
 	Payment    paymentResponse    `json:"payment"`
 	Reviews    []reviewResponse   `json:"reviews,omitempty"`
 	SellerID   string             `json:"seller_id"`
+	// BillID is always populated (free -- already on the domain struct).
+	// Every sale, including CreateSale's one-shot walk-in path, posts
+	// against a real bill underneath (docs/PHASE_UNIFIED_SELL_BILLS.md) --
+	// this is what lets the unified Sell flow navigate to
+	// /dashboard/tabs/{bill_id} after any sale, atomic-walk-in or tab
+	// round alike, as the one shared "here's what you just recorded" view.
+	BillID string `json:"bill_id"`
 	// SellerName is only populated on the bill-detail path
 	// (toBillDetailResponse in tabs_handlers.go) -- resolving it costs an
 	// extra identity lookup per distinct seller, worth it there since
@@ -94,6 +101,7 @@ func toSaleResponse(s sales.Sale) saleResponse {
 		ReversalOf: uuidOrNil(s.ReversalOf),
 		Payment:    paymentResponse{AmountKobo: s.Payment.AmountKobo, Method: s.Payment.Method},
 		SellerID:   s.SellerID.String(), OtherSalesOnBill: s.OtherSalesOnBill,
+		BillID: s.BillID.String(),
 	}
 	for _, i := range s.Items {
 		out.Items = append(out.Items, saleItemResponse{

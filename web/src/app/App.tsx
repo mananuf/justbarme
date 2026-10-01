@@ -16,6 +16,7 @@ import { Dashboard } from '../pages/Dashboard';
 import { Sell } from '../pages/Sell';
 import { Stock } from '../pages/Stock';
 import { Tabs } from '../pages/Tabs';
+import { BillDetail } from '../pages/BillDetail';
 import { Team } from '../pages/Team';
 import { Reviews } from '../pages/Reviews';
 import { Expenses } from '../pages/Expenses';
@@ -95,6 +96,14 @@ export function App() {
           element={
             <RequireAuth requireBusiness>
               <Tabs />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/dashboard/tabs/:billId"
+          element={
+            <RequireAuth requireBusiness>
+              <BillDetail />
             </RequireAuth>
           }
         />

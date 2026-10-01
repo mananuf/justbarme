@@ -106,11 +106,26 @@ func (s *Service) ListCustomers(ctx context.Context, userID, businessID uuid.UUI
 	return out, nil
 }
 
-// OpenBill opens a new tab: a table, a named customer, both, or neither
-// (an empty walk-in tab opened before the first round -- distinct from
-// CreateSale's one-shot walk-in path, which creates and settles a bill in
-// a single call). tableID/customerID are uuid.Nil when not used.
-func (s *Service) OpenBill(ctx context.Context, userID, businessID, locationID, openedBy, tableID, customerID uuid.UUID) (Bill, error) {
+// OpenBill opens or resolves a tab: a table, a named customer, both, or
+// neither (an empty walk-in tab opened before the first round -- distinct
+// from CreateSale's one-shot walk-in path, which creates and settles a
+// bill in a single call). tableID/customerID are uuid.Nil when not used.
+//
+// Find-or-open, not blind creation (docs/PHASE_UNIFIED_SELL_BILLS.md):
+// picking an already-occupied table or an already-open customer tab
+// resumes that bill instead of opening a second, concurrent one for the
+// same table/customer -- a real gap in the original Phase 6 behavior, not
+// just a nicety for the new unified Sell flow. Table takes priority over
+// customer when both are given (a table's own occupancy is the more
+// concrete signal); this also makes OpenBill naturally idempotent for
+// that case on its own, with no key needed. The pure walk-in case (no
+// table, no customer) has no such key to resolve against, so
+// idempotencyKey is checked there instead -- uuid.Nil means "don't bother"
+// (an interactive, online open has no need for one).
+func (s *Service) OpenBill(
+	ctx context.Context, userID, businessID, locationID, openedBy, tableID, customerID uuid.UUID,
+	idempotencyKey uuid.UUID,
+) (Bill, error) {
 	id, err := newID()
 	if err != nil {
 		return Bill{}, err
@@ -124,21 +139,59 @@ func (s *Service) OpenBill(ctx context.Context, userID, businessID, locationID, 
 				}
 				return fmt.Errorf("look up table: %w", err)
 			}
-		}
-		if customerID != uuid.Nil {
+			if existing, err := q.GetOpenBillByTableID(ctx, sqlc.GetOpenBillByTableIDParams{
+				BusinessID: businessID, TableID: pgUUID(tableID),
+			}); err == nil {
+				result = toBill(existing)
+				return nil
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("resolve bill for table: %w", err)
+			}
+		} else if customerID != uuid.Nil {
 			if _, err := q.GetCustomerByID(ctx, sqlc.GetCustomerByIDParams{BusinessID: businessID, ID: customerID}); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return ErrCustomerNotFound
 				}
 				return fmt.Errorf("look up customer: %w", err)
 			}
+			if existing, err := q.GetOpenBillByCustomerID(ctx, sqlc.GetOpenBillByCustomerIDParams{
+				BusinessID: businessID, CustomerID: pgUUID(customerID),
+			}); err == nil {
+				result = toBill(existing)
+				return nil
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("resolve bill for customer: %w", err)
+			}
+		} else if idempotencyKey != uuid.Nil {
+			if existing, err := q.GetBillByIdempotencyKey(ctx, sqlc.GetBillByIdempotencyKeyParams{
+				BusinessID: businessID, IdempotencyKey: pgUUID(idempotencyKey),
+			}); err == nil {
+				result = toBill(existing)
+				return nil
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("check idempotency key: %w", err)
+			}
 		}
+
 		row, err := q.CreateBill(ctx, sqlc.CreateBillParams{
 			ID: id, BusinessID: businessID, LocationID: locationID, Status: BillStatusOpen,
 			OpenedBy: openedBy, OpenedAt: pgTimestamptz(time.Now()),
 			TableID: pgUUID(tableID), CustomerID: pgUUID(customerID),
+			IdempotencyKey: pgUUID(idempotencyKey),
 		})
 		if err != nil {
+			if pgErrorCode(err) == pgUniqueViolation {
+				// Lost a race against another request opening a walk-in
+				// bill with the same idempotency key between our check and
+				// our insert -- re-check and return the winner's row
+				// rather than surfacing a spurious conflict.
+				if existing, getErr := q.GetBillByIdempotencyKey(ctx, sqlc.GetBillByIdempotencyKeyParams{
+					BusinessID: businessID, IdempotencyKey: pgUUID(idempotencyKey),
+				}); getErr == nil {
+					result = toBill(existing)
+					return nil
+				}
+			}
 			return fmt.Errorf("open bill: %w", err)
 		}
 		result = toBill(row)
@@ -421,7 +474,13 @@ func (s *Service) CloseBill(ctx context.Context, userID, businessID, billID uuid
 // RecordPayment posts an immutable partial or full payment against a
 // bill's outstanding balance. Overpayment is rejected in this MVP
 // (docs/ARCHITECTURE.md §8.3's explicit "Reject overpayment").
-func (s *Service) RecordPayment(ctx context.Context, userID, businessID, billID, actorID uuid.UUID, amountKobo int64, method string) (Payment, error) {
+// idempotencyKey makes a retried/replayed POST safe -- uuid.Nil skips the
+// check (an interactive, online payment has no need for one), same
+// opt-in shape OpenBill's walk-in path uses.
+func (s *Service) RecordPayment(
+	ctx context.Context, userID, businessID, billID, actorID uuid.UUID,
+	amountKobo int64, method string, idempotencyKey uuid.UUID,
+) (Payment, error) {
 	if amountKobo <= 0 {
 		return Payment{}, ErrInvalidPaymentAmt
 	}
@@ -432,6 +491,17 @@ func (s *Service) RecordPayment(ctx context.Context, userID, businessID, billID,
 
 	var result Payment
 	err = store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		if idempotencyKey != uuid.Nil {
+			if existing, err := q.GetPaymentByIdempotencyKey(ctx, sqlc.GetPaymentByIdempotencyKeyParams{
+				BusinessID: businessID, IdempotencyKey: pgUUID(idempotencyKey),
+			}); err == nil {
+				result = toPayment(existing)
+				return nil
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("check idempotency key: %w", err)
+			}
+		}
+
 		bill, err := q.GetBillForUpdate(ctx, sqlc.GetBillForUpdateParams{BusinessID: businessID, ID: billID})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -449,6 +519,7 @@ func (s *Service) RecordPayment(ctx context.Context, userID, businessID, billID,
 		row, err := q.CreatePayment(ctx, sqlc.CreatePaymentParams{
 			ID: paymentID, BusinessID: businessID, BillID: billID,
 			AmountKobo: amountKobo, Method: method, ActorID: actorID,
+			IdempotencyKey: pgUUID(idempotencyKey),
 		})
 		if err != nil {
 			return fmt.Errorf("record payment: %w", err)
@@ -711,6 +782,51 @@ func (s *Service) ListOutstandingBills(ctx context.Context, userID, businessID u
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list outstanding bills: %w", err)
+	}
+	return out, nil
+}
+
+// ListBillsByStatus returns every bill in exactly one status, most
+// recently opened first -- backs the unified Bills screen's status filter
+// (docs/PHASE_UNIFIED_SELL_BILLS.md), which unlike ListOpenBills/
+// ListOutstandingBills needs to show settled/void history too, not just
+// what's currently actionable.
+func (s *Service) ListBillsByStatus(ctx context.Context, userID, businessID uuid.UUID, status string) ([]Bill, error) {
+	var out []Bill
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		rows, err := q.ListBillsByStatus(ctx, sqlc.ListBillsByStatusParams{BusinessID: businessID, Status: status})
+		if err != nil {
+			return err
+		}
+		out = make([]Bill, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, toBill(r))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list bills by status: %w", err)
+	}
+	return out, nil
+}
+
+// ListAllBills returns every bill regardless of status, most recently
+// opened first -- the unified Bills screen's "All" filter.
+func (s *Service) ListAllBills(ctx context.Context, userID, businessID uuid.UUID) ([]Bill, error) {
+	var out []Bill
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		rows, err := q.ListAllBills(ctx, businessID)
+		if err != nil {
+			return err
+		}
+		out = make([]Bill, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, toBill(r))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list all bills: %w", err)
 	}
 	return out, nil
 }

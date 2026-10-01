@@ -24,17 +24,18 @@ type ActivityFlag struct {
 }
 
 type Bill struct {
-	ID          uuid.UUID          `json:"id"`
-	BusinessID  uuid.UUID          `json:"business_id"`
-	LocationID  uuid.UUID          `json:"location_id"`
-	Status      string             `json:"status"`
-	OpenedBy    uuid.UUID          `json:"opened_by"`
-	OpenedAt    pgtype.Timestamptz `json:"opened_at"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-	TableID     pgtype.UUID        `json:"table_id"`
-	CustomerID  pgtype.UUID        `json:"customer_id"`
-	BalanceKobo int64              `json:"balance_kobo"`
+	ID             uuid.UUID          `json:"id"`
+	BusinessID     uuid.UUID          `json:"business_id"`
+	LocationID     uuid.UUID          `json:"location_id"`
+	Status         string             `json:"status"`
+	OpenedBy       uuid.UUID          `json:"opened_by"`
+	OpenedAt       pgtype.Timestamptz `json:"opened_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	TableID        pgtype.UUID        `json:"table_id"`
+	CustomerID     pgtype.UUID        `json:"customer_id"`
+	BalanceKobo    int64              `json:"balance_kobo"`
+	IdempotencyKey pgtype.UUID        `json:"idempotency_key"`
 }
 
 type BillShareLink struct {
@@ -273,6 +274,7 @@ type Payment struct {
 	ActorID             uuid.UUID          `json:"actor_id"`
 	ReversalOfPaymentID pgtype.UUID        `json:"reversal_of_payment_id"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	IdempotencyKey      pgtype.UUID        `json:"idempotency_key"`
 }
 
 type PlatformAuditLog struct {

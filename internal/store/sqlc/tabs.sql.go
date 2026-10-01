@@ -113,7 +113,7 @@ func (q *Queries) CreateTable(ctx context.Context, arg CreateTableParams) (Table
 }
 
 const getBillForUpdate = `-- name: GetBillForUpdate :one
-SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo FROM bills WHERE business_id = $1 AND id = $2 FOR UPDATE
+SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo, idempotency_key FROM bills WHERE business_id = $1 AND id = $2 FOR UPDATE
 `
 
 type GetBillForUpdateParams struct {
@@ -136,6 +136,7 @@ func (q *Queries) GetBillForUpdate(ctx context.Context, arg GetBillForUpdatePara
 		&i.TableID,
 		&i.CustomerID,
 		&i.BalanceKobo,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -166,7 +167,7 @@ func (q *Queries) GetCustomerByID(ctx context.Context, arg GetCustomerByIDParams
 }
 
 const getPaymentByID = `-- name: GetPaymentByID :one
-SELECT id, business_id, bill_id, amount_kobo, method, actor_id, reversal_of_payment_id, created_at FROM payments WHERE business_id = $1 AND id = $2
+SELECT id, business_id, bill_id, amount_kobo, method, actor_id, reversal_of_payment_id, created_at, idempotency_key FROM payments WHERE business_id = $1 AND id = $2
 `
 
 type GetPaymentByIDParams struct {
@@ -186,12 +187,13 @@ func (q *Queries) GetPaymentByID(ctx context.Context, arg GetPaymentByIDParams) 
 		&i.ActorID,
 		&i.ReversalOfPaymentID,
 		&i.CreatedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
 
 const getReversalOfPayment = `-- name: GetReversalOfPayment :one
-SELECT id, business_id, bill_id, amount_kobo, method, actor_id, reversal_of_payment_id, created_at FROM payments WHERE business_id = $1 AND reversal_of_payment_id = $2
+SELECT id, business_id, bill_id, amount_kobo, method, actor_id, reversal_of_payment_id, created_at, idempotency_key FROM payments WHERE business_id = $1 AND reversal_of_payment_id = $2
 `
 
 type GetReversalOfPaymentParams struct {
@@ -211,6 +213,7 @@ func (q *Queries) GetReversalOfPayment(ctx context.Context, arg GetReversalOfPay
 		&i.ActorID,
 		&i.ReversalOfPaymentID,
 		&i.CreatedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -271,7 +274,7 @@ func (q *Queries) ListCustomers(ctx context.Context, businessID uuid.UUID) ([]Cu
 }
 
 const listOpenBills = `-- name: ListOpenBills :many
-SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo FROM bills WHERE business_id = $1 AND status IN ('open', 'closed_unpaid') ORDER BY opened_at
+SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo, idempotency_key FROM bills WHERE business_id = $1 AND status IN ('open', 'closed_unpaid') ORDER BY opened_at
 `
 
 func (q *Queries) ListOpenBills(ctx context.Context, businessID uuid.UUID) ([]Bill, error) {
@@ -295,6 +298,7 @@ func (q *Queries) ListOpenBills(ctx context.Context, businessID uuid.UUID) ([]Bi
 			&i.TableID,
 			&i.CustomerID,
 			&i.BalanceKobo,
+			&i.IdempotencyKey,
 		); err != nil {
 			return nil, err
 		}
@@ -307,7 +311,7 @@ func (q *Queries) ListOpenBills(ctx context.Context, businessID uuid.UUID) ([]Bi
 }
 
 const listOutstandingBills = `-- name: ListOutstandingBills :many
-SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo FROM bills WHERE business_id = $1 AND balance_kobo <> 0 ORDER BY opened_at
+SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo, idempotency_key FROM bills WHERE business_id = $1 AND balance_kobo <> 0 ORDER BY opened_at
 `
 
 func (q *Queries) ListOutstandingBills(ctx context.Context, businessID uuid.UUID) ([]Bill, error) {
@@ -331,6 +335,7 @@ func (q *Queries) ListOutstandingBills(ctx context.Context, businessID uuid.UUID
 			&i.TableID,
 			&i.CustomerID,
 			&i.BalanceKobo,
+			&i.IdempotencyKey,
 		); err != nil {
 			return nil, err
 		}
@@ -527,7 +532,7 @@ func (q *Queries) SumWriteOffsByBillID(ctx context.Context, arg SumWriteOffsByBi
 const updateBillBalanceAndStatus = `-- name: UpdateBillBalanceAndStatus :one
 UPDATE bills SET balance_kobo = $3, status = $4, updated_at = now()
     WHERE business_id = $1 AND id = $2
-RETURNING id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo
+RETURNING id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo, idempotency_key
 `
 
 type UpdateBillBalanceAndStatusParams struct {
@@ -557,6 +562,7 @@ func (q *Queries) UpdateBillBalanceAndStatus(ctx context.Context, arg UpdateBill
 		&i.TableID,
 		&i.CustomerID,
 		&i.BalanceKobo,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }

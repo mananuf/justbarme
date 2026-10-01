@@ -355,11 +355,86 @@ receipt. Full design confirmed in conversation; the concrete shape below.
   cleaned up via the RLS-aware `SET LOCAL ROLE jbm_app` transaction
   pattern afterward.
 
+## Unified Sell/Bills
+
+Merges Quick Sell and Bills into one screen/mechanism for recording any
+sale — a deliberate, user-requested usability change triggered by real
+pilot feedback (a staff member conflating the two), **not** part of
+`docs/`'s frozen plan. Full design record and the live-verification
+transcript live in `docs/PHASE_UNIFIED_SELL_BILLS.md` — read it before
+extending any of this. The guiding principle, stated directly by the
+project owner: *"a sale is always a sale, users need to have one view for
+that... this is built for non technical/savvy people"* — simplicity for
+end users outranks keeping the walk-in/tab distinction visible, even
+though that distinction still exists underneath.
+
+- **`Service.OpenBill` is now find-or-open, not blind creation.** Picking
+  an already-occupied table or an already-open customer tab resumes that
+  bill instead of opening a second, concurrent one for the same table —
+  closing a real latent gap in the original Phase 6 behavior, not just a
+  nicety for the new flow. `OpenBill`'s walk-in case (no table, no
+  customer) gained its own optional `idempotencyKey` (new nullable
+  `bills.idempotency_key`, migration `000030`) for the same
+  retried-POST-is-safe reason `sales.idempotency_key` exists.
+  `Service.RecordPayment` gained the identical optional-idempotency-key
+  contract (`payments.idempotency_key`, same migration) — before this,
+  neither method could detect a replayed request, unlike `AddSaleRound`/
+  `RemoveBillItem`, which already reused `sales.idempotency_key` via
+  `postSaleRound`.
+- **`GET /api/v1/bills?status=`** now accepts any real bill status plus
+  `all`, not just the pre-existing `open`/`outstanding` shortcuts —
+  backing the Bills screen's filter (`Service.ListBillsByStatus`/
+  `ListAllBills`).
+- **Every sale now carries its `bill_id` in the API response**
+  (`saleResponse.BillID`, always populated) — including `CreateSale`'s
+  one-shot walk-in path, which already wrapped a bill around itself
+  internally but never exposed it. This is what lets the frontend send any
+  completed sale, walk-in or tab round alike, to the same bill detail page
+  as its "here's what you just recorded" view.
+- **Frontend is three pages, not two.** `Sell.tsx` is the one entry point
+  for starting any sale: a table picker (default "No table") and a
+  customer picker (default "Walk-in customer", with a one-line
+  explanation) are always both shown — never a mode toggle the user has to
+  understand. Leaving both at their defaults keeps using the original,
+  offline-safe one-shot `createSale` call (`pendingSales`/`salesSync.ts`
+  unchanged); picking either turns it into a real, nameable bill via the
+  new find-or-open `openBill` and switches the footer to "Start tab"
+  instead of asking for payment up front. Either path ends on
+  `/dashboard/tabs/{billId}` — the new `BillDetail.tsx`, a full-page
+  receipt-style route (not a modal) carrying everything the old inline
+  Tabs.tsx detail panel had (add/adjust items, record payment, share,
+  close/void/write-off, rounds history with `ActivityDetailSheet`).
+  `Tabs.tsx` itself shrank to a pure Bills *list* (status filter, rows
+  linking into that detail route, a "+ New sale" button to `Sell.tsx`).
+  `web/src/lib/billDisplay.ts` (`billLabel`/`statusLabel`) is shared by
+  both so a bill reads the same way in the list and the detail page.
+  `CartPanel` gained one new prop, `showFooterWhenEmpty`, so "Start tab"
+  can render on a still-empty cart (seat a table, order later) without
+  changing its default behavior for every other existing caller.
+- **Tabs/table credit tabs are still online-only** — this phase did not
+  add offline queuing for bill actions (open/round/payment/close); only
+  the walk-in path's existing offline guarantee carries over, now simply
+  reachable from the same screen. See the phase doc's "Not verified yet /
+  real follow-ups" section for why that was a deliberate scope cut for
+  this pass, not an oversight.
+- **Verified live** against a running backend via curl: opening a bill
+  against a real table twice returned the identical bill the second time;
+  a one-shot sale's response carried a real `bill_id` whose `GET
+  /bills/{id}` showed a normal `settled` bill with one round and one
+  payment; `?status=settled`/`?status=all` returned the right rows and an
+  invalid status was rejected with `400`; a replayed payment idempotency
+  key produced exactly one payment, not two. Backend: full `go test
+  ./cmd/... ./internal/...` passes. Frontend: full `npm run check`
+  (format, lint, the existing 39 tests including `Sell.test.tsx`'s
+  catalogue-cache coverage, and a production build) passes. **Not done**:
+  an actual browser/Playwright pass over the rewritten pages — same named
+  gap the original `Sell.tsx` already carried.
+
 ## Frontend architecture
 
 `web/` is a single Vite + React + TypeScript + Tailwind v4 PWA that carries **both** the public marketing/onboarding site and the authenticated app shell — there is no separate marketing project. It used to be split across two stacks (this Vite app plus a Next.js prototype in `marketing/`, built from a v0 export template); that Next.js app has been retired and its design system (brand tokens, fonts, and reusable components) ported in here. The v0 template it was originally adapted from was kept read-only at `agentic-build-and-orchestrate-ai-agents-while-you-sleep/` at the repo root purely as a design reference; it has since been deleted (its design system was already fully ported into `web/` by this point, so nothing was lost) — don't expect to find it, and never resurrect a second frontend stack from a copy of it.
 
-Routes (`src/app/App.tsx`, `react-router-dom`): `/` (landing page), `/login`, `/signup`, `/invite/:token` (public invitation landing page, see the Invitations and WhatsApp messaging section), `/onboarding` (4-step wizard — step 1 is a real `POST /businesses`, steps 2-3 are still a UI preview of product/price setup pending Phase 3), `/install` (PWA install guide that performs real device enrollment), `/dashboard`, `/dashboard/sell`, `/dashboard/stock`, `/dashboard/tabs`, `/dashboard/team`, `/dashboard/reviews` (owner-only, see the Phase 4, revisited section), `/dashboard/expenses` (both roles), and `/dashboard/activity`/`/dashboard/reports` (owner-only, see the Phase 8 section) (the app shell — auth, business identity and offline-lease status are real). The public pages (`/`, `/login`, `/signup`, `/invite/:token`) need no auth; `/onboarding`, `/install`, `/dashboard*` are wrapped in `RequireAuth`, and the dashboard routes additionally pass `requireBusiness` (see below). The public pages (`/`, `/onboarding`, `/install`) have no offline requirement; only the `/dashboard*` app screens do, per `docs/ARCHITECTURE.md`.
+Routes (`src/app/App.tsx`, `react-router-dom`): `/` (landing page), `/login`, `/signup`, `/invite/:token` (public invitation landing page, see the Invitations and WhatsApp messaging section), `/onboarding` (4-step wizard — step 1 is a real `POST /businesses`, steps 2-3 are still a UI preview of product/price setup pending Phase 3), `/install` (PWA install guide that performs real device enrollment), `/dashboard`, `/dashboard/sell` (the unified Sell flow, see the Unified Sell/Bills section), `/dashboard/stock`, `/dashboard/tabs` (the Bills list) and `/dashboard/tabs/:billId` (a bill's full-page receipt-style detail), `/dashboard/team`, `/dashboard/reviews` (owner-only, see the Phase 4, revisited section), `/dashboard/expenses` (both roles), and `/dashboard/activity`/`/dashboard/reports` (owner-only, see the Phase 8 section) (the app shell — auth, business identity and offline-lease status are real). The public pages (`/`, `/login`, `/signup`, `/invite/:token`) need no auth; `/onboarding`, `/install`, `/dashboard*` are wrapped in `RequireAuth`, and the dashboard routes additionally pass `requireBusiness` (see below). The public pages (`/`, `/onboarding`, `/install`) have no offline requirement; only the `/dashboard*` app screens do, per `docs/ARCHITECTURE.md`.
 
 Phase 2 frontend wiring (login, business creation, device enrollment) is real and hits the Go backend:
 

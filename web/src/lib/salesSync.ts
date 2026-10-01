@@ -1,8 +1,45 @@
-import { createSale } from '../api/sales';
+import { createSale, type Sale } from '../api/sales';
 import { db, type PendingSale } from './db';
 
 export async function queuePendingSale(sale: PendingSale): Promise<void> {
   await db.pendingSales.put(sale);
+}
+
+// trySyncPendingSale attempts to post one already-queued sale right away
+// (called immediately after queuePendingSale, while the device is believed
+// online) and returns the posted Sale on success, or null if it couldn't
+// be posted -- in which case the row is left pending for the ordinary
+// flushPendingSales path to pick up later, exactly as if this call had
+// never been attempted. This exists purely so the unified Sell flow
+// (docs/PHASE_UNIFIED_SELL_BILLS.md) can navigate straight to the real
+// bill a walk-in sale posts against when the network cooperates, without
+// weakening the "written to IndexedDB before any network call" guarantee
+// queuePendingSale's caller already satisfies.
+export async function trySyncPendingSale(
+  sale: PendingSale,
+  businessId: string,
+  csrfToken: string,
+): Promise<Sale | null> {
+  try {
+    const posted = await createSale(
+      {
+        idempotencyKey: sale.idempotencyKey,
+        occurredAt: sale.occurredAt,
+        items: sale.items.map((i) => ({
+          variantId: i.variantId,
+          quantity: i.quantity,
+          unitPriceKobo: i.unitPriceKobo,
+        })),
+        payment: sale.payment,
+      },
+      businessId,
+      csrfToken,
+    );
+    await db.pendingSales.delete(sale.idempotencyKey);
+    return posted;
+  } catch {
+    return null;
+  }
 }
 
 // flushPendingSales attempts to post every still-pending sale for

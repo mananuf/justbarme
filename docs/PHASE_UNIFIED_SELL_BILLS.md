@@ -1,10 +1,18 @@
 # Unified Sell/Bills, and real offline support for tabs
 
-**Status:** Design confirmed in conversation, not yet built. This doc is the
-record of that conversation before any code changes, per the project's
-working agreement (design confirmed, then implemented) and the newly
-established rule that every new feature/fix branches off `staging` and is
-run there before merging. Branch: `feature/unified-sell-bills`.
+**Status:** Built and verified live against a running backend (see
+"Verification" at the end) — one scope narrowing from the original design
+below: the single-device offline queue for bill actions (open/round/
+payment/close) was **not** built in this pass. The walk-in path's existing
+`pendingSales`/`salesSync.ts` queue turned out to already cover the
+dominant real case once every sale was given a navigable bill behind it
+(see "What actually shipped" below) — building a second, more complex
+multi-action queue on top of that, untested, in the same pass would have
+cut against this codebase's "verified live end-to-end" discipline more
+than it would have delivered. It remains the next real step if a table/
+customer tab specifically (not a plain walk-in) needs to survive going
+offline mid-session — tracked here, not forgotten. Branch:
+`feature/unified-sell-bills`.
 **Depends on:** Phase 5 (`internal/sales`' walk-in selling, `CreateSale`,
 `pendingSales`/`salesSync.ts`) and Phase 6 (`internal/sales`' tab/table/
 customer/payment methods, `docs/PHASE_TABS_CREDIT.md`). Read both before
@@ -187,6 +195,78 @@ Checked against the actual code before writing this (not assumed):
   two entry modes (new vs. browse), not two different pages with different
   underlying guarantees.
 
+## What actually shipped
+
+- **Migration `000030`**: `bills.idempotency_key` / `payments.idempotency_key`
+  (both nullable, partial unique index per business) — closing the real gap
+  found by reading `tabs.go` before writing any code: `OpenBill`/
+  `RecordPayment` had no idempotency contract, unlike `AddSaleRound`/
+  `RemoveBillItem`, which already reuse `sales.idempotency_key`.
+- **`Service.OpenBill` is now find-or-open**, not blind creation: a
+  non-`uuid.Nil` `tableID` resolves to that table's existing `open`/
+  `closed_unpaid` bill if one exists (via `GetOpenBillByTableID`), same for
+  `customerID`; only the plain walk-in case (neither) consults
+  `idempotencyKey`. Covered by
+  `TestOpenBillResolvesToExistingOpenBillForSameTable`,
+  `...ForSameCustomer`, and `TestOpenBillWalkInIsIdempotent`, plus a live
+  curl pass confirming a second open against the same table returns the
+  identical bill.
+- **`Service.RecordPayment` gained the same idempotency-key contract** --
+  `TestRecordPaymentIsIdempotent` plus a live curl replay confirming a
+  repeated payment doesn't double-apply.
+- **`GET /api/v1/bills?status=`** now accepts any real bill status (not
+  just the pre-existing `open`/`outstanding` shortcuts) plus a new `all`,
+  backing the Bills screen's filter. `ListBillsByStatus`/`ListAllBills` are
+  new `Service`/sqlc methods.
+- **`saleResponse` (and the frontend `Sale` type) gained `bill_id`**,
+  always populated -- every sale, including `CreateSale`'s one-shot
+  walk-in path, already posted against a real bill under the hood; this is
+  what lets the frontend send *any* completed sale to the same
+  `/dashboard/tabs/{bill_id}` page as its "here's what you just recorded"
+  view, without needing two different confirmation screens.
+- **Frontend is now three pages instead of two**: `Sell.tsx` is the one
+  entry point for starting any sale -- a table picker (defaulting to "No
+  table") and a customer picker (defaulting to "Walk-in customer", with a
+  one-line explanation of what that means) are always both shown, never a
+  mode toggle; a product grid/cart below builds the first order. Leaving
+  both pickers at their defaults keeps using the original one-shot,
+  offline-safe `createSale` call (`pendingSales`/`salesSync.ts`,
+  unchanged) and shows "Complete Sale"; picking either turns it into a
+  real, nameable bill via the new find-or-open `openBill` and shows "Start
+  tab" instead (online-only, unchanged from Phase 6). Either path ends on
+  `/dashboard/tabs/{billId}` -- the new `BillDetail.tsx`, a full-page
+  receipt-style view (not a modal) carrying everything the old inline
+  Tabs.tsx detail panel had: add/adjust items, record a payment, share,
+  close/void/write-off, and the rounds history with its existing
+  `ActivityDetailSheet` hookup. `Tabs.tsx` itself shrank to a pure Bills
+  *list*: a status filter (`web/src/lib/billDisplay.ts`'s `billLabel`/
+  `statusLabel` shared with the detail page), rows tapping through to that
+  detail route, and a "+ New sale" button to `Sell.tsx`. `CartPanel`
+  gained one new prop, `showFooterWhenEmpty`, so "Start tab" can render on
+  a still-empty cart (seat a table, order later) without weakening its
+  existing "only show the footer once there's a line" default for every
+  other caller.
+- **The Quick Sell / Bills distinction is gone from the UI.** Nothing in
+  the app presents them as two tools or asks the user to choose a mode --
+  the bottom nav's "Sell" and "Bills" buttons now point at, respectively,
+  "start a new one" and "look up an existing one," both of the same thing.
+
+## Verification
+
+Live, against a running `go run ./cmd/api` with a disposable seeded
+business, cleaned up afterward via the RLS-aware `SET LOCAL ROLE jbm_app`
+transaction pattern: opening a bill against a real table twice in a row
+returned the identical bill the second time (find-or-open); a one-shot
+`POST /sales` response carried a real `bill_id`, and `GET /bills/{that
+id}` showed it as a normal `settled` bill with one round and one payment;
+`GET /bills?status=settled`/`?status=all` returned the right rows and
+`?status=bogus` was rejected with `400`; a round posted and a payment
+recorded against a real tab, replayed with the same idempotency key,
+produced exactly one payment and a correct zero balance rather than
+double-charging. Backend: `go test ./cmd/... ./internal/...` (all
+packages) and the frontend's full `npm run check` (format, lint, 39
+existing + preserved tests, and a production build) all pass.
+
 ## Explicitly out of scope for this phase
 
 - The generic Phase 4 multi-device sync protocol — still deliberately
@@ -203,26 +283,26 @@ Checked against the actual code before writing this (not assumed):
 - Any change to `bills:write_off`/`payments:reverse`'s owner-only,
   online-only status.
 
-## Verification plan (before calling this done)
+## Not verified yet / real follow-ups
 
-Same discipline every other phase in this file was held to:
-
-- Live, single-device: start a sale with defaults (walk-in path), confirm
-  it still posts via the existing one-shot call; start a sale against a
-  real table, add two rounds, go offline mid-session (airplane mode),
-  keep adding rounds and record a partial payment, reconnect, confirm the
-  bill on the server reflects every queued action in the right order and
-  the balance is correct.
-- Pick an already-open table a second time (same device, same session)
-  and confirm it resumes the existing bill rather than opening a second
-  one.
-- Force a real conflict: open the same table's bill on two sessions, go
-  offline on one, remove an item on the other (changing what's available),
-  reconnect the offline one with a queued removal that no longer fits —
-  confirm it surfaces as "needs attention" locally rather than corrupting
-  the bill or silently vanishing.
-- Bills list filters correctly by status; the full-page detail view opens
-  correctly via direct link/back button both for an owner and for staff
-  scoped to their own view (reuse `mayOpenActivityEntry`-style scoping if
-  Staff shouldn't see every bill's detail — confirm this against
-  `bills:read`'s actual current scope before assuming either way).
+- **No actual browser/Playwright pass over the rewritten `Sell.tsx`/
+  `BillDetail.tsx`/`Tabs.tsx`** — only the backend they talk to was
+  live-verified via curl this pass, plus the existing Vitest suite
+  (unchanged assertions, still passing against the rewritten `Sell.tsx`).
+  Same named gap this codebase already carries for the original
+  `Sell.tsx`/`salesSync.ts` and OAuth's frontend.
+- **Bills list access isn't scoped per-Staff** — `GET /bills` still uses
+  the plain `bills:read` capability (both roles, unscoped), same as before
+  this phase; nothing here added the kind of actor-scoping
+  `mayOpenActivityEntry` gives the Activity feed. Worth a deliberate
+  decision (not an oversight to just copy that pattern over) before
+  assuming either way.
+- **Offline support for table/customer tabs themselves** — still
+  online-only, unchanged from Phase 6. The walk-in path's offline
+  guarantee is real and shipped; the queue-and-flush design in this doc's
+  earlier sections for bill actions specifically was not built. Revisit if
+  real pilot usage shows a tab (not a walk-in) needing to survive going
+  offline mid-session.
+- The conflict-surfacing design ("needs attention" rather than silent
+  corruption) described earlier in this doc only applies once that queue
+  exists — there is nothing to verify yet.

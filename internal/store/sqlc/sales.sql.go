@@ -13,20 +13,21 @@ import (
 )
 
 const createBill = `-- name: CreateBill :one
-INSERT INTO bills (id, business_id, location_id, status, opened_by, opened_at, table_id, customer_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo
+INSERT INTO bills (id, business_id, location_id, status, opened_by, opened_at, table_id, customer_id, idempotency_key)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo, idempotency_key
 `
 
 type CreateBillParams struct {
-	ID         uuid.UUID          `json:"id"`
-	BusinessID uuid.UUID          `json:"business_id"`
-	LocationID uuid.UUID          `json:"location_id"`
-	Status     string             `json:"status"`
-	OpenedBy   uuid.UUID          `json:"opened_by"`
-	OpenedAt   pgtype.Timestamptz `json:"opened_at"`
-	TableID    pgtype.UUID        `json:"table_id"`
-	CustomerID pgtype.UUID        `json:"customer_id"`
+	ID             uuid.UUID          `json:"id"`
+	BusinessID     uuid.UUID          `json:"business_id"`
+	LocationID     uuid.UUID          `json:"location_id"`
+	Status         string             `json:"status"`
+	OpenedBy       uuid.UUID          `json:"opened_by"`
+	OpenedAt       pgtype.Timestamptz `json:"opened_at"`
+	TableID        pgtype.UUID        `json:"table_id"`
+	CustomerID     pgtype.UUID        `json:"customer_id"`
+	IdempotencyKey pgtype.UUID        `json:"idempotency_key"`
 }
 
 func (q *Queries) CreateBill(ctx context.Context, arg CreateBillParams) (Bill, error) {
@@ -39,6 +40,7 @@ func (q *Queries) CreateBill(ctx context.Context, arg CreateBillParams) (Bill, e
 		arg.OpenedAt,
 		arg.TableID,
 		arg.CustomerID,
+		arg.IdempotencyKey,
 	)
 	var i Bill
 	err := row.Scan(
@@ -53,6 +55,7 @@ func (q *Queries) CreateBill(ctx context.Context, arg CreateBillParams) (Bill, e
 		&i.TableID,
 		&i.CustomerID,
 		&i.BalanceKobo,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -95,9 +98,9 @@ func (q *Queries) CreateInventoryEventForSale(ctx context.Context, arg CreateInv
 }
 
 const createPayment = `-- name: CreatePayment :one
-INSERT INTO payments (id, business_id, bill_id, amount_kobo, method, actor_id, reversal_of_payment_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, business_id, bill_id, amount_kobo, method, actor_id, reversal_of_payment_id, created_at
+INSERT INTO payments (id, business_id, bill_id, amount_kobo, method, actor_id, reversal_of_payment_id, idempotency_key)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, business_id, bill_id, amount_kobo, method, actor_id, reversal_of_payment_id, created_at, idempotency_key
 `
 
 type CreatePaymentParams struct {
@@ -108,6 +111,7 @@ type CreatePaymentParams struct {
 	Method              string      `json:"method"`
 	ActorID             uuid.UUID   `json:"actor_id"`
 	ReversalOfPaymentID pgtype.UUID `json:"reversal_of_payment_id"`
+	IdempotencyKey      pgtype.UUID `json:"idempotency_key"`
 }
 
 func (q *Queries) CreatePayment(ctx context.Context, arg CreatePaymentParams) (Payment, error) {
@@ -119,6 +123,7 @@ func (q *Queries) CreatePayment(ctx context.Context, arg CreatePaymentParams) (P
 		arg.Method,
 		arg.ActorID,
 		arg.ReversalOfPaymentID,
+		arg.IdempotencyKey,
 	)
 	var i Payment
 	err := row.Scan(
@@ -130,6 +135,7 @@ func (q *Queries) CreatePayment(ctx context.Context, arg CreatePaymentParams) (P
 		&i.ActorID,
 		&i.ReversalOfPaymentID,
 		&i.CreatedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -262,7 +268,7 @@ func (q *Queries) CreateSaleReview(ctx context.Context, arg CreateSaleReviewPara
 }
 
 const getBillByID = `-- name: GetBillByID :one
-SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo FROM bills WHERE business_id = $1 AND id = $2
+SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo, idempotency_key FROM bills WHERE business_id = $1 AND id = $2
 `
 
 type GetBillByIDParams struct {
@@ -285,6 +291,139 @@ func (q *Queries) GetBillByID(ctx context.Context, arg GetBillByIDParams) (Bill,
 		&i.TableID,
 		&i.CustomerID,
 		&i.BalanceKobo,
+		&i.IdempotencyKey,
+	)
+	return i, err
+}
+
+const getBillByIdempotencyKey = `-- name: GetBillByIdempotencyKey :one
+SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo, idempotency_key FROM bills WHERE business_id = $1 AND idempotency_key = $2
+`
+
+type GetBillByIdempotencyKeyParams struct {
+	BusinessID     uuid.UUID   `json:"business_id"`
+	IdempotencyKey pgtype.UUID `json:"idempotency_key"`
+}
+
+// Backs OpenBill's walk-in path (no table, no customer to resolve
+// against) -- the same retried-POST-is-safe contract
+// GetSaleByIdempotencyKey already gives sales.
+func (q *Queries) GetBillByIdempotencyKey(ctx context.Context, arg GetBillByIdempotencyKeyParams) (Bill, error) {
+	row := q.db.QueryRow(ctx, getBillByIdempotencyKey, arg.BusinessID, arg.IdempotencyKey)
+	var i Bill
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.LocationID,
+		&i.Status,
+		&i.OpenedBy,
+		&i.OpenedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.TableID,
+		&i.CustomerID,
+		&i.BalanceKobo,
+		&i.IdempotencyKey,
+	)
+	return i, err
+}
+
+const getOpenBillByCustomerID = `-- name: GetOpenBillByCustomerID :one
+SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo, idempotency_key FROM bills
+WHERE business_id = $1 AND customer_id = $2 AND status IN ('open', 'closed_unpaid')
+ORDER BY opened_at DESC LIMIT 1
+`
+
+type GetOpenBillByCustomerIDParams struct {
+	BusinessID uuid.UUID   `json:"business_id"`
+	CustomerID pgtype.UUID `json:"customer_id"`
+}
+
+// Same find-or-open reasoning as GetOpenBillByTableID, keyed by customer
+// instead of table (a named credit tab with no table attached).
+func (q *Queries) GetOpenBillByCustomerID(ctx context.Context, arg GetOpenBillByCustomerIDParams) (Bill, error) {
+	row := q.db.QueryRow(ctx, getOpenBillByCustomerID, arg.BusinessID, arg.CustomerID)
+	var i Bill
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.LocationID,
+		&i.Status,
+		&i.OpenedBy,
+		&i.OpenedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.TableID,
+		&i.CustomerID,
+		&i.BalanceKobo,
+		&i.IdempotencyKey,
+	)
+	return i, err
+}
+
+const getOpenBillByTableID = `-- name: GetOpenBillByTableID :one
+SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo, idempotency_key FROM bills
+WHERE business_id = $1 AND table_id = $2 AND status IN ('open', 'closed_unpaid')
+ORDER BY opened_at DESC LIMIT 1
+`
+
+type GetOpenBillByTableIDParams struct {
+	BusinessID uuid.UUID   `json:"business_id"`
+	TableID    pgtype.UUID `json:"table_id"`
+}
+
+// Find-or-open: the most recently opened non-terminal bill against a
+// table, so picking an already-occupied table resumes its tab instead of
+// opening a second, concurrent one. There is no DB constraint today
+// preventing two non-terminal bills on the same table (a pre-existing gap,
+// not introduced here) -- ORDER BY opened_at DESC LIMIT 1 is a pragmatic
+// "most recent wins" choice if that ever happens, not a correctness
+// guarantee.
+func (q *Queries) GetOpenBillByTableID(ctx context.Context, arg GetOpenBillByTableIDParams) (Bill, error) {
+	row := q.db.QueryRow(ctx, getOpenBillByTableID, arg.BusinessID, arg.TableID)
+	var i Bill
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.LocationID,
+		&i.Status,
+		&i.OpenedBy,
+		&i.OpenedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.TableID,
+		&i.CustomerID,
+		&i.BalanceKobo,
+		&i.IdempotencyKey,
+	)
+	return i, err
+}
+
+const getPaymentByIdempotencyKey = `-- name: GetPaymentByIdempotencyKey :one
+SELECT id, business_id, bill_id, amount_kobo, method, actor_id, reversal_of_payment_id, created_at, idempotency_key FROM payments WHERE business_id = $1 AND idempotency_key = $2
+`
+
+type GetPaymentByIdempotencyKeyParams struct {
+	BusinessID     uuid.UUID   `json:"business_id"`
+	IdempotencyKey pgtype.UUID `json:"idempotency_key"`
+}
+
+// Same retried-POST-is-safe contract as GetSaleByIdempotencyKey, for
+// RecordPayment -- a queued offline payment replayed after it already
+// landed returns the payment already posted rather than double-charging.
+func (q *Queries) GetPaymentByIdempotencyKey(ctx context.Context, arg GetPaymentByIdempotencyKeyParams) (Payment, error) {
+	row := q.db.QueryRow(ctx, getPaymentByIdempotencyKey, arg.BusinessID, arg.IdempotencyKey)
+	var i Payment
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.BillID,
+		&i.AmountKobo,
+		&i.Method,
+		&i.ActorID,
+		&i.ReversalOfPaymentID,
+		&i.CreatedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -370,8 +509,91 @@ func (q *Queries) GetSaleByIdempotencyKey(ctx context.Context, arg GetSaleByIdem
 	return i, err
 }
 
+const listAllBills = `-- name: ListAllBills :many
+SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo, idempotency_key FROM bills WHERE business_id = $1 ORDER BY opened_at DESC
+`
+
+func (q *Queries) ListAllBills(ctx context.Context, businessID uuid.UUID) ([]Bill, error) {
+	rows, err := q.db.Query(ctx, listAllBills, businessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Bill{}
+	for rows.Next() {
+		var i Bill
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.LocationID,
+			&i.Status,
+			&i.OpenedBy,
+			&i.OpenedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.TableID,
+			&i.CustomerID,
+			&i.BalanceKobo,
+			&i.IdempotencyKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBillsByStatus = `-- name: ListBillsByStatus :many
+SELECT id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo, idempotency_key FROM bills WHERE business_id = $1 AND status = $2 ORDER BY opened_at DESC
+`
+
+type ListBillsByStatusParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	Status     string    `json:"status"`
+}
+
+// Backs the Bills screen's status filter (docs/PHASE_UNIFIED_SELL_BILLS.md)
+// -- unlike ListOpenBills/ListOutstandingBills, this takes any one status
+// literally, including 'settled'/'void' history a staff member might want
+// to look back at.
+func (q *Queries) ListBillsByStatus(ctx context.Context, arg ListBillsByStatusParams) ([]Bill, error) {
+	rows, err := q.db.Query(ctx, listBillsByStatus, arg.BusinessID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Bill{}
+	for rows.Next() {
+		var i Bill
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.LocationID,
+			&i.Status,
+			&i.OpenedBy,
+			&i.OpenedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.TableID,
+			&i.CustomerID,
+			&i.BalanceKobo,
+			&i.IdempotencyKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPaymentsByBillID = `-- name: ListPaymentsByBillID :many
-SELECT id, business_id, bill_id, amount_kobo, method, actor_id, reversal_of_payment_id, created_at FROM payments WHERE business_id = $1 AND bill_id = $2
+SELECT id, business_id, bill_id, amount_kobo, method, actor_id, reversal_of_payment_id, created_at, idempotency_key FROM payments WHERE business_id = $1 AND bill_id = $2
 `
 
 type ListPaymentsByBillIDParams struct {
@@ -397,6 +619,7 @@ func (q *Queries) ListPaymentsByBillID(ctx context.Context, arg ListPaymentsByBi
 			&i.ActorID,
 			&i.ReversalOfPaymentID,
 			&i.CreatedAt,
+			&i.IdempotencyKey,
 		); err != nil {
 			return nil, err
 		}
@@ -655,7 +878,7 @@ func (q *Queries) SumSalesTotalSince(ctx context.Context, arg SumSalesTotalSince
 
 const updateBillStatus = `-- name: UpdateBillStatus :one
 UPDATE bills SET status = $3, updated_at = now() WHERE business_id = $1 AND id = $2
-RETURNING id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo
+RETURNING id, business_id, location_id, status, opened_by, opened_at, created_at, updated_at, table_id, customer_id, balance_kobo, idempotency_key
 `
 
 type UpdateBillStatusParams struct {
@@ -679,6 +902,7 @@ func (q *Queries) UpdateBillStatus(ctx context.Context, arg UpdateBillStatusPara
 		&i.TableID,
 		&i.CustomerID,
 		&i.BalanceKobo,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }

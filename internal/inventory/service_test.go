@@ -576,3 +576,119 @@ func TestResolveInventoryReviewMarksResolved(t *testing.T) {
 		t.Fatalf("expected 0 open reviews after resolving, got %d", len(stillOpen))
 	}
 }
+
+func TestGetStockReceiptReturnsLinesWithNames(t *testing.T) {
+	inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, catalogueSvc, identitySvc, pool)
+
+	receipt, err := inventorySvc.ReceiveStock(ctx, ownerID, businessID, locationID, []inventory.ReceiptLine{
+		{VariantID: variantID, Quantity: 48, TotalCostKobo: 4_300_000},
+	})
+	if err != nil {
+		t.Fatalf("ReceiveStock: %v", err)
+	}
+
+	detail, err := inventorySvc.GetStockReceipt(ctx, ownerID, businessID, receipt.ID)
+	if err != nil {
+		t.Fatalf("GetStockReceipt: %v", err)
+	}
+	if detail.ReceivedBy != ownerID || detail.ReversalOf != uuid.Nil || detail.ReversalOfThis != uuid.Nil {
+		t.Fatalf("unexpected receipt detail: %+v", detail)
+	}
+	if len(detail.Lines) != 1 || detail.Lines[0].VariantID != variantID || detail.Lines[0].Quantity != 48 {
+		t.Fatalf("unexpected lines: %+v", detail.Lines)
+	}
+	if detail.Lines[0].VariantName == "" || detail.Lines[0].ProductName == "" {
+		t.Fatalf("expected variant/product names to be joined in, got %+v", detail.Lines[0])
+	}
+
+	if _, err := inventorySvc.GetStockReceipt(ctx, ownerID, businessID, uuid.New()); err != inventory.ErrReceiptNotFound {
+		t.Fatalf("expected ErrReceiptNotFound for an unknown id, got %v", err)
+	}
+}
+
+func TestReverseStockReceiptUndoesBalanceAndIsReflectedBothWays(t *testing.T) {
+	inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, catalogueSvc, identitySvc, pool)
+
+	receipt, err := inventorySvc.ReceiveStock(ctx, ownerID, businessID, locationID, []inventory.ReceiptLine{
+		{VariantID: variantID, Quantity: 48, TotalCostKobo: 4_300_000},
+	})
+	if err != nil {
+		t.Fatalf("ReceiveStock: %v", err)
+	}
+
+	reversal, err := inventorySvc.ReverseStockReceipt(ctx, ownerID, businessID, receipt.ID, ownerID)
+	if err != nil {
+		t.Fatalf("ReverseStockReceipt: %v", err)
+	}
+	if reversal.ReversalOf != receipt.ID {
+		t.Fatalf("expected reversal.ReversalOf %s, got %s", receipt.ID, reversal.ReversalOf)
+	}
+	if len(reversal.Lines) != 1 || reversal.Lines[0].Quantity != -48 || reversal.Lines[0].TotalCostKobo != -4_300_000 {
+		t.Fatalf("expected a negated line, got %+v", reversal.Lines)
+	}
+
+	balances, err := inventorySvc.GetBalances(ctx, ownerID, businessID)
+	if err != nil {
+		t.Fatalf("GetBalances: %v", err)
+	}
+	if got, ok := balances[variantID]; ok && got != 0 {
+		t.Fatalf("expected balance back to 0, got %d", got)
+	}
+
+	// Both the original and the reversal now report the link, in both
+	// directions -- what the activity detail view's "already reversed"
+	// state depends on.
+	originalDetail, err := inventorySvc.GetStockReceipt(ctx, ownerID, businessID, receipt.ID)
+	if err != nil {
+		t.Fatalf("GetStockReceipt(original): %v", err)
+	}
+	if originalDetail.ReversalOfThis != reversal.ID {
+		t.Fatalf("expected original.ReversalOfThis %s, got %s", reversal.ID, originalDetail.ReversalOfThis)
+	}
+
+	if _, err := inventorySvc.ReverseStockReceipt(ctx, ownerID, businessID, receipt.ID, ownerID); err != inventory.ErrReceiptAlreadyReversed {
+		t.Fatalf("expected ErrReceiptAlreadyReversed on a second reversal, got %v", err)
+	}
+}
+
+func TestReverseStockReceiptBlockedOncePartiallySold(t *testing.T) {
+	inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, catalogueSvc, identitySvc, pool)
+
+	receipt, err := inventorySvc.ReceiveStock(ctx, ownerID, businessID, locationID, []inventory.ReceiptLine{
+		{VariantID: variantID, Quantity: 48, TotalCostKobo: 4_300_000},
+	})
+	if err != nil {
+		t.Fatalf("ReceiveStock: %v", err)
+	}
+
+	// Take one unit out via an approved manual adjustment -- this never
+	// touches stock_lots.remaining_quantity (only a sale's FIFO allocation
+	// does), so this specifically exercises ReverseStockReceipt's *other*
+	// guard: the live balance going negative.
+	if _, err := inventorySvc.RequestAdjustment(
+		ctx, ownerID, businessID, locationID, variantID, ownerID,
+		uuid.New(), -1, "manual", "test consumption",
+	); err != nil {
+		t.Fatalf("RequestAdjustment: %v", err)
+	}
+	pending, err := inventorySvc.ListPendingAdjustmentRequests(ctx, ownerID, businessID)
+	if err != nil {
+		t.Fatalf("ListPendingAdjustmentRequests: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected exactly one pending adjustment, got %d", len(pending))
+	}
+	if _, err := inventorySvc.ApproveAdjustmentRequest(ctx, ownerID, businessID, pending[0].ID, ownerID, ""); err != nil {
+		t.Fatalf("ApproveAdjustmentRequest: %v", err)
+	}
+
+	if _, err := inventorySvc.ReverseStockReceipt(ctx, ownerID, businessID, receipt.ID, ownerID); err != inventory.ErrReceiptPartiallyConsumed {
+		t.Fatalf("expected ErrReceiptPartiallyConsumed, got %v", err)
+	}
+}

@@ -310,3 +310,104 @@ export async function getInventoryHistory(
     adjustmentDecidedByName: h.adjustment_decided_by_name ?? '',
   }));
 }
+
+// getAdjustmentRequest wraps GET /api/v1/inventory-adjustments/{id} -- the
+// activity feed's breakdown for a "Stock adjustment" entry.
+export async function getAdjustmentRequest(
+  requestId: string,
+  businessId: string,
+): Promise<AdjustmentRequest> {
+  const raw = await apiRequest<RawAdjustmentRequest>(`/api/v1/inventory-adjustments/${requestId}`, {
+    headers: { 'X-Business-ID': businessId },
+  });
+  return toAdjustmentRequest(raw);
+}
+
+export interface StockReceiptLine {
+  variantId: string;
+  variantName: string;
+  productName: string;
+  quantity: number;
+  totalCostKobo: number;
+}
+
+export interface StockReceiptDetail {
+  id: string;
+  receivedBy: string;
+  receivedAt: string;
+  // Set when this receipt is itself a reversal of another one.
+  reversalOf: string | null;
+  // Set once someone has reversed THIS receipt -- lets the UI hide the
+  // "Fix" control rather than let an owner try twice.
+  reversalOfThis: string | null;
+  lines: StockReceiptLine[];
+}
+
+interface RawStockReceiptLine {
+  variant_id: string;
+  variant_name: string;
+  product_name: string;
+  quantity: number;
+  total_cost_kobo: number;
+}
+
+interface RawStockReceiptDetail {
+  id: string;
+  received_by: string;
+  received_at: string;
+  reversal_of?: string;
+  reversal_of_this?: string;
+  lines: RawStockReceiptLine[];
+}
+
+function toStockReceiptDetail(raw: RawStockReceiptDetail): StockReceiptDetail {
+  return {
+    id: raw.id,
+    receivedBy: raw.received_by,
+    receivedAt: raw.received_at,
+    reversalOf: raw.reversal_of ?? null,
+    reversalOfThis: raw.reversal_of_this ?? null,
+    lines: (raw.lines ?? []).map((l) => ({
+      variantId: l.variant_id,
+      variantName: l.variant_name,
+      productName: l.product_name,
+      quantity: l.quantity,
+      totalCostKobo: l.total_cost_kobo,
+    })),
+  };
+}
+
+// getStockReceipt wraps GET /api/v1/stock-receipts/{id} -- the activity
+// feed's breakdown for a "Stock received" entry: every line, with
+// product/variant names.
+export async function getStockReceipt(
+  receiptId: string,
+  businessId: string,
+): Promise<StockReceiptDetail> {
+  const raw = await apiRequest<RawStockReceiptDetail>(`/api/v1/stock-receipts/${receiptId}`, {
+    headers: { 'X-Business-ID': businessId },
+  });
+  return toStockReceiptDetail(raw);
+}
+
+// reverseStockReceipt wraps POST /api/v1/stock-receipts/{id}/reverse
+// (inventory:receipt_reverse, Owner-only). "Edit" for a stock receipt: the
+// original is never changed, a new equal-and-opposite receipt is posted
+// instead. Rejected (409) if any of the receipt's stock has already been
+// sold -- describeActionError's fallback carries the server's own message
+// explaining why, and pointing at a manual adjustment instead.
+export async function reverseStockReceipt(
+  receiptId: string,
+  businessId: string,
+  csrfToken: string,
+): Promise<StockReceiptDetail> {
+  const raw = await apiRequest<RawStockReceiptDetail>(
+    `/api/v1/stock-receipts/${receiptId}/reverse`,
+    {
+      method: 'POST',
+      headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
+      body: JSON.stringify({}),
+    },
+  );
+  return toStockReceiptDetail(raw);
+}

@@ -131,3 +131,12 @@ export async function reverseExpense(
   });
   return toExpense(raw);
 }
+
+// getExpense wraps GET /api/v1/expenses/{id} -- the activity feed's
+// breakdown for an expense.
+export async function getExpense(expenseId: string, businessId: string): Promise<Expense> {
+  const raw = await apiRequest<RawExpense>(`/api/v1/expenses/${expenseId}`, {
+    headers: { 'X-Business-ID': businessId },
+  });
+  return toExpense(raw);
+}

@@ -47,6 +47,30 @@ type Receipt struct {
 	Lines      []ReceiptLineResult
 }
 
+// ReceiptLineDetail is one line of a receipt's breakdown, with display
+// names joined in -- GetStockReceipt's own shape, distinct from
+// ReceiptLineResult (which is ReceiveStock's post-write result carrying a
+// NewBalance instead of names).
+type ReceiptLineDetail struct {
+	ID            uuid.UUID
+	VariantID     uuid.UUID
+	VariantName   string
+	ProductName   string
+	Quantity      int32
+	TotalCostKobo int64
+}
+
+// ReceiptDetail is one stock receipt's full breakdown, for the activity
+// feed's "tap to see what happened" view.
+type ReceiptDetail struct {
+	ID             uuid.UUID
+	ReceivedBy     uuid.UUID
+	ReceivedAt     time.Time
+	ReversalOf     uuid.UUID
+	ReversalOfThis uuid.UUID
+	Lines          []ReceiptLineDetail
+}
+
 // Adjustment reason categories -- docs/PHASE_INVENTORY_COUNTS_AND_
 // ADJUSTMENTS.md §3: complimentary/broken/spoiled/staff-use consumption
 // all share this one pipeline rather than a separate "consumption event"

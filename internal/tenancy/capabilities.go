@@ -38,7 +38,18 @@ const (
 	CapabilityInventoryCount             Capability = "inventory:count"
 	CapabilityInventoryAdjustmentRequest Capability = "inventory:adjustment_request"
 	CapabilityInventoryAdjustmentApprove Capability = "inventory:adjustment_approve"
+	// CapabilityInventoryReceiptReverse undoes a whole stock receipt --
+	// owner-only, same tier as CapabilityInventoryAdjustmentApprove: both
+	// are "a correction actually lands" decisions, not routine recording.
+	CapabilityInventoryReceiptReverse Capability = "inventory:receipt_reverse"
 
+	// CapabilityActivityRead is held by both roles, but is scoped by role at
+	// the handler layer (internal/httpapi's listActivity/getSale/
+	// getExpense/getAdjustmentRequest/getStockReceipt), not by a second
+	// capability: Staff only ever sees/opens entries they themselves
+	// caused (actor_id = their own user id), Owner sees every entry. The
+	// capability says "may use this feature at all"; the handler decides
+	// how much of it.
 	CapabilityActivityRead Capability = "activity:read"
 
 	CapabilityReviewsRead    Capability = "reviews:read"
@@ -70,6 +81,7 @@ var staffCapabilities = []Capability{
 	CapabilityInventoryRead,
 	CapabilityInventoryCount,
 	CapabilityInventoryAdjustmentRequest,
+	CapabilityActivityRead,
 }
 
 // allCapabilities is every capability that exists. Owners receive all of
@@ -86,7 +98,7 @@ var allCapabilities = []Capability{
 	CapabilityPaymentsRecord, CapabilityPaymentsReverse,
 	CapabilityExpensesRecord, CapabilityExpensesReverse,
 	CapabilityInventoryRead, CapabilityInventoryReceive, CapabilityInventoryCount,
-	CapabilityInventoryAdjustmentRequest, CapabilityInventoryAdjustmentApprove,
+	CapabilityInventoryAdjustmentRequest, CapabilityInventoryAdjustmentApprove, CapabilityInventoryReceiptReverse,
 	CapabilityActivityRead,
 	CapabilityReviewsRead, CapabilityReviewsResolve,
 	CapabilityReportsRead,

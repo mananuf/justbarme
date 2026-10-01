@@ -144,7 +144,7 @@ Conventions specific to this layer:
 - **Idempotency is real, not decorative.** `sales.idempotency_key` is client-generated (a UUID minted on-device the moment "Complete Sale" is tapped) and unique per business. `CreateSale` checks for an existing row with that key *first*, inside the same transaction, before doing any other work — a retried POST (lost response, offline retry) returns the sale already posted the first time rather than creating a second one or erroring. `TestCreateSaleIsIdempotent` exercises this directly.
 - **A sale is never rejected for a deactivated variant or a stale price — it always posts exactly as submitted**, and a `sale_reviews` row opens instead, for the owner to look at later (never a reason to alter the sale). This is deliberately a narrow, sale-specific table, *not* the generic, multi-purpose `review_cases` system `docs/IMPLEMENTATION_PLAN.md`'s Phase 4 describes (that one also covers stock counts and adjustments, neither of which exist yet). Only a genuinely nonexistent `variant_id` is rejected (`ErrVariantNotFound`) — that's a malformed request, not staleness.
 - **`Service.ReverseSale` creates new, equal-and-opposite rows — it never edits or deletes the original.** A second `sales` row (`reversal_of_sale_id` pointing back), negative-quantity `sale_items` copying the original lines, positive inventory movements that put the stock back, and a negative-amount `payments` row (a refund). `GetReversalOfSale` enforces at most one reversal per sale (`ErrAlreadyReversed`). The reversal restocks at the *original sale's own location* (fetched via the bill it belongs to), not whatever the caller's current default location happens to be — those are the same thing today (single location per business) but the distinction is the right one to keep.
-- **Capabilities (`sales:record`, `sales:reverse`) already existed** in `internal/tenancy/capabilities.go`. `sales:record` is both Owner and Staff; `sales:reverse` (and, by reuse, resolving a review) is Owner-only. Listing sales/reviews and the summary endpoint use `activity:read`/`reports:read` respectively — both Owner-only today, so whether Staff should see their own sales history is an open pilot question, the same shape as `inventory:receive`'s already-flagged Staff ambiguity.
+- **Capabilities (`sales:record`, `sales:reverse`) already existed** in `internal/tenancy/capabilities.go`. `sales:record` is both Owner and Staff; `sales:reverse` (and, by reuse, resolving a review) is Owner-only. Listing sales/reviews and the summary endpoint use `activity:read`/`reports:read` respectively — both Owner-only as of this phase (`activity:read` later widened to both roles, Staff scoped to their own entries — see "Phase 4, revisited again" below); `reports:read` remains Owner-only.
 - **`GET /api/v1/sales/summary` computes "today" in the business's own timezone** (`businesses.timezone`), not the server's or the browser's — a sale just before local midnight is never misattributed to the wrong day. Its `today_sale_count` deliberately excludes reversals (a correction isn't "one more sale" for display purposes) while `today_total_kobo` still nets them in.
 - **Frontend offline persistence is now real**, via a new Dexie table (`pendingSales` in `src/lib/db.ts`, version 2). Completing a sale writes to IndexedDB *first*, before any network call — that write is what "Sale recorded" now actually means, not a message with nothing behind it. `src/lib/salesSync.ts`'s `flushPendingSales` posts any still-pending sale to the server, oldest first, stopping at the first failure rather than reordering; it runs on `Sell.tsx` mount, on regaining connectivity (`useConnectivity`), and right after a new sale queues. This is single-device offline support, not Phase 4's multi-device sync — deliberately kept simple (no background-sync-while-closed, no conflict resolution) since neither is needed yet.
 - **`Sell.tsx`'s product grid now reads real, active variants** from `GET /products` (via `listProducts`, already built for Phase 3) instead of a hardcoded list — filtered on `active` (a field `web/src/api/catalogue.ts`'s `CatalogueVariant` didn't carry until this phase needed it).
@@ -271,8 +271,89 @@ Frontend: `src/lib/platformSession.tsx` (`PlatformSessionProvider`/`usePlatformS
 - **The unified activity feed (`internal/activity`, `GET /api/v1/activity`) is a query-time `UNION ALL`, not a new `activity_events` writer table** — the same "solve the concrete need with the narrowest real mechanism" reasoning that already kept this codebase off the generic `review_cases` design and the generic Phase 4 sync protocol. `internal/store/queries/activity.sql`'s `ListActivity` combines `sales`, `expenses`, approved `inventory_adjustment_requests`, and `stock_receipts` into one `{id, type, actor_id, occurred_at, summary, amount_kobo}` shape, `amount_kobo` reframed as cash impact (positive = money in, negative = money out) regardless of each table's own storage sign. **A real sqlc limitation, worth knowing before writing another UNION query**: sqlc's static analyzer reports a false-positive "column is ambiguous" on a `UNION ALL` across tables that share a column name, and reusing one positional parameter across branches makes it worse (it appears to merge every branch's range table when resolving a repeated `$1`) — real Postgres has no such issue. Fixed by aliasing every table and qualifying every column (even `business_id`) in every branch, and giving each occurrence of the same filter value its own parameter number. A second limitation — the same `UNION ALL` feeding a `GROUP BY`/`date_trunc` aggregate — couldn't be worked around the same way, so the Activity heatmap's day-counts are four separate single-table queries (`CountSalesByDay`/`CountExpensesByDay`/`CountApprovedAdjustmentsByDay`/`CountStockReceiptsByDay`) merged into one map in Go instead of one combined query. Also: `AT TIME ZONE $N` needs an explicit `::text` cast on the parameter or sqlc infers `pgtype.Interval` instead of a string, since the operator is overloaded and sqlc picks the wrong overload without it.
 - **`GET /api/v1/dashboard` is capability-aware per section, not gated behind one blanket capability.** It replaces `Dashboard.tsx`'s previous three separate calls with one round trip, composed at the HTTP layer the way `GET /products` already composes `catalogue` + `inventory` (calling each domain package's own method — `sales.SumSalesTotalSince`/`SumItemsSoldSince`, `expenses.SumExpensesSince`, `activity.List`, `sales.ListOutstandingBills`, plus an alerts count merging open `inventory_reviews`/`sale_reviews`/pending `inventory_adjustment_requests` — concurrently via a plain `sync.WaitGroup`, no new dependency). The handler checks `business.Has(capability)` per section and omits a field the caller's role can't see rather than 403ing the whole response. This fixes a real, previously-live bug found during this design pass: Staff has neither `reports:read` nor `activity:read`, so the old three-call `Dashboard.tsx` silently 403'd two of three calls for a Staff viewer and rendered blank cards via its own swallowed `.catch()` — a Staff dashboard today correctly gets a `200` with only `outstanding_kobo` populated.
 - **Five new report endpoints** (`GET /api/v1/reports/{sales,products,staff-sales,expenses,stock}`, `reports:read`, all date-range-bounded in the business's own timezone per `docs/ARCHITECTURE.md` §14) — `stock` reuses Phase 7's `stock_count_lines`/`inventory_reviews` data directly, no new schema. A sixth report, outstanding bills, needed no new endpoint at all — `GET /bills?status=outstanding` (Phase 6) already returns exactly that.
-- **Frontend**: `web/src/lib/db.ts` gained `pendingExpenses` (Dexie version 5); `web/src/lib/expensesSync.ts` mirrors `inventorySync.ts`/`salesSync.ts`. `web/src/components/HeatmapGrid.tsx` is a hand-rolled CSS-grid GitHub-style heatmap (no charting library, matching this codebase's minimal-dependency ethos) shared by two uses: `Activity.tsx`'s daily-activity-count view and `Reports.tsx`'s Sales tab's daily-revenue view — the only two genuinely daily-continuous datasets; every other report (products, staff, expenses-by-category, stock discrepancies) is a ranked table/bar list instead, deliberately not forced into heatmap shape. `Expenses.tsx` (new, offline-first recording + inline category creation + an Owner-only history/reversal section) and `Activity.tsx` (new, heatmap + actor/type/day-filtered feed) are new pages; `Reports.tsx` is a six-tab page. `Dashboard.tsx`'s previously-static "Expenses/Reports/Activity" More-menu rows (placeholder text since before this phase existed) are now real links, Reports/Activity gated to Owners client-side (`isOwner`, `Tabs.tsx`'s established pattern) since both need Owner-only capabilities anyway.
+- **Frontend**: `web/src/lib/db.ts` gained `pendingExpenses` (Dexie version 5); `web/src/lib/expensesSync.ts` mirrors `inventorySync.ts`/`salesSync.ts`. `web/src/components/HeatmapGrid.tsx` is a hand-rolled CSS-grid GitHub-style heatmap (no charting library, matching this codebase's minimal-dependency ethos) shared by two uses: `Activity.tsx`'s daily-activity-count view and `Reports.tsx`'s Sales tab's daily-revenue view — the only two genuinely daily-continuous datasets; every other report (products, staff, expenses-by-category, stock discrepancies) is a ranked table/bar list instead, deliberately not forced into heatmap shape. `Expenses.tsx` (new, offline-first recording + inline category creation + an Owner-only history/reversal section) and `Activity.tsx` (new, heatmap + actor/type/day-filtered feed) are new pages; `Reports.tsx` is a six-tab page. `Dashboard.tsx`'s previously-static "Expenses/Reports/Activity" More-menu rows (placeholder text since before this phase existed) are now real links, Reports/Activity gated to Owners client-side (`isOwner`, `Tabs.tsx`'s established pattern) since both need Owner-only capabilities as of this phase (Activity's link is no longer gated — see "Phase 4, revisited again" below).
 - **Verified live end-to-end** against an isolated backend instance using curl: expense category creation/listing, idempotent recording, reversal creating a real opposite record, double-reversal rejected with `409`; the unified feed correctly combining a sale/receipt/two-expenses-one-reversed with the right cash-impact signs and its type filter; the day-count heatmap; all five report endpoints returning correct figures; the capability-aware dashboard's full Owner response vs. partial Staff response; and the Staff/Owner permission split across every new endpoint. Test data cleaned up via the RLS-aware `SET LOCAL ROLE jbm_app` transaction pattern. **Not verified**: an actual browser/Playwright pass over `Expenses.tsx`'s offline-queueing UI, and no new component/unit tests were added for any of the six new frontend files — same named gap this codebase already carries for `Sell.tsx`/`salesSync.ts` and Phase 7's own frontend.
+
+## Phase 4, revisited again: activity detail, correction, and staff review
+
+Widens the Activity feed (previous section) from a read-only list into
+something each entry can be opened, understood, and acted on from --
+requested after a real pilot usage report where staff conflated "Close
+tab" with "mark paid" and an owner needed a way to fix a mistyped stock
+receipt. Full design confirmed in conversation; the concrete shape below.
+
+- **"Edit" never means UPDATE/DELETE on a posted record** -- it means the
+  record's own existing correction idiom. Sales and expenses already had
+  one (`POST /sales/{id}/reverse`, `POST /expenses/{id}/reverse`, both
+  owner-only, built well before this phase) -- this phase's only backend
+  work for those two was a `GET /sales/{id}` / `GET /expenses/{id}` detail
+  route and a frontend hookup. **Stock receipts had no correction
+  mechanism at all** -- `inventory.Service.ReverseStockReceipt` is new,
+  posting a new, equal-and-opposite receipt (negative quantity/cost lines,
+  same sign convention `sale_items` already uses) rather than editing the
+  original; migration `000029` relaxes `stock_receipt_lines`' CHECK
+  constraints the same way `sale_items`' were always shaped, and adds
+  `stock_receipts.reversal_of_receipt_id`. **Inventory adjustments need no
+  "fix" mechanism at all** -- posting a new, opposite adjustment through
+  the existing Report-issue flow already does this.
+- **A stock receipt can only be reversed if none of its stock has moved
+  since.** Two independent guards, because stock can leave two different,
+  untracked-by-each-other ways: a lot's `remaining_quantity` (only a
+  sale's FIFO allocation touches this) must still equal what it received,
+  *and* the live `inventory_balances` row (which an adjustment can reduce
+  without ever touching a lot) must not go negative after giving the
+  quantity back. Either one alone misses a real case the other catches --
+  confirmed by testing both paths live, including a real sale against the
+  exact receipt being reversed.
+- **Activity read access now has a role-scoped shape, not a role gate.**
+  `activity:read` (and the four new single-record detail routes,
+  `GET /sales/{id}` / `/expenses/{id}` / `/inventory-adjustments/{id}` /
+  `/stock-receipts/{id}`) is held by both roles -- Staff is not blocked,
+  Staff is *scoped*: `listActivity`'s handler force-overrides any
+  client-supplied `actor_id` to the caller's own id whenever the caller
+  isn't Owner, and every detail handler re-checks the fetched record's own
+  actor against the caller (`mayOpenActivityEntry`) before returning it --
+  a 404, indistinguishable from not-found, same discipline
+  `requireBusinessContext` already established for a business the caller
+  isn't a member of. This is a capability-plus-handler-logic pattern, not
+  a new capability per role; see `tenancy.CapabilityActivityRead`'s own
+  doc comment.
+- **"Staff must request review" is one new, narrow, generic mechanism --
+  `activity_flags`** (migration `000029`), not four per-type ones and not
+  a rebuild of the generic `review_cases` table this codebase has twice
+  already declined to build. A flag is a pointer (`source_type`,
+  `source_id`, matching `activity.Entry.Type`/`ID` exactly) plus a reason;
+  it never touches the record it points at. Creating one requires only
+  `activity:read` (the same "can you see it" check gates "can you flag
+  it"); listing and resolving require `reviews:read`/`reviews:resolve`
+  (both pre-existing, Owner-only) -- resolving a flag marks the *decision*
+  resolved, the same resolve-the-decision-never-the-record shape
+  `sale_reviews`/`inventory_reviews` already use. Surfaced in `Reviews.tsx`
+  alongside those two, above them.
+- **Write capabilities stay Owner-only by rule, not by re-litigating it
+  per feature** (the same rule the admin-dashboard phase established for
+  platform capabilities, now explicit for business-tenant ones too):
+  `inventory:receipt_reverse` is the only new capability this phase adds,
+  Owner-only, same tier as `inventory:adjustment_approve`.
+- **Frontend**: `ActivityDetailSheet.tsx` is the one component every
+  activity type's "tap to see what happened" opens into -- it fetches the
+  right detail call based on `entry.type`, renders a breakdown, and shows
+  either an Owner's "Fix" button (hidden with a plain-language reason when
+  not applicable, e.g. an already-reversed receipt) or a Staff "something's
+  wrong" flag form, never both. `Activity.tsx`'s rows became buttons
+  opening it; the More-menu's Activity link is no longer Owner-gated.
+- **Verified live end-to-end** against a running backend, in a real
+  browser: Staff's feed and direct-GET-by-id both correctly show only
+  their own entries (a 404 on an owner's receipt by id, not a 403 --
+  indistinguishable from it not existing); Owner's reversal of an untouched
+  receipt succeeds and the balance is unaffected afterward; the same
+  reversal attempt against a receipt a real sale had already partly
+  consumed is correctly blocked with the exact reason shown inline, sheet
+  staying open rather than silently closing; a Staff flag is blocked
+  (404) against an entry that isn't theirs, visible to the Owner in
+  Reviews, and resolving it removes it from the open list. Test data
+  cleaned up via the RLS-aware `SET LOCAL ROLE jbm_app` transaction
+  pattern afterward.
 
 ## Frontend architecture
 

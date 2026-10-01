@@ -536,3 +536,221 @@ func (s *Service) GetHistory(ctx context.Context, userID, businessID, variantID 
 	}
 	return out, nil
 }
+
+// GetStockReceipt returns one receipt's full breakdown (lines with variant/
+// product names) for the activity feed's detail view, plus whether it has
+// already been reversed.
+func (s *Service) GetStockReceipt(ctx context.Context, userID, businessID, receiptID uuid.UUID) (ReceiptDetail, error) {
+	var result ReceiptDetail
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		receipt, err := q.GetStockReceiptByID(ctx, sqlc.GetStockReceiptByIDParams{BusinessID: businessID, ID: receiptID})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrReceiptNotFound
+			}
+			return fmt.Errorf("get stock receipt: %w", err)
+		}
+		lines, err := q.ListStockReceiptLinesDetailed(ctx, sqlc.ListStockReceiptLinesDetailedParams{
+			BusinessID: businessID, ReceiptID: receiptID,
+		})
+		if err != nil {
+			return fmt.Errorf("list stock receipt lines: %w", err)
+		}
+		reversalOfThis := uuid.Nil
+		if reversal, err := q.GetReversalOfStockReceipt(ctx, sqlc.GetReversalOfStockReceiptParams{
+			BusinessID: businessID, ReversalOfReceiptID: pgUUID(receiptID),
+		}); err == nil {
+			reversalOfThis = reversal.ID
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("check existing reversal: %w", err)
+		}
+
+		result = ReceiptDetail{
+			ID: receipt.ID, ReceivedBy: receipt.ReceivedBy, ReceivedAt: toTime(receipt.ReceivedAt),
+			ReversalOf: toUUID(receipt.ReversalOfReceiptID), ReversalOfThis: reversalOfThis,
+		}
+		for _, l := range lines {
+			result.Lines = append(result.Lines, ReceiptLineDetail{
+				ID: l.ID, VariantID: l.VariantID, VariantName: l.VariantName, ProductName: l.ProductName,
+				Quantity: l.Quantity, TotalCostKobo: l.TotalCostKobo,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return ReceiptDetail{}, err
+	}
+	return result, nil
+}
+
+// ReverseStockReceipt undoes a whole receipt by posting a new, equal-and-
+// opposite receipt (negative quantities/costs) -- the original rows are
+// never edited or deleted, same idiom as sales.ReverseSale/
+// expenses.ReverseExpense. Only a receipt none of whose stock has been
+// sold yet can be reversed (ErrReceiptPartiallyConsumed otherwise): giving
+// back quantity to a lot that FIFO has already allocated from would either
+// understate real sales or drive a lot negative, neither of which a plain
+// undo should silently paper over.
+func (s *Service) ReverseStockReceipt(ctx context.Context, userID, businessID, receiptID, actorID uuid.UUID) (ReceiptDetail, error) {
+	reversalReceiptID, err := newID()
+	if err != nil {
+		return ReceiptDetail{}, err
+	}
+	eventID, err := newID()
+	if err != nil {
+		return ReceiptDetail{}, err
+	}
+	now := time.Now()
+
+	var result ReceiptDetail
+	err = store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		original, err := q.GetStockReceiptByID(ctx, sqlc.GetStockReceiptByIDParams{BusinessID: businessID, ID: receiptID})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrReceiptNotFound
+			}
+			return fmt.Errorf("get stock receipt: %w", err)
+		}
+		if _, err := q.GetReversalOfStockReceipt(ctx, sqlc.GetReversalOfStockReceiptParams{
+			BusinessID: businessID, ReversalOfReceiptID: pgUUID(receiptID),
+		}); err == nil {
+			return ErrReceiptAlreadyReversed
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("check existing reversal: %w", err)
+		}
+
+		lines, err := q.ListStockReceiptLinesDetailed(ctx, sqlc.ListStockReceiptLinesDetailedParams{
+			BusinessID: businessID, ReceiptID: receiptID,
+		})
+		if err != nil {
+			return fmt.Errorf("list stock receipt lines: %w", err)
+		}
+		if len(lines) == 0 {
+			return ErrReceiptNotFound
+		}
+		lineIDs := make([]uuid.UUID, len(lines))
+		for i, l := range lines {
+			lineIDs[i] = l.ID
+		}
+		lots, err := q.ListStockLotsByReceiptLineIDs(ctx, sqlc.ListStockLotsByReceiptLineIDsParams{
+			BusinessID: businessID, ReceiptLineIds: lineIDs,
+		})
+		if err != nil {
+			return fmt.Errorf("list stock lots: %w", err)
+		}
+		lotByLine := make(map[uuid.UUID]sqlc.StockLot, len(lots))
+		for _, lot := range lots {
+			lotByLine[toUUID(lot.ReceiptLineID)] = lot
+		}
+		for _, l := range lines {
+			// The lot check catches stock a sale's FIFO allocation has
+			// already drawn from (remaining_quantity tracks that, not a
+			// plain adjustment). The balance check catches the other way
+			// stock can have left since this receipt landed -- a manual/
+			// complimentary/broken/spoiled adjustment, which never touches
+			// stock_lots at all. Either one alone misses a real case the
+			// other covers; a receipt is only safe to fully undo when
+			// neither has happened.
+			lot, ok := lotByLine[l.ID]
+			if !ok || lot.RemainingQuantity != lot.ReceivedQuantity {
+				return ErrReceiptPartiallyConsumed
+			}
+			balance, err := q.GetInventoryBalance(ctx, sqlc.GetInventoryBalanceParams{
+				BusinessID: businessID, VariantID: l.VariantID, LocationID: original.LocationID,
+			})
+			if err != nil {
+				return fmt.Errorf("get inventory balance: %w", err)
+			}
+			if int64(balance)-int64(l.Quantity) < 0 {
+				return ErrReceiptPartiallyConsumed
+			}
+		}
+
+		reversal, err := q.CreateReversalStockReceipt(ctx, sqlc.CreateReversalStockReceiptParams{
+			ID: reversalReceiptID, BusinessID: businessID, LocationID: original.LocationID,
+			ReceivedBy: actorID, ReceivedAt: pgTimestamptz(now), ReversalOfReceiptID: pgUUID(receiptID),
+		})
+		if err != nil {
+			return fmt.Errorf("create reversal receipt: %w", err)
+		}
+		if _, err := q.CreateInventoryEventForReceiptReversal(ctx, sqlc.CreateInventoryEventForReceiptReversalParams{
+			ID: eventID, BusinessID: businessID, ActorID: actorID, ReceiptID: pgUUID(reversal.ID),
+		}); err != nil {
+			return fmt.Errorf("create inventory event: %w", err)
+		}
+
+		result = ReceiptDetail{
+			ID: reversal.ID, ReceivedBy: actorID, ReceivedAt: now, ReversalOf: receiptID,
+		}
+		for _, l := range lines {
+			lot := lotByLine[l.ID]
+			lineID, err := newID()
+			if err != nil {
+				return err
+			}
+			if _, err := q.CreateStockReceiptLine(ctx, sqlc.CreateStockReceiptLineParams{
+				ID: lineID, BusinessID: businessID, ReceiptID: reversal.ID,
+				VariantID: l.VariantID, Quantity: -l.Quantity, TotalCostKobo: -l.TotalCostKobo,
+			}); err != nil {
+				return fmt.Errorf("create reversal receipt line: %w", err)
+			}
+			movementID, err := newID()
+			if err != nil {
+				return err
+			}
+			if _, err := q.CreateInventoryMovement(ctx, sqlc.CreateInventoryMovementParams{
+				ID: movementID, BusinessID: businessID, EventID: eventID,
+				VariantID: l.VariantID, LocationID: original.LocationID, QuantityDelta: -l.Quantity,
+			}); err != nil {
+				return fmt.Errorf("create inventory movement: %w", err)
+			}
+			if _, err := q.UpsertInventoryBalanceDelta(ctx, sqlc.UpsertInventoryBalanceDeltaParams{
+				BusinessID: businessID, VariantID: l.VariantID, LocationID: original.LocationID, Quantity: -l.Quantity,
+			}); err != nil {
+				return fmt.Errorf("update inventory balance: %w", err)
+			}
+			if _, err := q.DecrementLotRemainingQuantity(ctx, sqlc.DecrementLotRemainingQuantityParams{
+				BusinessID: businessID, ID: lot.ID, RemainingQuantity: lot.ReceivedQuantity,
+			}); err != nil {
+				return fmt.Errorf("decrement lot remaining quantity: %w", err)
+			}
+			result.Lines = append(result.Lines, ReceiptLineDetail{
+				ID: lineID, VariantID: l.VariantID, VariantName: l.VariantName, ProductName: l.ProductName,
+				Quantity: -l.Quantity, TotalCostKobo: -l.TotalCostKobo,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return ReceiptDetail{}, err
+	}
+	return result, nil
+}
+
+// GetAdjustmentRequest returns one adjustment request (any status) with its
+// variant/product names, for the activity feed's detail view.
+func (s *Service) GetAdjustmentRequest(ctx context.Context, userID, businessID, requestID uuid.UUID) (AdjustmentRequest, error) {
+	var result AdjustmentRequest
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		row, err := q.GetInventoryAdjustmentRequestDetailed(ctx, sqlc.GetInventoryAdjustmentRequestDetailedParams{
+			BusinessID: businessID, ID: requestID,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrAdjustmentRequestNotFound
+			}
+			return fmt.Errorf("get adjustment request: %w", err)
+		}
+		result = AdjustmentRequest{
+			ID: row.ID, LocationID: row.LocationID, VariantID: row.VariantID, RequestedBy: row.RequestedBy,
+			QuantityDelta: row.QuantityDelta, ReasonCategory: row.ReasonCategory, ReasonNote: row.ReasonNote,
+			SourceCountLineID: toUUID(row.SourceCountLineID), Status: row.Status, CreatedAt: toTime(row.CreatedAt),
+			VariantName: row.VariantName, ProductName: row.ProductName,
+		}
+		return nil
+	})
+	if err != nil {
+		return AdjustmentRequest{}, err
+	}
+	return result, nil
+}

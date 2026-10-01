@@ -2,11 +2,13 @@ package activity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -141,4 +143,134 @@ func (s *Service) CountByDay(ctx context.Context, userID, businessID uuid.UUID, 
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Day.Before(out[j].Day) })
 	return out, nil
+}
+
+func newID() (uuid.UUID, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("generate id: %w", err)
+	}
+	return id, nil
+}
+
+func toFlag(f sqlc.ActivityFlag) Flag {
+	return Flag{
+		ID: f.ID, SourceType: f.SourceType, SourceID: f.SourceID, FlaggedBy: f.FlaggedBy,
+		Reason: f.Reason, Status: f.Status, ResolvedBy: toUUIDOrNil(f.ResolvedBy),
+		ResolutionNote: pgTextValue(f.ResolutionNote), CreatedAt: f.CreatedAt.Time,
+		ResolvedAt: f.ResolvedAt.Time,
+	}
+}
+
+func toUUIDOrNil(id pgtype.UUID) uuid.UUID {
+	if !id.Valid {
+		return uuid.Nil
+	}
+	return id.Bytes
+}
+
+func pgTextValue(t pgtype.Text) string {
+	if !t.Valid {
+		return ""
+	}
+	return t.String
+}
+
+// CreateFlag records a staff (or owner) concern about one activity entry.
+// Callers must have already verified sourceID actually exists and that the
+// caller is allowed to see it (internal/httpapi's getSale/getExpense/
+// getAdjustmentRequest/getStockReceipt handlers already do this lookup
+// before flagging, so it is never redone here).
+func (s *Service) CreateFlag(ctx context.Context, userID, businessID uuid.UUID, sourceType string, sourceID uuid.UUID, reason string) (Flag, error) {
+	id, err := newID()
+	if err != nil {
+		return Flag{}, err
+	}
+	var created sqlc.ActivityFlag
+	err = store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		row, err := q.CreateActivityFlag(ctx, sqlc.CreateActivityFlagParams{
+			ID: id, BusinessID: businessID, SourceType: sourceType, SourceID: sourceID,
+			FlaggedBy: userID, Reason: reason,
+		})
+		if err != nil {
+			return err
+		}
+		created = row
+		return nil
+	})
+	if err != nil {
+		return Flag{}, fmt.Errorf("create activity flag: %w", err)
+	}
+	return toFlag(created), nil
+}
+
+// ListOpenFlags returns every unresolved flag, newest first -- surfaced in
+// Reviews alongside the existing sale/inventory reviews.
+func (s *Service) ListOpenFlags(ctx context.Context, userID, businessID uuid.UUID) ([]Flag, error) {
+	var rows []sqlc.ActivityFlag
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		r, err := q.ListOpenActivityFlags(ctx, businessID)
+		if err != nil {
+			return err
+		}
+		rows = r
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list open activity flags: %w", err)
+	}
+	out := make([]Flag, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, toFlag(r))
+	}
+	return out, nil
+}
+
+// ResolveFlag marks a flag resolved with the owner's note. It never touches
+// the record the flag points at -- an owner who agrees something needs
+// fixing performs that fix through the record's own correction mechanism
+// separately (a reversal, or a new adjustment), same "resolve the
+// decision, never silently alter the thing it's about" shape as
+// sale_reviews/inventory_reviews.
+func (s *Service) ResolveFlag(ctx context.Context, userID, businessID, flagID, resolvedBy uuid.UUID, note string) (Flag, error) {
+	var updated sqlc.ActivityFlag
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		row, err := q.ResolveActivityFlag(ctx, sqlc.ResolveActivityFlagParams{
+			BusinessID: businessID, ID: flagID, ResolvedBy: pgUUIDOrNil(resolvedBy), ResolutionNote: pgTextOrNil(note),
+		})
+		if err != nil {
+			return err
+		}
+		updated = row
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Flag{}, ErrFlagNotFound
+		}
+		return Flag{}, fmt.Errorf("resolve activity flag: %w", err)
+	}
+	return toFlag(updated), nil
+}
+
+// GetFlag returns one flag, any status -- used to verify a flag's own
+// business ownership before responding to it (e.g. activity_handlers.go's
+// resolveActivityFlag error mapping).
+func (s *Service) GetFlag(ctx context.Context, userID, businessID, flagID uuid.UUID) (Flag, error) {
+	var found sqlc.ActivityFlag
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		row, err := q.GetActivityFlagByID(ctx, sqlc.GetActivityFlagByIDParams{BusinessID: businessID, ID: flagID})
+		if err != nil {
+			return err
+		}
+		found = row
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Flag{}, ErrFlagNotFound
+		}
+		return Flag{}, fmt.Errorf("get activity flag: %w", err)
+	}
+	return toFlag(found), nil
 }

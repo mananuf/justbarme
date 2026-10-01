@@ -88,3 +88,91 @@ export async function activityHeatmap(
   );
   return raw.map((r) => ({ day: r.day, count: r.count }));
 }
+
+export interface ActivityFlag {
+  id: string;
+  sourceType: ActivityType;
+  sourceId: string;
+  flaggedBy: string;
+  flaggedByName: string;
+  reason: string;
+  status: 'open' | 'resolved';
+  resolutionNote: string;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+interface RawActivityFlag {
+  id: string;
+  source_type: string;
+  source_id: string;
+  flagged_by: string;
+  flagged_by_name?: string;
+  reason: string;
+  status: string;
+  resolution_note?: string;
+  created_at: string;
+  resolved_at?: string;
+}
+
+function toFlag(raw: RawActivityFlag): ActivityFlag {
+  return {
+    id: raw.id,
+    sourceType: raw.source_type as ActivityType,
+    sourceId: raw.source_id,
+    flaggedBy: raw.flagged_by,
+    flaggedByName: raw.flagged_by_name ?? '',
+    reason: raw.reason,
+    status: raw.status as ActivityFlag['status'],
+    resolutionNote: raw.resolution_note ?? '',
+    createdAt: raw.created_at,
+    resolvedAt: raw.resolved_at ?? null,
+  };
+}
+
+// flagActivity wraps POST /api/v1/activity-flags (activity:read, both
+// roles) -- "staff must request review," generalized across every
+// activity type: anyone who can open an entry can flag it for the owner.
+// It never changes the record being flagged.
+export async function flagActivity(
+  sourceType: ActivityType,
+  sourceId: string,
+  reason: string,
+  businessId: string,
+  csrfToken: string,
+): Promise<ActivityFlag> {
+  const raw = await apiRequest<RawActivityFlag>('/api/v1/activity-flags', {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
+    body: JSON.stringify({ source_type: sourceType, source_id: sourceId, reason }),
+  });
+  return toFlag(raw);
+}
+
+// listActivityFlags wraps GET /api/v1/activity-flags (reviews:read, Owner
+// only) -- open flags, surfaced in Reviews alongside sale/inventory
+// reviews.
+export async function listActivityFlags(businessId: string): Promise<ActivityFlag[]> {
+  const raw = await apiRequest<RawActivityFlag[]>('/api/v1/activity-flags', {
+    headers: { 'X-Business-ID': businessId },
+  });
+  return raw.map(toFlag);
+}
+
+// resolveActivityFlag wraps POST /api/v1/activity-flags/{id}/resolve
+// (reviews:resolve, Owner only). Only marks the flag resolved -- the owner
+// performs any actual fix separately, through the record's own correction
+// mechanism.
+export async function resolveActivityFlag(
+  flagId: string,
+  note: string,
+  businessId: string,
+  csrfToken: string,
+): Promise<ActivityFlag> {
+  const raw = await apiRequest<RawActivityFlag>(`/api/v1/activity-flags/${flagId}/resolve`, {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
+    body: JSON.stringify({ note }),
+  });
+  return toFlag(raw);
+}

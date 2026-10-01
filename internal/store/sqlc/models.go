@@ -9,6 +9,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type ActivityFlag struct {
+	ID             uuid.UUID          `json:"id"`
+	BusinessID     uuid.UUID          `json:"business_id"`
+	SourceType     string             `json:"source_type"`
+	SourceID       uuid.UUID          `json:"source_id"`
+	FlaggedBy      uuid.UUID          `json:"flagged_by"`
+	Reason         string             `json:"reason"`
+	Status         string             `json:"status"`
+	ResolvedBy     pgtype.UUID        `json:"resolved_by"`
+	ResolutionNote pgtype.Text        `json:"resolution_note"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
+}
+
 type Bill struct {
 	ID          uuid.UUID          `json:"id"`
 	BusinessID  uuid.UUID          `json:"business_id"`
@@ -441,12 +455,13 @@ type StockLot struct {
 }
 
 type StockReceipt struct {
-	ID         uuid.UUID          `json:"id"`
-	BusinessID uuid.UUID          `json:"business_id"`
-	LocationID uuid.UUID          `json:"location_id"`
-	ReceivedBy uuid.UUID          `json:"received_by"`
-	ReceivedAt pgtype.Timestamptz `json:"received_at"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ID                  uuid.UUID          `json:"id"`
+	BusinessID          uuid.UUID          `json:"business_id"`
+	LocationID          uuid.UUID          `json:"location_id"`
+	ReceivedBy          uuid.UUID          `json:"received_by"`
+	ReceivedAt          pgtype.Timestamptz `json:"received_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	ReversalOfReceiptID pgtype.UUID        `json:"reversal_of_receipt_id"`
 }
 
 type StockReceiptLine struct {

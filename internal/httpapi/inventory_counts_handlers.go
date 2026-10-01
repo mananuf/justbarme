@@ -25,6 +25,10 @@ func inventoryErrorResponse(api *API, w http.ResponseWriter, r *http.Request, er
 		api.notFoundResponse(w, r)
 	case errors.Is(err, inventory.ErrAdjustmentRequestNotFound), errors.Is(err, inventory.ErrInventoryReviewNotFound):
 		api.conflictResponse(w, r, err.Error())
+	case errors.Is(err, inventory.ErrReceiptNotFound):
+		api.notFoundResponse(w, r)
+	case errors.Is(err, inventory.ErrReceiptAlreadyReversed), errors.Is(err, inventory.ErrReceiptPartiallyConsumed):
+		api.conflictResponse(w, r, err.Error())
 	default:
 		api.internalErrorResponse(w, r, fmt.Errorf("%s: %w", action, err))
 	}

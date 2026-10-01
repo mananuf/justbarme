@@ -298,12 +298,15 @@ func NewHandler(deps Dependencies) http.Handler {
 				router.Post("/variants/{variant_id}/prices", api.setVariantPrice)
 
 				router.Post("/stock-receipts", api.receiveStock)
+				router.Get("/stock-receipts/{receipt_id}", api.getStockReceipt)
+				router.Post("/stock-receipts/{receipt_id}/reverse", api.reverseStockReceipt)
 				router.Get("/products/variants/{variant_id}/history", api.getInventoryHistory)
 
 				router.Post("/stock-counts", api.submitStockCount)
 
 				router.Post("/inventory-adjustments", api.requestAdjustment)
 				router.Get("/inventory-adjustments", api.listPendingAdjustments)
+				router.Get("/inventory-adjustments/{adjustment_id}", api.getAdjustmentRequest)
 				router.Post("/inventory-adjustments/{adjustment_id}/approve", api.approveAdjustment)
 				router.Post("/inventory-adjustments/{adjustment_id}/reject", api.rejectAdjustment)
 
@@ -312,6 +315,7 @@ func NewHandler(deps Dependencies) http.Handler {
 
 				router.Post("/sales", api.createSale)
 				router.Get("/sales", api.listSales)
+				router.Get("/sales/{sale_id}", api.getSale)
 				router.Get("/sales/summary", api.salesSummary)
 				router.Post("/sales/{sale_id}/reverse", api.reverseSale)
 				router.Get("/sale-reviews", api.listSaleReviews)
@@ -321,10 +325,14 @@ func NewHandler(deps Dependencies) http.Handler {
 				router.Post("/expense-categories", api.createExpenseCategory)
 				router.Post("/expenses", api.recordExpense)
 				router.Get("/expenses", api.listExpenses)
+				router.Get("/expenses/{expense_id}", api.getExpense)
 				router.Post("/expenses/{expense_id}/reverse", api.reverseExpense)
 
 				router.Get("/activity", api.listActivity)
 				router.Get("/activity/heatmap", api.activityHeatmap)
+				router.Post("/activity-flags", api.flagActivity)
+				router.Get("/activity-flags", api.listActivityFlags)
+				router.Post("/activity-flags/{flag_id}/resolve", api.resolveActivityFlag)
 
 				router.Get("/reports/sales", api.reportSales)
 				router.Get("/reports/products", api.reportProducts)

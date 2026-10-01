@@ -37,6 +37,32 @@ type Filter struct {
 	EndAt   time.Time
 }
 
+const (
+	FlagSourceSale                = "sale"
+	FlagSourceExpense             = "expense"
+	FlagSourceInventoryAdjustment = "inventory_adjustment"
+	FlagSourceStockReceipt        = "stock_receipt"
+)
+
+// Flag is a staff-raised concern about one activity entry -- "staff must
+// request review" generalized across all four activity types, rather than
+// the sale-specific/inventory-specific review tables. It never changes the
+// record it points at; an owner who agrees still performs the actual fix
+// through that record's own correction mechanism (a reversal, or a new
+// adjustment).
+type Flag struct {
+	ID             uuid.UUID
+	SourceType     string
+	SourceID       uuid.UUID
+	FlaggedBy      uuid.UUID
+	Reason         string
+	Status         string
+	ResolvedBy     uuid.UUID
+	ResolutionNote string
+	CreatedAt      time.Time
+	ResolvedAt     time.Time
+}
+
 // DayCount is one day's activity count, backing the Activity page's
 // GitHub-style heatmap. Day is a local calendar date (already bucketed in
 // the business's own timezone) with a zero time-of-day.

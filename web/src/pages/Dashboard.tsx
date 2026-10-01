@@ -68,16 +68,16 @@ function MoreMenuItems({
           <span className="text-[11px] text-jb-ink/40">Sales, stock and expense summaries</span>
         </Link>
       )}
-      {isOwner && (
-        <Link
-          to="/dashboard/activity"
-          onClick={onNavigate}
-          className="px-4 py-3.5 flex flex-col hover:bg-jb-ink/[0.03] transition-colors"
-        >
-          <span className="text-[13px] text-jb-ink/75">Activity</span>
-          <span className="text-[11px] text-jb-ink/40">Everything the team has done today</span>
-        </Link>
-      )}
+      <Link
+        to="/dashboard/activity"
+        onClick={onNavigate}
+        className="px-4 py-3.5 flex flex-col hover:bg-jb-ink/[0.03] transition-colors"
+      >
+        <span className="text-[13px] text-jb-ink/75">Activity</span>
+        <span className="text-[11px] text-jb-ink/40">
+          {isOwner ? 'Everything the team has done' : 'What you have done'}
+        </span>
+      </Link>
       <Link
         id="more-team"
         to="/dashboard/team"

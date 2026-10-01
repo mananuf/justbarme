@@ -74,6 +74,15 @@ func (api *API) listActivity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Staff holds activity:read too, but only ever sees entries they
+	// themselves caused -- force-override any actor_id the request asked
+	// for rather than merely defaulting it, so a crafted query string can
+	// never widen a Staff viewer's scope to someone else's entries. Owner
+	// sees everyone's, same as before this capability existed for Staff.
+	if business.Role != tenancy.RoleOwner {
+		filter.ActorID = principal.UserID
+	}
+
 	list, err := api.activity.List(r.Context(), principal.UserID, business.BusinessID, filter, limit)
 	if err != nil {
 		api.internalErrorResponse(w, r, fmt.Errorf("list activity: %w", err))

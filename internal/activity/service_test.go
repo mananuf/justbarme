@@ -244,3 +244,55 @@ func TestCountByDayCombinesSources(t *testing.T) {
 		t.Fatalf("expected 3 combined activity events today (sale+expense+receipt), got %d: %+v", total, counts)
 	}
 }
+
+func TestActivityFlagLifecycle(t *testing.T) {
+	activitySvc, salesSvc, _, inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
+
+	sale, err := salesSvc.CreateSale(ctx, ownerID, businessID, locationID, ownerID, uuid.New(), time.Now(),
+		[]sales.SaleItemInput{{VariantID: variantID, Quantity: 1, UnitPriceKobo: 80000}},
+		sales.PaymentInput{AmountKobo: 80000, Method: "cash"})
+	if err != nil {
+		t.Fatalf("CreateSale: %v", err)
+	}
+
+	flag, err := activitySvc.CreateFlag(ctx, ownerID, businessID, activity.FlagSourceSale, sale.ID, "price looks wrong")
+	if err != nil {
+		t.Fatalf("CreateFlag: %v", err)
+	}
+	if flag.Status != "open" || flag.SourceID != sale.ID || flag.SourceType != activity.FlagSourceSale {
+		t.Fatalf("unexpected flag: %+v", flag)
+	}
+
+	open, err := activitySvc.ListOpenFlags(ctx, ownerID, businessID)
+	if err != nil {
+		t.Fatalf("ListOpenFlags: %v", err)
+	}
+	if len(open) != 1 || open[0].ID != flag.ID {
+		t.Fatalf("expected the new flag in the open list, got %+v", open)
+	}
+
+	resolved, err := activitySvc.ResolveFlag(ctx, ownerID, businessID, flag.ID, ownerID, "checked, price was correct")
+	if err != nil {
+		t.Fatalf("ResolveFlag: %v", err)
+	}
+	if resolved.Status != "resolved" || resolved.ResolvedBy != ownerID || resolved.ResolutionNote == "" || resolved.ResolvedAt.IsZero() {
+		t.Fatalf("unexpected resolved flag: %+v", resolved)
+	}
+
+	openAfter, err := activitySvc.ListOpenFlags(ctx, ownerID, businessID)
+	if err != nil {
+		t.Fatalf("ListOpenFlags after resolve: %v", err)
+	}
+	if len(openAfter) != 0 {
+		t.Fatalf("expected no open flags after resolving the only one, got %+v", openAfter)
+	}
+
+	if _, err := activitySvc.ResolveFlag(ctx, ownerID, businessID, flag.ID, ownerID, "again"); err != activity.ErrFlagNotFound {
+		t.Fatalf("expected ErrFlagNotFound re-resolving an already-resolved flag, got %v", err)
+	}
+	if _, err := activitySvc.ResolveFlag(ctx, ownerID, businessID, uuid.New(), ownerID, "n/a"); err != activity.ErrFlagNotFound {
+		t.Fatalf("expected ErrFlagNotFound for an unknown flag id, got %v", err)
+	}
+}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import {
@@ -7,6 +7,7 @@ import {
   type ActivityEntry,
   type ActivityType,
 } from '../api/activity';
+import { ActivityDetailSheet } from '../components/ActivityDetailSheet';
 import { TimeGranularityView } from '../components/TimeGranularityView';
 import { describeActionError } from '../lib/errors';
 import type { DayValue } from '../lib/timeBuckets';
@@ -46,7 +47,8 @@ const TYPE_FILTERS: { value: ActivityType | ''; label: string }[] = [
 // A whole year of daily counts is fetched once; every coarser granularity
 // is derived from it client-side, so switching granularity is instant.
 export function Activity() {
-  const { selectedBusinessId } = useSession();
+  const { selectedBusinessId, csrfToken, memberships } = useSession();
+  const isOwner = memberships.find((m) => m.businessId === selectedBusinessId)?.role === 'owner';
 
   const [dailyData, setDailyData] = useState<DayValue[]>([]);
   const [heatmapError, setHeatmapError] = useState<string | null>(null);
@@ -55,6 +57,7 @@ export function Activity() {
   const [dayFilter, setDayFilter] = useState<string | null>(null);
   const [entries, setEntries] = useState<ActivityEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [openEntry, setOpenEntry] = useState<ActivityEntry | null>(null);
 
   const range = useMemo(() => {
     const end = new Date();
@@ -72,7 +75,7 @@ export function Activity() {
       );
   }, [selectedBusinessId, range]);
 
-  useEffect(() => {
+  const reload = useCallback(() => {
     if (!selectedBusinessId) return;
     const filter: { type?: ActivityType; startAt?: string; endAt?: string } = {};
     if (typeFilter) filter.type = typeFilter;
@@ -87,6 +90,10 @@ export function Activity() {
       .then(setEntries)
       .catch((err: unknown) => setLoadError(describeActionError(err, 'Could not load activity.')));
   }, [selectedBusinessId, typeFilter, dayFilter]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
 
   return (
     <div className="min-h-screen bg-jb-cream text-jb-ink pb-16">
@@ -150,7 +157,11 @@ export function Activity() {
             <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">Nothing here yet.</p>
           )}
           {(entries ?? []).map((e) => (
-            <div key={e.id} className="px-4 py-3.5 flex items-center justify-between gap-3">
+            <button
+              key={e.id}
+              onClick={() => setOpenEntry(e)}
+              className="w-full px-4 py-3.5 flex items-center justify-between gap-3 text-left hover:bg-jb-ink/[0.03] transition-colors"
+            >
               <div className="min-w-0">
                 <div className="text-[13px] text-jb-ink/80">{e.summary}</div>
                 <div className="text-[11px] text-jb-ink/40 mt-0.5">
@@ -168,10 +179,21 @@ export function Activity() {
               >
                 {e.amountKobo > 0 ? '+' : e.amountKobo < 0 ? '−' : ''}₦{formatNaira(e.amountKobo)}
               </div>
-            </div>
+            </button>
           ))}
         </div>
       </div>
+
+      {openEntry && selectedBusinessId && (
+        <ActivityDetailSheet
+          entry={openEntry}
+          isOwner={isOwner}
+          businessId={selectedBusinessId}
+          csrfToken={csrfToken}
+          onClose={() => setOpenEntry(null)}
+          onChanged={reload}
+        />
+      )}
     </div>
   );
 }

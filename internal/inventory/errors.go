@@ -17,6 +17,18 @@ var (
 	// catalogue.Variant's own doc comment) -- there is no such thing as
 	// "restocking" a snooker game.
 	ErrVariantNotTracked = errors.New("this item does not track inventory and cannot be restocked")
+	ErrReceiptNotFound   = errors.New("stock receipt not found")
+	// ErrReceiptAlreadyReversed mirrors sales.ErrAlreadyReversed -- at most
+	// one reversal per receipt, checked query-time (no DB-level unique),
+	// same tolerance ReverseSale already accepts.
+	ErrReceiptAlreadyReversed = errors.New("this stock receipt has already been reversed")
+	// ErrReceiptPartiallyConsumed is returned when some of the receipt's
+	// stock has already been sold (a lot's remaining_quantity is less than
+	// what it received) -- undoing the receipt would either understate
+	// what was genuinely sold or drive the balance negative. The owner
+	// should use a manual inventory adjustment instead, which corrects a
+	// quantity without rewriting receiving history.
+	ErrReceiptPartiallyConsumed = errors.New("some of this receipt's stock has already been sold; use a manual adjustment instead")
 )
 
 // pgErrorCode reports err's Postgres SQLSTATE code, if any. Duplicated

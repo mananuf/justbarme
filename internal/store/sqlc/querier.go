@@ -29,6 +29,7 @@ type Querier interface {
 	CountSalesByDay(ctx context.Context, arg CountSalesByDayParams) ([]CountSalesByDayRow, error)
 	CountStockReceiptsByDay(ctx context.Context, arg CountStockReceiptsByDayParams) ([]CountStockReceiptsByDayRow, error)
 	CountUsers(ctx context.Context) (int64, error)
+	CreateActivityFlag(ctx context.Context, arg CreateActivityFlagParams) (ActivityFlag, error)
 	CreateBill(ctx context.Context, arg CreateBillParams) (Bill, error)
 	CreateBillWriteOff(ctx context.Context, arg CreateBillWriteOffParams) (BillWriteOff, error)
 	CreateBusiness(ctx context.Context, arg CreateBusinessParams) (Business, error)
@@ -42,6 +43,7 @@ type Querier interface {
 	CreateInventoryAdjustmentRequest(ctx context.Context, arg CreateInventoryAdjustmentRequestParams) (InventoryAdjustmentRequest, error)
 	CreateInventoryEvent(ctx context.Context, arg CreateInventoryEventParams) (InventoryEvent, error)
 	CreateInventoryEventForAdjustment(ctx context.Context, arg CreateInventoryEventForAdjustmentParams) (InventoryEvent, error)
+	CreateInventoryEventForReceiptReversal(ctx context.Context, arg CreateInventoryEventForReceiptReversalParams) (InventoryEvent, error)
 	CreateInventoryEventForSale(ctx context.Context, arg CreateInventoryEventForSaleParams) (InventoryEvent, error)
 	CreateInventoryMovement(ctx context.Context, arg CreateInventoryMovementParams) (InventoryMovement, error)
 	// sale_item_id is only set when this negative_inventory review was opened
@@ -58,6 +60,7 @@ type Querier interface {
 	CreatePlatformStaff(ctx context.Context, arg CreatePlatformStaffParams) (PlatformStaff, error)
 	CreatePrice(ctx context.Context, arg CreatePriceParams) (ProductPrice, error)
 	CreateProduct(ctx context.Context, arg CreateProductParams) (Product, error)
+	CreateReversalStockReceipt(ctx context.Context, arg CreateReversalStockReceiptParams) (StockReceipt, error)
 	CreateSale(ctx context.Context, arg CreateSaleParams) (Sale, error)
 	CreateSaleItem(ctx context.Context, arg CreateSaleItemParams) (SaleItem, error)
 	CreateSaleItemLotAllocation(ctx context.Context, arg CreateSaleItemLotAllocationParams) (SaleItemLotAllocation, error)
@@ -79,6 +82,7 @@ type Querier interface {
 	GetActiveBillShareLinkByTokenHash(ctx context.Context, tokenHash string) (BillShareLink, error)
 	GetActivePlatformSessionByTokenHash(ctx context.Context, tokenHash string) (PlatformSession, error)
 	GetActiveSessionByTokenHash(ctx context.Context, tokenHash string) (Session, error)
+	GetActivityFlagByID(ctx context.Context, arg GetActivityFlagByIDParams) (ActivityFlag, error)
 	GetBillByID(ctx context.Context, arg GetBillByIDParams) (Bill, error)
 	GetBillForUpdate(ctx context.Context, arg GetBillForUpdateParams) (Bill, error)
 	GetBusinessByID(ctx context.Context, id uuid.UUID) (Business, error)
@@ -93,6 +97,7 @@ type Querier interface {
 	GetExpenseCategoryByName(ctx context.Context, arg GetExpenseCategoryByNameParams) (ExpenseCategory, error)
 	GetIdentityVerificationByID(ctx context.Context, id uuid.UUID) (IdentityVerification, error)
 	GetInventoryAdjustmentRequestByIdempotencyKey(ctx context.Context, arg GetInventoryAdjustmentRequestByIdempotencyKeyParams) (InventoryAdjustmentRequest, error)
+	GetInventoryAdjustmentRequestDetailed(ctx context.Context, arg GetInventoryAdjustmentRequestDetailedParams) (GetInventoryAdjustmentRequestDetailedRow, error)
 	// Used to compare a stock count's submitted expected_quantity against the
 	// live truth at processing time (docs/PHASE_INVENTORY_COUNTS_AND_
 	// ADJUSTMENTS.md: staleness is a value comparison, not a timestamp one).
@@ -113,11 +118,13 @@ type Querier interface {
 	GetReversalOfExpense(ctx context.Context, arg GetReversalOfExpenseParams) (Expense, error)
 	GetReversalOfPayment(ctx context.Context, arg GetReversalOfPaymentParams) (Payment, error)
 	GetReversalOfSale(ctx context.Context, arg GetReversalOfSaleParams) (Sale, error)
+	GetReversalOfStockReceipt(ctx context.Context, arg GetReversalOfStockReceiptParams) (StockReceipt, error)
 	GetSaleByID(ctx context.Context, arg GetSaleByIDParams) (Sale, error)
 	GetSaleByIdempotencyKey(ctx context.Context, arg GetSaleByIdempotencyKeyParams) (Sale, error)
 	GetSignupVerificationByEmail(ctx context.Context, email string) (SignupVerification, error)
 	GetSignupVerificationByPhone(ctx context.Context, phone pgtype.Text) (SignupVerification, error)
 	GetStockCountByIdempotencyKey(ctx context.Context, arg GetStockCountByIdempotencyKeyParams) (StockCount, error)
+	GetStockReceiptByID(ctx context.Context, arg GetStockReceiptByIDParams) (StockReceipt, error)
 	GetTableByID(ctx context.Context, arg GetTableByIDParams) (Table, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
@@ -190,6 +197,7 @@ type Querier interface {
 	ListLotsForAllocation(ctx context.Context, arg ListLotsForAllocationParams) ([]StockLot, error)
 	ListMembersForBusiness(ctx context.Context, businessID uuid.UUID) ([]ListMembersForBusinessRow, error)
 	ListMembershipsForUser(ctx context.Context, userID uuid.UUID) ([]ListMembershipsForUserRow, error)
+	ListOpenActivityFlags(ctx context.Context, businessID uuid.UUID) ([]ActivityFlag, error)
 	ListOpenBills(ctx context.Context, businessID uuid.UUID) ([]Bill, error)
 	ListOpenInventoryReviewsDetailed(ctx context.Context, businessID uuid.UUID) ([]ListOpenInventoryReviewsDetailedRow, error)
 	ListOutstandingBills(ctx context.Context, businessID uuid.UUID) ([]Bill, error)
@@ -217,11 +225,14 @@ type Querier interface {
 	// ACTIVITY_REPORTS.md §3) -- no new schema. A count line's date is its
 	// parent count's started_at, since a line itself carries no timestamp.
 	ListStockDiscrepancies(ctx context.Context, arg ListStockDiscrepanciesParams) ([]ListStockDiscrepanciesRow, error)
+	ListStockLotsByReceiptLineIDs(ctx context.Context, arg ListStockLotsByReceiptLineIDsParams) ([]StockLot, error)
+	ListStockReceiptLinesDetailed(ctx context.Context, arg ListStockReceiptLinesDetailedParams) ([]ListStockReceiptLinesDetailedRow, error)
 	ListTables(ctx context.Context, businessID uuid.UUID) ([]Table, error)
 	ListVariantsByBusiness(ctx context.Context, businessID uuid.UUID) ([]ProductVariant, error)
 	ListVariantsByProduct(ctx context.Context, arg ListVariantsByProductParams) ([]ProductVariant, error)
 	ListWriteOffsByBillID(ctx context.Context, arg ListWriteOffsByBillIDParams) ([]BillWriteOff, error)
 	RejectInventoryAdjustmentRequest(ctx context.Context, arg RejectInventoryAdjustmentRequestParams) (InventoryAdjustmentRequest, error)
+	ResolveActivityFlag(ctx context.Context, arg ResolveActivityFlagParams) (ActivityFlag, error)
 	ResolveInventoryReview(ctx context.Context, arg ResolveInventoryReviewParams) (InventoryReview, error)
 	ResolveSaleReview(ctx context.Context, arg ResolveSaleReviewParams) (SaleReview, error)
 	RevokeAllPlatformSessionsForStaff(ctx context.Context, arg RevokeAllPlatformSessionsForStaffParams) error

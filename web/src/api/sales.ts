@@ -123,3 +123,27 @@ export async function salesSummary(
   );
   return { todayTotalKobo: raw.today_total_kobo, todaySaleCount: raw.today_sale_count };
 }
+
+// getSale wraps GET /api/v1/sales/{id} -- the activity feed's "tap to see
+// what happened" breakdown for a sale.
+export async function getSale(saleId: string, businessId: string): Promise<Sale> {
+  const raw = await apiRequest<RawSale>(`/api/v1/sales/${saleId}`, {
+    headers: { 'X-Business-ID': businessId },
+  });
+  return toSale(raw);
+}
+
+// reverseSale wraps POST /api/v1/sales/{id}/reverse (owner-only). "Edit" for
+// a sale: the original is never changed, a new equal-and-opposite sale is
+// posted instead.
+export async function reverseSale(
+  saleId: string,
+  businessId: string,
+  csrfToken: string,
+): Promise<Sale> {
+  const raw = await apiRequest<RawSale>(`/api/v1/sales/${saleId}/reverse`, {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
+  });
+  return toSale(raw);
+}

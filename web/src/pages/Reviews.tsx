@@ -15,6 +15,7 @@ import {
   type InventoryReview,
   type SaleReview,
 } from '../api/reviews';
+import { listActivityFlags, resolveActivityFlag, type ActivityFlag } from '../api/activity';
 import { describeActionError } from '../lib/errors';
 import { useSession } from '../lib/session';
 
@@ -59,6 +60,13 @@ function inventoryReviewLabel(review: InventoryReview): string {
   }
 }
 
+const FLAG_SOURCE_LABELS: Record<ActivityFlag['sourceType'], string> = {
+  sale: 'Sale',
+  expense: 'Expense',
+  inventory_adjustment: 'Stock adjustment',
+  stock_receipt: 'Stock received',
+};
+
 // Owner-facing queue combining three related, but distinct, flags:
 // pending adjustment requests (approve/reject, from Stock.tsx's "Report
 // issue" flow), inventory reviews (negative balance or a stale stock
@@ -95,6 +103,13 @@ export function Reviews() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [flags, setFlags] = useState<ActivityFlag[] | null>(null);
+  const [flagsError, setFlagsError] = useState<string | null>(null);
+  const [resolvingFlagId, setResolvingFlagId] = useState<string | null>(null);
+  const [flagNote, setFlagNote] = useState('');
+  const [flagActionError, setFlagActionError] = useState<string | null>(null);
+  const [flagBusy, setFlagBusy] = useState(false);
+
   const loadAdjustments = useCallback(() => {
     if (!selectedBusinessId) return;
     listPendingAdjustments(selectedBusinessId)
@@ -122,6 +137,15 @@ export function Reviews() {
     listSaleReviews(selectedBusinessId)
       .then(setReviews)
       .catch((err: unknown) => setLoadError(describeActionError(err, 'Could not load reviews.')));
+  }, [selectedBusinessId]);
+
+  useEffect(() => {
+    if (!selectedBusinessId) return;
+    listActivityFlags(selectedBusinessId)
+      .then(setFlags)
+      .catch((err: unknown) =>
+        setFlagsError(describeActionError(err, 'Could not load flagged activity.')),
+      );
   }, [selectedBusinessId]);
 
   function startDeciding(id: string, action: 'approve' | 'reject') {
@@ -209,6 +233,31 @@ export function Reviews() {
       setActionError(describeActionError(err, 'Could not resolve this review.'));
     } finally {
       setBusy(false);
+    }
+  }
+
+  function startResolvingFlag(id: string) {
+    setResolvingFlagId(id);
+    setFlagNote('');
+    setFlagActionError(null);
+  }
+
+  // Only marks the flag resolved -- any actual fix (reversing a sale,
+  // posting a new adjustment) happens separately, from Activity's own
+  // detail view, the same resolve-the-decision-not-the-record shape every
+  // other review on this page already follows.
+  async function handleResolveFlag(id: string) {
+    if (!selectedBusinessId || !csrfToken) return;
+    setFlagBusy(true);
+    setFlagActionError(null);
+    try {
+      await resolveActivityFlag(id, flagNote.trim(), selectedBusinessId, csrfToken);
+      setFlags((prev) => (prev ?? []).filter((f) => f.id !== id));
+      setResolvingFlagId(null);
+    } catch (err) {
+      setFlagActionError(describeActionError(err, 'Could not resolve this flag.'));
+    } finally {
+      setFlagBusy(false);
     }
   }
 
@@ -404,6 +453,77 @@ export function Reviews() {
                     <button
                       onClick={() => setResolvingInventoryId(null)}
                       disabled={inventoryBusy}
+                      className="text-[12.5px] text-jb-ink/45 hover:text-jb-ink transition-colors disabled:opacity-40"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="text-[11px] font-medium text-jb-ink/40 uppercase tracking-wide mb-2">
+          Flagged by staff
+        </div>
+        {flagsError && <p className="text-[13px] text-red-700 mb-3">{flagsError}</p>}
+        <div className="rounded-xl border border-jb-ink/10 bg-white/60 divide-y divide-jb-ink/[0.06] overflow-hidden mb-6">
+          {flags === null && <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">Loading…</p>}
+          {flags !== null && flags.length === 0 && (
+            <p className="text-[13px] text-jb-ink/40 px-4 py-3.5">
+              Nothing flagged — open Activity to see everything your team has recorded.
+            </p>
+          )}
+          {(flags ?? []).map((flag) => (
+            <div key={flag.id} className="px-4 py-3.5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[13px] text-jb-ink/80">{flag.reason}</div>
+                  <div className="text-[11px] text-jb-ink/40 mt-1">
+                    {FLAG_SOURCE_LABELS[flag.sourceType]} ·{' '}
+                    {flag.flaggedByName && (
+                      <span className="font-semibold text-jb-ink/55">{flag.flaggedByName}</span>
+                    )}{' '}
+                    {formatWhen(flag.createdAt)}
+                  </div>
+                </div>
+                {resolvingFlagId !== flag.id && (
+                  <button
+                    onClick={() => startResolvingFlag(flag.id)}
+                    className="shrink-0 text-[12.5px] text-jb-ink/60 hover:text-jb-ink transition-colors"
+                  >
+                    Resolve
+                  </button>
+                )}
+              </div>
+              <p className="text-[11px] text-jb-ink/35 mt-1">
+                Open it in Activity to see the full breakdown, or to fix it.
+              </p>
+
+              {resolvingFlagId === flag.id && (
+                <div className="mt-3">
+                  <textarea
+                    value={flagNote}
+                    onChange={(e) => setFlagNote(e.target.value)}
+                    placeholder="What did you check? (optional)"
+                    rows={2}
+                    className="w-full rounded-lg border border-jb-ink/15 bg-white px-3 py-2 text-[13px] text-jb-ink placeholder:text-jb-ink/30 focus:outline-none focus:border-jb-ink/40 transition-colors mb-2"
+                  />
+                  {flagActionError && (
+                    <p className="text-[12.5px] text-red-700 mb-2">{flagActionError}</p>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => void handleResolveFlag(flag.id)}
+                      disabled={flagBusy}
+                      className="rounded-lg bg-jb-ink text-jb-cream text-[12.5px] font-medium px-4 py-2 hover:bg-jb-green transition-colors disabled:opacity-40"
+                    >
+                      {flagBusy ? 'Resolving…' : 'Mark resolved'}
+                    </button>
+                    <button
+                      onClick={() => setResolvingFlagId(null)}
+                      disabled={flagBusy}
                       className="text-[12.5px] text-jb-ink/45 hover:text-jb-ink transition-colors disabled:opacity-40"
                     >
                       Cancel

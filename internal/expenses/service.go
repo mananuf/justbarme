@@ -218,3 +218,24 @@ func (s *Service) SumExpensesSince(ctx context.Context, userID, businessID uuid.
 	}
 	return Summary{TotalKobo: row.Total, Count: row.Count}, nil
 }
+
+// GetExpense returns one expense (any status) for the activity feed's
+// detail view.
+func (s *Service) GetExpense(ctx context.Context, userID, businessID, expenseID uuid.UUID) (Expense, error) {
+	var result Expense
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		row, err := q.GetExpenseByID(ctx, sqlc.GetExpenseByIDParams{BusinessID: businessID, ID: expenseID})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrExpenseNotFound
+			}
+			return fmt.Errorf("get expense: %w", err)
+		}
+		result = toExpense(row)
+		return nil
+	})
+	if err != nil {
+		return Expense{}, err
+	}
+	return result, nil
+}

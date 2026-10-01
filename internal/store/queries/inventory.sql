@@ -185,3 +185,43 @@ LEFT JOIN inventory_adjustment_requests ar ON ar.business_id = m.business_id AND
 WHERE m.business_id = $1 AND m.variant_id = $2
 ORDER BY m.created_at DESC
 LIMIT $3;
+
+-- name: GetStockReceiptByID :one
+SELECT * FROM stock_receipts WHERE business_id = $1 AND id = $2;
+
+-- name: CreateReversalStockReceipt :one
+INSERT INTO stock_receipts (id, business_id, location_id, received_by, received_at, reversal_of_receipt_id)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING *;
+
+-- name: GetReversalOfStockReceipt :one
+SELECT * FROM stock_receipts WHERE business_id = $1 AND reversal_of_receipt_id = $2;
+
+-- name: ListStockReceiptLinesDetailed :many
+SELECT
+    l.id, l.receipt_id, l.variant_id, l.quantity, l.total_cost_kobo,
+    v.name AS variant_name, p.name AS product_name
+FROM stock_receipt_lines l
+JOIN product_variants v ON v.business_id = l.business_id AND v.id = l.variant_id
+JOIN products p ON p.business_id = v.business_id AND p.id = v.product_id
+WHERE l.business_id = $1 AND l.receipt_id = $2
+ORDER BY l.created_at;
+
+-- name: ListStockLotsByReceiptLineIDs :many
+SELECT * FROM stock_lots
+WHERE business_id = $1 AND receipt_line_id = ANY(sqlc.arg(receipt_line_ids)::uuid[]);
+
+-- name: CreateInventoryEventForReceiptReversal :one
+INSERT INTO inventory_events (id, business_id, type, actor_id, receipt_id)
+VALUES ($1, $2, 'receipt_reversal', $3, $4)
+RETURNING *;
+
+-- name: GetInventoryAdjustmentRequestDetailed :one
+SELECT
+    r.id, r.location_id, r.variant_id, r.requested_by, r.quantity_delta,
+    r.reason_category, r.reason_note, r.source_count_line_id, r.status, r.created_at,
+    v.name AS variant_name, p.name AS product_name
+FROM inventory_adjustment_requests r
+JOIN product_variants v ON v.business_id = r.business_id AND v.id = r.variant_id
+JOIN products p ON p.business_id = v.business_id AND p.id = v.product_id
+WHERE r.business_id = $1 AND r.id = $2;

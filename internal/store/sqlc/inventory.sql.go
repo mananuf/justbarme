@@ -180,6 +180,41 @@ func (q *Queries) CreateInventoryEventForAdjustment(ctx context.Context, arg Cre
 	return i, err
 }
 
+const createInventoryEventForReceiptReversal = `-- name: CreateInventoryEventForReceiptReversal :one
+INSERT INTO inventory_events (id, business_id, type, actor_id, receipt_id)
+VALUES ($1, $2, 'receipt_reversal', $3, $4)
+RETURNING id, business_id, type, actor_id, receipt_id, occurred_at, created_at, sale_id, adjustment_request_id
+`
+
+type CreateInventoryEventForReceiptReversalParams struct {
+	ID         uuid.UUID   `json:"id"`
+	BusinessID uuid.UUID   `json:"business_id"`
+	ActorID    uuid.UUID   `json:"actor_id"`
+	ReceiptID  pgtype.UUID `json:"receipt_id"`
+}
+
+func (q *Queries) CreateInventoryEventForReceiptReversal(ctx context.Context, arg CreateInventoryEventForReceiptReversalParams) (InventoryEvent, error) {
+	row := q.db.QueryRow(ctx, createInventoryEventForReceiptReversal,
+		arg.ID,
+		arg.BusinessID,
+		arg.ActorID,
+		arg.ReceiptID,
+	)
+	var i InventoryEvent
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.Type,
+		&i.ActorID,
+		&i.ReceiptID,
+		&i.OccurredAt,
+		&i.CreatedAt,
+		&i.SaleID,
+		&i.AdjustmentRequestID,
+	)
+	return i, err
+}
+
 const createInventoryMovement = `-- name: CreateInventoryMovement :one
 INSERT INTO inventory_movements (id, business_id, event_id, variant_id, location_id, quantity_delta)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -265,6 +300,43 @@ func (q *Queries) CreateInventoryReview(ctx context.Context, arg CreateInventory
 		&i.ResolvedAt,
 		&i.CreatedAt,
 		&i.SaleItemID,
+	)
+	return i, err
+}
+
+const createReversalStockReceipt = `-- name: CreateReversalStockReceipt :one
+INSERT INTO stock_receipts (id, business_id, location_id, received_by, received_at, reversal_of_receipt_id)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, business_id, location_id, received_by, received_at, created_at, reversal_of_receipt_id
+`
+
+type CreateReversalStockReceiptParams struct {
+	ID                  uuid.UUID          `json:"id"`
+	BusinessID          uuid.UUID          `json:"business_id"`
+	LocationID          uuid.UUID          `json:"location_id"`
+	ReceivedBy          uuid.UUID          `json:"received_by"`
+	ReceivedAt          pgtype.Timestamptz `json:"received_at"`
+	ReversalOfReceiptID pgtype.UUID        `json:"reversal_of_receipt_id"`
+}
+
+func (q *Queries) CreateReversalStockReceipt(ctx context.Context, arg CreateReversalStockReceiptParams) (StockReceipt, error) {
+	row := q.db.QueryRow(ctx, createReversalStockReceipt,
+		arg.ID,
+		arg.BusinessID,
+		arg.LocationID,
+		arg.ReceivedBy,
+		arg.ReceivedAt,
+		arg.ReversalOfReceiptID,
+	)
+	var i StockReceipt
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.LocationID,
+		&i.ReceivedBy,
+		&i.ReceivedAt,
+		&i.CreatedAt,
+		&i.ReversalOfReceiptID,
 	)
 	return i, err
 }
@@ -436,7 +508,7 @@ func (q *Queries) CreateStockLot(ctx context.Context, arg CreateStockLotParams) 
 const createStockReceipt = `-- name: CreateStockReceipt :one
 INSERT INTO stock_receipts (id, business_id, location_id, received_by, received_at)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, business_id, location_id, received_by, received_at, created_at
+RETURNING id, business_id, location_id, received_by, received_at, created_at, reversal_of_receipt_id
 `
 
 type CreateStockReceiptParams struct {
@@ -463,6 +535,7 @@ func (q *Queries) CreateStockReceipt(ctx context.Context, arg CreateStockReceipt
 		&i.ReceivedBy,
 		&i.ReceivedAt,
 		&i.CreatedAt,
+		&i.ReversalOfReceiptID,
 	)
 	return i, err
 }
@@ -568,6 +641,57 @@ func (q *Queries) GetInventoryAdjustmentRequestByIdempotencyKey(ctx context.Cont
 	return i, err
 }
 
+const getInventoryAdjustmentRequestDetailed = `-- name: GetInventoryAdjustmentRequestDetailed :one
+SELECT
+    r.id, r.location_id, r.variant_id, r.requested_by, r.quantity_delta,
+    r.reason_category, r.reason_note, r.source_count_line_id, r.status, r.created_at,
+    v.name AS variant_name, p.name AS product_name
+FROM inventory_adjustment_requests r
+JOIN product_variants v ON v.business_id = r.business_id AND v.id = r.variant_id
+JOIN products p ON p.business_id = v.business_id AND p.id = v.product_id
+WHERE r.business_id = $1 AND r.id = $2
+`
+
+type GetInventoryAdjustmentRequestDetailedParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	ID         uuid.UUID `json:"id"`
+}
+
+type GetInventoryAdjustmentRequestDetailedRow struct {
+	ID                uuid.UUID          `json:"id"`
+	LocationID        uuid.UUID          `json:"location_id"`
+	VariantID         uuid.UUID          `json:"variant_id"`
+	RequestedBy       uuid.UUID          `json:"requested_by"`
+	QuantityDelta     int32              `json:"quantity_delta"`
+	ReasonCategory    string             `json:"reason_category"`
+	ReasonNote        string             `json:"reason_note"`
+	SourceCountLineID pgtype.UUID        `json:"source_count_line_id"`
+	Status            string             `json:"status"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	VariantName       string             `json:"variant_name"`
+	ProductName       string             `json:"product_name"`
+}
+
+func (q *Queries) GetInventoryAdjustmentRequestDetailed(ctx context.Context, arg GetInventoryAdjustmentRequestDetailedParams) (GetInventoryAdjustmentRequestDetailedRow, error) {
+	row := q.db.QueryRow(ctx, getInventoryAdjustmentRequestDetailed, arg.BusinessID, arg.ID)
+	var i GetInventoryAdjustmentRequestDetailedRow
+	err := row.Scan(
+		&i.ID,
+		&i.LocationID,
+		&i.VariantID,
+		&i.RequestedBy,
+		&i.QuantityDelta,
+		&i.ReasonCategory,
+		&i.ReasonNote,
+		&i.SourceCountLineID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.VariantName,
+		&i.ProductName,
+	)
+	return i, err
+}
+
 const getInventoryBalance = `-- name: GetInventoryBalance :one
 SELECT COALESCE(
     (SELECT quantity FROM inventory_balances WHERE business_id = $1 AND variant_id = $2 AND location_id = $3),
@@ -593,6 +717,30 @@ func (q *Queries) GetInventoryBalance(ctx context.Context, arg GetInventoryBalan
 	return quantity, err
 }
 
+const getReversalOfStockReceipt = `-- name: GetReversalOfStockReceipt :one
+SELECT id, business_id, location_id, received_by, received_at, created_at, reversal_of_receipt_id FROM stock_receipts WHERE business_id = $1 AND reversal_of_receipt_id = $2
+`
+
+type GetReversalOfStockReceiptParams struct {
+	BusinessID          uuid.UUID   `json:"business_id"`
+	ReversalOfReceiptID pgtype.UUID `json:"reversal_of_receipt_id"`
+}
+
+func (q *Queries) GetReversalOfStockReceipt(ctx context.Context, arg GetReversalOfStockReceiptParams) (StockReceipt, error) {
+	row := q.db.QueryRow(ctx, getReversalOfStockReceipt, arg.BusinessID, arg.ReversalOfReceiptID)
+	var i StockReceipt
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.LocationID,
+		&i.ReceivedBy,
+		&i.ReceivedAt,
+		&i.CreatedAt,
+		&i.ReversalOfReceiptID,
+	)
+	return i, err
+}
+
 const getStockCountByIdempotencyKey = `-- name: GetStockCountByIdempotencyKey :one
 SELECT id, business_id, location_id, counted_by, idempotency_key, started_at, created_at FROM stock_counts WHERE business_id = $1 AND idempotency_key = $2
 `
@@ -613,6 +761,30 @@ func (q *Queries) GetStockCountByIdempotencyKey(ctx context.Context, arg GetStoc
 		&i.IdempotencyKey,
 		&i.StartedAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getStockReceiptByID = `-- name: GetStockReceiptByID :one
+SELECT id, business_id, location_id, received_by, received_at, created_at, reversal_of_receipt_id FROM stock_receipts WHERE business_id = $1 AND id = $2
+`
+
+type GetStockReceiptByIDParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	ID         uuid.UUID `json:"id"`
+}
+
+func (q *Queries) GetStockReceiptByID(ctx context.Context, arg GetStockReceiptByIDParams) (StockReceipt, error) {
+	row := q.db.QueryRow(ctx, getStockReceiptByID, arg.BusinessID, arg.ID)
+	var i StockReceipt
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.LocationID,
+		&i.ReceivedBy,
+		&i.ReceivedAt,
+		&i.CreatedAt,
+		&i.ReversalOfReceiptID,
 	)
 	return i, err
 }
@@ -983,6 +1155,102 @@ func (q *Queries) ListStockCountLines(ctx context.Context, arg ListStockCountLin
 			&i.Variance,
 			&i.IsStale,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStockLotsByReceiptLineIDs = `-- name: ListStockLotsByReceiptLineIDs :many
+SELECT id, business_id, receipt_line_id, variant_id, location_id, received_quantity, total_cost_kobo, received_at, created_at, remaining_quantity, source FROM stock_lots
+WHERE business_id = $1 AND receipt_line_id = ANY($2::uuid[])
+`
+
+type ListStockLotsByReceiptLineIDsParams struct {
+	BusinessID     uuid.UUID   `json:"business_id"`
+	ReceiptLineIds []uuid.UUID `json:"receipt_line_ids"`
+}
+
+func (q *Queries) ListStockLotsByReceiptLineIDs(ctx context.Context, arg ListStockLotsByReceiptLineIDsParams) ([]StockLot, error) {
+	rows, err := q.db.Query(ctx, listStockLotsByReceiptLineIDs, arg.BusinessID, arg.ReceiptLineIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StockLot{}
+	for rows.Next() {
+		var i StockLot
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.ReceiptLineID,
+			&i.VariantID,
+			&i.LocationID,
+			&i.ReceivedQuantity,
+			&i.TotalCostKobo,
+			&i.ReceivedAt,
+			&i.CreatedAt,
+			&i.RemainingQuantity,
+			&i.Source,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStockReceiptLinesDetailed = `-- name: ListStockReceiptLinesDetailed :many
+SELECT
+    l.id, l.receipt_id, l.variant_id, l.quantity, l.total_cost_kobo,
+    v.name AS variant_name, p.name AS product_name
+FROM stock_receipt_lines l
+JOIN product_variants v ON v.business_id = l.business_id AND v.id = l.variant_id
+JOIN products p ON p.business_id = v.business_id AND p.id = v.product_id
+WHERE l.business_id = $1 AND l.receipt_id = $2
+ORDER BY l.created_at
+`
+
+type ListStockReceiptLinesDetailedParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	ReceiptID  uuid.UUID `json:"receipt_id"`
+}
+
+type ListStockReceiptLinesDetailedRow struct {
+	ID            uuid.UUID `json:"id"`
+	ReceiptID     uuid.UUID `json:"receipt_id"`
+	VariantID     uuid.UUID `json:"variant_id"`
+	Quantity      int32     `json:"quantity"`
+	TotalCostKobo int64     `json:"total_cost_kobo"`
+	VariantName   string    `json:"variant_name"`
+	ProductName   string    `json:"product_name"`
+}
+
+func (q *Queries) ListStockReceiptLinesDetailed(ctx context.Context, arg ListStockReceiptLinesDetailedParams) ([]ListStockReceiptLinesDetailedRow, error) {
+	rows, err := q.db.Query(ctx, listStockReceiptLinesDetailed, arg.BusinessID, arg.ReceiptID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListStockReceiptLinesDetailedRow{}
+	for rows.Next() {
+		var i ListStockReceiptLinesDetailedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ReceiptID,
+			&i.VariantID,
+			&i.Quantity,
+			&i.TotalCostKobo,
+			&i.VariantName,
+			&i.ProductName,
 		); err != nil {
 			return nil, err
 		}

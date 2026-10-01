@@ -28,6 +28,12 @@ import { ProductGrid, type PickableVariant } from '../components/ProductGrid';
 import { useConnectivity } from '../hooks/useConnectivity';
 import { describeActionError } from '../lib/errors';
 import { useSession } from '../lib/session';
+import {
+  hasSeenPaymentHint,
+  hasSeenVoidHint,
+  markPaymentHintSeen,
+  markVoidHintSeen,
+} from '../lib/tabsHints';
 
 type PaymentMethod = 'cash' | 'transfer' | 'card';
 
@@ -89,6 +95,14 @@ export function Tabs() {
   const [writeOffReason, setWriteOffReason] = useState('');
   const [sharing, setSharing] = useState(false);
   const [shareLinkUrl, setShareLinkUrl] = useState<string | null>(null);
+
+  // paymentHintDismissed/voidHintBillId -- see lib/tabsHints.ts. The payment
+  // hint is a standing flag (hidden once dismissed, for every bill from
+  // then on); the void hint is tied to a specific bill id because it should
+  // only pop right when that bill is freshly opened, never when simply
+  // switching back to an older tab.
+  const [paymentHintDismissed, setPaymentHintDismissed] = useState(() => hasSeenPaymentHint());
+  const [voidHintBillId, setVoidHintBillId] = useState<string | null>(null);
 
   const refreshBillDetail = async (billId: string) => {
     if (!selectedBusinessId) return;
@@ -198,6 +212,7 @@ export function Tabs() {
       resetNewTabForm();
       refreshBills();
       setSelectedBillId(bill.id);
+      if (!hasSeenVoidHint()) setVoidHintBillId(bill.id);
     } catch (err) {
       setActionError(describeActionError(err, 'Could not open the tab.'));
     } finally {
@@ -731,9 +746,28 @@ export function Tabs() {
                     disabled={busy || !paymentAmount}
                     className="rounded-xl bg-jb-ink text-jb-cream text-[14px] font-medium px-5 disabled:opacity-40"
                   >
-                    Pay
+                    Paid
                   </button>
                 </div>
+                {!paymentHintDismissed &&
+                  activeDetail.status === 'open' &&
+                  activeDetail.payments.length === 0 && (
+                    <div className="mt-2 flex items-start justify-between gap-2 rounded-lg bg-jb-ink/[0.04] px-3 py-2">
+                      <p className="text-[12px] text-jb-ink/60">
+                        Enter what was paid and tap Paid — that&apos;s what marks this tab Paid
+                        instead of still owing, and is what makes Close tab appear below.
+                      </p>
+                      <button
+                        onClick={() => {
+                          markPaymentHintSeen();
+                          setPaymentHintDismissed(true);
+                        }}
+                        className="shrink-0 text-[11px] text-jb-ink/40 underline underline-offset-2"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  )}
               </div>
             )}
 
@@ -758,7 +792,7 @@ export function Tabs() {
             >
               {sharing ? 'Preparing link…' : 'Share bill'}
             </button>
-            {activeDetail.status === 'open' && (
+            {activeDetail.status === 'open' && activeDetail.payments.length > 0 && (
               <button
                 onClick={() => void handleCloseBill(activeBillId)}
                 disabled={busy}
@@ -777,6 +811,24 @@ export function Tabs() {
                   Void tab (only if nothing effective remains)
                 </button>
               )}
+            {voidHintBillId === activeBillId && (
+              <div className="flex items-start justify-between gap-2 rounded-lg bg-jb-ink/[0.04] px-3 py-2">
+                <p className="text-[12px] text-jb-ink/60">
+                  Void tab is for a tab that should never have been opened — nothing was effectively
+                  ordered or everything on it was removed. If drinks were served and money is owed
+                  or paid, use Close tab instead.
+                </p>
+                <button
+                  onClick={() => {
+                    markVoidHintSeen();
+                    setVoidHintBillId(null);
+                  }}
+                  className="shrink-0 text-[11px] text-jb-ink/40 underline underline-offset-2"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
             {isOwner && activeDetail.status === 'closed_unpaid' && (
               <div className="rounded-xl border border-jb-ink/10 bg-white p-3">
                 {!showWriteOff ? (

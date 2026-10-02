@@ -105,6 +105,56 @@ export interface PendingExpense {
   createdAt: string;
 }
 
+// A queued step of a bill's lifecycle (open, add a round, remove an item,
+// record a payment, close), written here before any network call -- same
+// "queue first" discipline as every other pending* table, extended to
+// cover a *sequence* of dependent actions rather than one atomic one,
+// since a bill (unlike a one-shot sale) is built up over several separate
+// calls. docs/PHASE_UNIFIED_SELL_BILLS.md's "Revision" section: walk-in
+// now goes through this exact same mechanism as a table/customer tab, so
+// it needed a real offline story again once it stopped being a special
+// case.
+//
+// localSessionId groups every action belonging to one bill's queue
+// together, replayed in `createdAt` order. billId is null until this
+// session's own 'open' action has synced -- every later action in the
+// same session is queued not knowing the real bill id yet, and
+// billActionsSync.ts resolves it at flush time, in order, rather than
+// this needing to guess or wait synchronously for a round trip.
+export type PendingBillActionPayload =
+  | { type: 'open'; tableId?: string; customerId?: string }
+  | {
+      type: 'add_round';
+      items: { variantId: string; description: string; quantity: number; unitPriceKobo: number }[];
+    }
+  | {
+      type: 'remove_item';
+      variantId: string;
+      description: string;
+      quantity: number;
+      unitPriceKobo: number;
+    }
+  | { type: 'record_payment'; amountKobo: number; method: 'cash' | 'transfer' | 'card' }
+  | { type: 'close' };
+
+export interface PendingBillAction {
+  id: string;
+  businessId: string;
+  localSessionId: string;
+  billId: string | null;
+  payload: PendingBillActionPayload;
+  idempotencyKey: string;
+  occurredAt: string;
+  createdAt: string;
+  // 'pending': not yet synced, will be retried. 'failed': synced enough to
+  // discover the server rejected it for a reason that reflects real,
+  // changed state (not connectivity) -- surfaced to the owner/staff
+  // viewing that bill rather than retried forever or silently dropped
+  // (docs/PHASE_UNIFIED_SELL_BILLS.md's "needs attention" design).
+  status: 'pending' | 'failed';
+  error?: string;
+}
+
 class JustbarmeDB extends Dexie {
   authMeta!: EntityTable<CachedIdentity, 'id'>;
   device!: EntityTable<DeviceRecord, 'id'>;
@@ -113,6 +163,7 @@ class JustbarmeDB extends Dexie {
   pendingStockCounts!: EntityTable<PendingStockCount, 'idempotencyKey'>;
   pendingAdjustmentRequests!: EntityTable<PendingAdjustmentRequest, 'idempotencyKey'>;
   pendingExpenses!: EntityTable<PendingExpense, 'idempotencyKey'>;
+  pendingBillActions!: EntityTable<PendingBillAction, 'id'>;
 
   constructor() {
     super('justbarme');
@@ -147,6 +198,16 @@ class JustbarmeDB extends Dexie {
       pendingStockCounts: 'idempotencyKey, businessId, status, createdAt',
       pendingAdjustmentRequests: 'idempotencyKey, businessId, status, createdAt',
       pendingExpenses: 'idempotencyKey, businessId, status, createdAt',
+    });
+    this.version(6).stores({
+      authMeta: 'id',
+      device: 'id',
+      pendingSales: 'idempotencyKey, businessId, status, createdAt',
+      catalogueCache: 'businessId',
+      pendingStockCounts: 'idempotencyKey, businessId, status, createdAt',
+      pendingAdjustmentRequests: 'idempotencyKey, businessId, status, createdAt',
+      pendingExpenses: 'idempotencyKey, businessId, status, createdAt',
+      pendingBillActions: 'id, businessId, localSessionId, billId, status, createdAt',
     });
   }
 }

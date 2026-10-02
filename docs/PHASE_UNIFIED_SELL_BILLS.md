@@ -372,3 +372,94 @@ not deferred -- see the "Explicitly out of scope"/"Not verified yet"
 sections above for the design this revision now makes load-bearing rather
 than optional (walk-in has no offline guarantee again until that queue
 exists).
+
+## Part 2: the offline queue for bill actions, built immediately after Part 1
+
+Per explicit instruction ("build 1, then do 2 immediately 1 is completed")
+— the offline-queue work this doc's "Revision" section made load-bearing
+(walk-in lost its one-shot offline guarantee once it started going through
+the same live-round mechanism as a tab) was built right after, not left as
+a someday-maybe.
+
+- **New Dexie table, `pendingBillActions`** (`web/src/lib/db.ts`, version
+  6): one row per queued bill-lifecycle step (`open`/`add_round`/
+  `remove_item`/`record_payment`/`close`), grouped by `localSessionId` and
+  replayed in `createdAt` order. `billId` is `null` until that session's
+  own `open` action has synced -- every later action in an unresolved
+  session is queued not yet knowing the real bill id, resolved at flush
+  time. An action already queued against an **already-resolved** bill
+  (anything originating from `BillWorkspace`, which always has a real
+  `billId` in hand) sets `localSessionId: billId` directly and skips the
+  "needs an open first" step entirely -- there's no meaningful difference
+  between "a fresh walk-in's first tap" and "one more round on a bill
+  that's always been open," so the same queue and the same flush function
+  cover both without a special case.
+- **`web/src/lib/billActionsSync.ts`**: `flushPendingBillActions` mirrors
+  `salesSync.ts`'s shape (oldest action first, stop at the first failure)
+  extended to a *session* of dependent actions rather than one atomic one.
+  Three outcomes per action: synced and removed; still offline (`OfflineError`,
+  left `pending`, retried next flush, stops only that session); or a real
+  server rejection believed to reflect changed state (marked `failed` with
+  a plain-language reason, left in the queue — the local "needs attention"
+  surface this doc's earlier sections called for, since there's no
+  server-side review mechanism for this). A replayed `close` is
+  specifically **not** treated as a failure just because the server
+  rejects it — the bill is re-fetched and only a genuine problem (still
+  `open`, e.g. a balance with no customer attached) is surfaced; a bill
+  already past `open` means the close already effectively happened.
+  Covered by 6 new unit tests (`billActionsSync.test.ts`, mocking
+  `api/tabs` directly) — one of which (a replayed failure needing its
+  `billId` visible afterward) caught and pinned a real bug during
+  development: the resolved bill id wasn't being stamped onto an action's
+  row before marking it `failed`, so a failure originating from an
+  unresolved session would have been permanently invisible to
+  `listFailedBillActions`/`BillWorkspace`'s by-`billId` lookups. Fixed by
+  stamping the resolved id onto a row the moment it's known, before
+  attempting that action, not after.
+- **`BillWorkspace` is now offline-aware for an already-resolved bill.**
+  `handleAdjustQuantity`/`handleRecordPayment`/`handleCloseBill` try the
+  live call first; on `OfflineError` they queue the equivalent action
+  (`localSessionId: billId`) instead of showing a failure. A flush-on-
+  reconnect effect (same trigger as `salesSync.ts`) drains anything queued
+  for this bill. A new **"PENDING (OFFLINE)" section** lists queued and
+  failed actions in plain language, with a **Discard** button for failed
+  ones (`discardBillAction`) — deliberately kept as its own section rather
+  than blended into the real, server-confirmed PAYMENTS/ROUNDS lists, per
+  `docs/ARCHITECTURE.md` §10.7's "don't present unconfirmed data as
+  current." The balance banner, current-order lines, and stock-limit
+  checks stay strictly server-derived; a double-add oversell risk while
+  offline is not new — it already has the existing negative-inventory
+  review safety net.
+- **`Sell.tsx` covers the one case `BillWorkspace` can't: a session with
+  no real bill id yet.** Tapping the first drink tries the live
+  `openBill`+`addSaleRound` call; on `OfflineError` it queues both
+  (`billId: null`, a fresh `localSessionId`) and shows a small local
+  "queued offline" view (not `BillWorkspace`, which needs a real id to
+  render) — a plain running list of what's been tapped, plus the same
+  product grid so more items can be added to the *same* session while
+  still offline. A flush-on-reconnect effect resolves the session the
+  moment its `open` action lands and switches straight into the real,
+  live `BillWorkspace` for that bill — from then on it's indistinguishable
+  from a bill that was always online.
+- **Deliberately not built, to bound this pass**: removing an item from an
+  unresolved offline session (add-only until a real bill id exists; once
+  resolved, full add/remove is available like any other bill), and a pill
+  for an unresolved session in the open-bills strip (tapping "+ New" while
+  one is pending abandons *this screen's view* of it, not the queued data
+  itself — it's still safely queued under its own `localSessionId` and
+  will resolve into its own real bill on the next successful flush,
+  whether or not anything is currently watching for it).
+- **Verified**: `tsc -b`, `npm run lint`, `npm run format:check`, and
+  `npm run build` all pass; the full Vitest suite (45 tests: the existing
+  39 plus 6 new ones for `billActionsSync.ts`, covering the open→add_round
+  happy path, queuing directly against an already-resolved bill, stopping
+  a session at `OfflineError` while leaving the rest pending, marking a
+  real rejection `failed` with a reason, treating a replayed close against
+  an already-closed bill as fulfilled, and one stuck session not blocking
+  a different bill's queue) all pass. **Not done**: an actual browser
+  click-through of the offline path specifically (airplane mode, tap,
+  reconnect, confirm it resolves) — Claude in Chrome's extension was not
+  connected in this environment for either round of this phase. This is a
+  real gap worth closing with a manual pass (or Playwright) before relying
+  on this in production, on top of every other named Playwright gap this
+  codebase already carries.

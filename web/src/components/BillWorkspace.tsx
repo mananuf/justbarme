@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
+import { OfflineError } from '../api/client';
 import { listProducts, type CatalogueProduct } from '../api/catalogue';
 import {
   addSaleRound,
@@ -18,7 +19,13 @@ import { ActivityDetailSheet } from './ActivityDetailSheet';
 import { CartPanel, type CartLine } from './CartPanel';
 import { ProductGrid, type PickableVariant } from './ProductGrid';
 import { useConnectivity } from '../hooks/useConnectivity';
+import {
+  discardBillAction,
+  flushPendingBillActions,
+  queueBillAction,
+} from '../lib/billActionsSync';
 import { formatNaira, statusLabel } from '../lib/billDisplay';
+import { db, type PendingBillAction } from '../lib/db';
 import { describeActionError } from '../lib/errors';
 import { useSession } from '../lib/session';
 import {
@@ -27,6 +34,25 @@ import {
   markPaymentHintSeen,
   markVoidHintSeen,
 } from '../lib/tabsHints';
+
+// summarizePendingAction renders one queued, not-yet-synced bill action in
+// plain language for the "PENDING (OFFLINE)" section -- the local
+// "needs attention"/"still queued" surface docs/PHASE_UNIFIED_SELL_BILLS.md
+// calls for, since there is no server-side review mechanism for this yet.
+function summarizePendingAction(a: PendingBillAction): string {
+  switch (a.payload.type) {
+    case 'open':
+      return 'Open this bill';
+    case 'add_round':
+      return a.payload.items.map((i) => `+${i.quantity} ${i.description}`).join(', ');
+    case 'remove_item':
+      return `−${a.payload.quantity} ${a.payload.description}`;
+    case 'record_payment':
+      return `${a.payload.method} payment of ₦${formatNaira(a.payload.amountKobo)}`;
+    case 'close':
+      return 'Close this bill';
+  }
+}
 
 type PaymentMethod = 'cash' | 'transfer' | 'card';
 
@@ -77,6 +103,18 @@ export function BillWorkspace({
   const [paymentHintDismissed, setPaymentHintDismissed] = useState(() => hasSeenPaymentHint());
   const [voidHintSeen, setVoidHintSeen] = useState(() => hasSeenVoidHint());
   const [openRound, setOpenRound] = useState<BillRound | null>(null);
+  // Queued actions for this specific bill that haven't synced yet
+  // ('pending') or that the server has already rejected for a reason that
+  // reflects real, changed state ('failed') -- shown as their own section
+  // rather than blended into `detail`'s server-confirmed rounds/payments,
+  // per this codebase's "don't present stale/unconfirmed data as current"
+  // rule (docs/ARCHITECTURE.md §10.7).
+  const [pendingActions, setPendingActions] = useState<PendingBillAction[]>([]);
+
+  const refreshPendingActions = async () => {
+    const rows = await db.pendingBillActions.where('billId').equals(billId).toArray();
+    setPendingActions(rows);
+  };
 
   const refreshDetail = async () => {
     if (!selectedBusinessId) return;
@@ -104,10 +142,27 @@ export function BillWorkspace({
       setLoadError(null);
       if (!selectedBusinessId) return;
       await refreshDetail();
+      await refreshPendingActions();
     })();
     refreshProducts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBusinessId, billId]);
+
+  // Drains this device's bill-action queue whenever connectivity returns --
+  // same trigger salesSync.ts's flushPendingSales already uses, extended
+  // to a bill's multi-step actions. Harmless to run even when nothing of
+  // this bill's own is queued; flushPendingBillActions only ever touches
+  // rows that exist.
+  useEffect(() => {
+    if (!isOnline || !selectedBusinessId || !csrfToken) return;
+    void (async () => {
+      await flushPendingBillActions(selectedBusinessId, csrfToken);
+      await refreshDetail();
+      await refreshPendingActions();
+      onBillChanged?.();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnline, selectedBusinessId, csrfToken, billId]);
 
   const canEditItems = detail?.status === 'open' || detail?.status === 'closed_unpaid';
 
@@ -157,13 +212,15 @@ export function BillWorkspace({
     if (delta > 0 && variants.find((v) => v.variantId === variant.variantId)?.outOfStock) return;
     setBusy(true);
     setActionError(null);
+    const idempotencyKey = crypto.randomUUID();
+    const occurredAt = new Date().toISOString();
     try {
       if (delta > 0) {
         await addSaleRound(
           billId,
           {
-            idempotencyKey: crypto.randomUUID(),
-            occurredAt: new Date().toISOString(),
+            idempotencyKey,
+            occurredAt,
             items: [
               { variantId: variant.variantId, quantity: delta, unitPriceKobo: variant.priceKobo },
             ],
@@ -175,8 +232,8 @@ export function BillWorkspace({
         await removeBillItem(
           billId,
           {
-            idempotencyKey: crypto.randomUUID(),
-            occurredAt: new Date().toISOString(),
+            idempotencyKey,
+            occurredAt,
             variantId: variant.variantId,
             quantity: -delta,
             unitPriceKobo: variant.priceKobo,
@@ -189,7 +246,45 @@ export function BillWorkspace({
       refreshProducts();
       onBillChanged?.();
     } catch (err) {
-      setActionError(describeActionError(err, 'Could not update this item.'));
+      if (err instanceof OfflineError) {
+        // Queued against this already-resolved bill's own id -- no 'open'
+        // step needed, so this session resolves to a real bill id from the
+        // moment it's queued (see billActionsSync.ts's "already has a
+        // non-null billId" shortcut).
+        await queueBillAction({
+          id: crypto.randomUUID(),
+          businessId: selectedBusinessId,
+          localSessionId: billId,
+          billId,
+          idempotencyKey,
+          occurredAt,
+          createdAt: new Date().toISOString(),
+          status: 'pending',
+          payload:
+            delta > 0
+              ? {
+                  type: 'add_round',
+                  items: [
+                    {
+                      variantId: variant.variantId,
+                      description: variant.description,
+                      quantity: delta,
+                      unitPriceKobo: variant.priceKobo,
+                    },
+                  ],
+                }
+              : {
+                  type: 'remove_item',
+                  variantId: variant.variantId,
+                  description: variant.description,
+                  quantity: -delta,
+                  unitPriceKobo: variant.priceKobo,
+                },
+        });
+        await refreshPendingActions();
+      } else {
+        setActionError(describeActionError(err, 'Could not update this item.'));
+      }
     } finally {
       setBusy(false);
     }
@@ -201,13 +296,37 @@ export function BillWorkspace({
     if (!amountKobo || amountKobo <= 0) return;
     setBusy(true);
     setActionError(null);
+    const idempotencyKey = crypto.randomUUID();
     try {
-      await recordPayment(billId, amountKobo, paymentMethod, selectedBusinessId, csrfToken);
+      await recordPayment(
+        billId,
+        amountKobo,
+        paymentMethod,
+        selectedBusinessId,
+        csrfToken,
+        idempotencyKey,
+      );
       setPaymentAmount('');
       await refreshDetail();
       onBillChanged?.();
     } catch (err) {
-      setActionError(describeActionError(err, 'Could not record this payment.'));
+      if (err instanceof OfflineError) {
+        await queueBillAction({
+          id: crypto.randomUUID(),
+          businessId: selectedBusinessId,
+          localSessionId: billId,
+          billId,
+          idempotencyKey,
+          occurredAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          status: 'pending',
+          payload: { type: 'record_payment', amountKobo, method: paymentMethod },
+        });
+        setPaymentAmount('');
+        await refreshPendingActions();
+      } else {
+        setActionError(describeActionError(err, 'Could not record this payment.'));
+      }
     } finally {
       setBusy(false);
     }
@@ -222,7 +341,22 @@ export function BillWorkspace({
       await refreshDetail();
       onBillChanged?.();
     } catch (err) {
-      setActionError(describeActionError(err, 'Could not close this tab.'));
+      if (err instanceof OfflineError) {
+        await queueBillAction({
+          id: crypto.randomUUID(),
+          businessId: selectedBusinessId,
+          localSessionId: billId,
+          billId,
+          idempotencyKey: crypto.randomUUID(),
+          occurredAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          status: 'pending',
+          payload: { type: 'close' },
+        });
+        await refreshPendingActions();
+      } else {
+        setActionError(describeActionError(err, 'Could not close this tab.'));
+      }
     } finally {
       setBusy(false);
     }
@@ -295,12 +429,17 @@ export function BillWorkspace({
     }
   }
 
+  async function handleDiscardPendingAction(id: string) {
+    await discardBillAction(id);
+    await refreshPendingActions();
+  }
+
   return (
     <>
       <div className="max-w-md mx-auto px-5">
         {!isOnline && (
           <p className="text-[12.5px] text-jb-gold bg-jb-gold/10 rounded-xl px-4 py-2 mb-3">
-            You&apos;re offline. Tab actions need a connection — they won&apos;t go through until
+            You&apos;re offline. Actions here are queued on this device and will go through once
             you&apos;re back online.
           </p>
         )}
@@ -322,6 +461,43 @@ export function BillWorkspace({
                 Opened {new Date(detail.openedAt).toLocaleString()}
               </div>
             </div>
+
+            {pendingActions.length > 0 && (
+              <div className="mb-4">
+                <div className="text-[11px] text-jb-ink/45 tracking-wide mb-2">
+                  PENDING (OFFLINE)
+                </div>
+                <div className="space-y-1.5">
+                  {pendingActions.map((a) => (
+                    <div
+                      key={a.id}
+                      className={`rounded-xl border p-3 text-[13px] ${
+                        a.status === 'failed'
+                          ? 'border-red-200 bg-red-50'
+                          : 'border-jb-ink/10 bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-jb-ink/80">{summarizePendingAction(a)}</span>
+                        {a.status === 'pending' ? (
+                          <span className="shrink-0 text-[11px] text-jb-gold">Queued…</span>
+                        ) : (
+                          <button
+                            onClick={() => void handleDiscardPendingAction(a.id)}
+                            className="shrink-0 text-[11px] text-jb-ink/40 underline underline-offset-2"
+                          >
+                            Discard
+                          </button>
+                        )}
+                      </div>
+                      {a.status === 'failed' && a.error && (
+                        <p className="text-[12px] text-red-700 mt-1">{a.error}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {canEditItems && (
               <div className="mb-4">

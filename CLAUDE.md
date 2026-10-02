@@ -368,6 +368,10 @@ that... this is built for non technical/savvy people"* — simplicity for
 end users outranks keeping the walk-in/tab distinction visible, even
 though that distinction still exists underneath.
 
+This went through two rounds — the phase doc's "Revision" and "Part 2"
+sections record why and what changed each time — so read the code, not
+just the first design, before extending any of this.
+
 - **`Service.OpenBill` is now find-or-open, not blind creation.** Picking
   an already-occupied table or an already-open customer tab resumes that
   bill instead of opening a second, concurrent one for the same table —
@@ -386,49 +390,82 @@ though that distinction still exists underneath.
   backing the Bills screen's filter (`Service.ListBillsByStatus`/
   `ListAllBills`).
 - **Every sale now carries its `bill_id` in the API response**
-  (`saleResponse.BillID`, always populated) — including `CreateSale`'s
-  one-shot walk-in path, which already wrapped a bill around itself
-  internally but never exposed it. This is what lets the frontend send any
-  completed sale, walk-in or tab round alike, to the same bill detail page
-  as its "here's what you just recorded" view.
-- **Frontend is three pages, not two.** `Sell.tsx` is the one entry point
-  for starting any sale: a table picker (default "No table") and a
-  customer picker (default "Walk-in customer", with a one-line
-  explanation) are always both shown — never a mode toggle the user has to
-  understand. Leaving both at their defaults keeps using the original,
-  offline-safe one-shot `createSale` call (`pendingSales`/`salesSync.ts`
-  unchanged); picking either turns it into a real, nameable bill via the
-  new find-or-open `openBill` and switches the footer to "Start tab"
-  instead of asking for payment up front. Either path ends on
-  `/dashboard/tabs/{billId}` — the new `BillDetail.tsx`, a full-page
-  receipt-style route (not a modal) carrying everything the old inline
-  Tabs.tsx detail panel had (add/adjust items, record payment, share,
-  close/void/write-off, rounds history with `ActivityDetailSheet`).
-  `Tabs.tsx` itself shrank to a pure Bills *list* (status filter, rows
-  linking into that detail route, a "+ New sale" button to `Sell.tsx`).
+  (`saleResponse.BillID`, always populated) — including a one-shot sale
+  recorded via `CreateSale`, which already wrapped a bill around itself
+  internally but never exposed it.
+- **One header toggle, Table | Customer — never both selectable at once.**
+  The first version of `Sell.tsx` showed two always-visible, independently
+  selectable sections (a table picker and a customer picker), which real
+  pilot screenshots showed was confusing: a table *and* a customer could
+  both carry a live selection with no clear answer to "what is this sale
+  against?" Switching the toggle clears whichever side isn't active, so
+  exactly one of table/customer can be real at a time; a plain walk-in is
+  simply both sides left at their defaults ("No table" / "Walk-in
+  customer", the latter shown with a one-line explanation) — it is not a
+  third toggle option.
+- **Walk-in gets no special treatment, by explicit instruction.** Every
+  sale — table, customer, or neither — opens (or resumes, via find-or-open)
+  a bill and posts live rounds immediately as items are tapped; there is no
+  draft cart and no separate "Complete Sale"/"Start tab" step. This retired
+  the original one-shot `createSale` call from `Sell.tsx` entirely
+  (`pendingSales`/`salesSync.ts` are consequently unused by it, left in
+  place rather than deleted).
+- **A persistent pill strip of currently open bills** sits above the
+  picker on `Sell.tsx` (restoring the original Tabs.tsx "every open bill
+  one tap away" pattern) with "+ New" to start another — switching between
+  them is instant, no page navigation.
+- **Three pages, sharing one live-bill component.**
+  `web/src/components/BillWorkspace.tsx` is everything about looking at
+  and acting on one bill (status, add/adjust items, payments, share/close/
+  void/write-off, rounds history with `ActivityDetailSheet`) — rendered
+  inline by `Sell.tsx` for whichever bill is currently active (no
+  navigation when switching pills or starting a new sale) and reused by
+  `BillDetail.tsx` (`/dashboard/tabs/:billId`, a thin page-chrome wrapper)
+  for browsing any bill, including settled/void history, from the Bills
+  list. `Tabs.tsx` itself is a pure Bills *list* (status filter, rows
+  linking into `BillDetail.tsx`, a "+ New sale" button to `Sell.tsx`).
   `web/src/lib/billDisplay.ts` (`billLabel`/`statusLabel`) is shared by
-  both so a bill reads the same way in the list and the detail page.
-  `CartPanel` gained one new prop, `showFooterWhenEmpty`, so "Start tab"
-  can render on a still-empty cart (seat a table, order later) without
-  changing its default behavior for every other existing caller.
-- **Tabs/table credit tabs are still online-only** — this phase did not
-  add offline queuing for bill actions (open/round/payment/close); only
-  the walk-in path's existing offline guarantee carries over, now simply
-  reachable from the same screen. See the phase doc's "Not verified yet /
-  real follow-ups" section for why that was a deliberate scope cut for
-  this pass, not an oversight.
-- **Verified live** against a running backend via curl: opening a bill
-  against a real table twice returned the identical bill the second time;
-  a one-shot sale's response carried a real `bill_id` whose `GET
-  /bills/{id}` showed a normal `settled` bill with one round and one
-  payment; `?status=settled`/`?status=all` returned the right rows and an
-  invalid status was rejected with `400`; a replayed payment idempotency
-  key produced exactly one payment, not two. Backend: full `go test
-  ./cmd/... ./internal/...` passes. Frontend: full `npm run check`
-  (format, lint, the existing 39 tests including `Sell.test.tsx`'s
-  catalogue-cache coverage, and a production build) passes. **Not done**:
-  an actual browser/Playwright pass over the rewritten pages — same named
-  gap the original `Sell.tsx` already carried.
+  all three. `CartPanel` gained one prop, `showFooterWhenEmpty`, so
+  `Sell.tsx`'s picker can post a round against a still-empty bill.
+- **Real offline support for bill actions, not just the walk-in path.**
+  `web/src/lib/db.ts`'s `pendingBillActions` (Dexie version 6) queues a
+  bill's lifecycle steps (open/add_round/remove_item/record_payment/close)
+  grouped by `localSessionId`, resolved and replayed in order by
+  `web/src/lib/billActionsSync.ts`'s `flushPendingBillActions` — the same
+  "oldest first, stop at the first failure" discipline `salesSync.ts`
+  already holds itself to, extended to a *sequence* of dependent actions.
+  A real server rejection (not connectivity) marks that one action
+  `failed` with a plain reason rather than retrying forever or silently
+  dropping it — surfaced as a "PENDING (OFFLINE)" section on
+  `BillWorkspace` with a Discard button, never blended into the
+  server-confirmed PAYMENTS/ROUNDS lists (`docs/ARCHITECTURE.md` §10.7).
+  `BillWorkspace` queues directly against its own already-known `billId`;
+  `Sell.tsx`'s first tap (no bill exists yet) queues an `open` + `add_round`
+  pair under a fresh local session and shows its own small local view
+  until that session resolves to a real bill on the next successful flush,
+  at which point it switches straight into the normal, live
+  `BillWorkspace` — indistinguishable from there on from a bill that was
+  always online. Not built: removing an item from a still-unresolved
+  session (add-only until it has a real bill id), and a pill for an
+  unresolved session in the open-bills strip.
+- **Verified**: backend — `go test ./cmd/... ./internal/...`, plus live
+  curl against a running server (find-or-open resolving to the same bill
+  twice, a one-shot sale's `bill_id` round-tripping through
+  `GET /bills/{id}`, the status filter, idempotent payment replay).
+  Frontend — `npm run check` (format, lint, a full production build, and
+  45 Vitest tests: the pre-existing 39 plus 6 new ones for
+  `billActionsSync.ts` that cover the open→add_round happy path, queuing
+  directly against an already-resolved bill, stopping one session at
+  `OfflineError` without blocking others, marking a real rejection
+  `failed`, and treating a replayed close against an already-closed bill
+  as fulfilled rather than a failure — one of which caught and pinned a
+  real bug during development, where a failed action's resolved `billId`
+  wasn't being persisted before the row was marked `failed`, making it
+  permanently invisible to the by-`billId` lookup `BillWorkspace` needs).
+  **Not done, either round**: an actual browser/Playwright click-through —
+  Claude in Chrome's extension was not connected in this environment for
+  either pass. Worth a manual verification pass before trusting this in
+  production, same named gap the original `Sell.tsx` already carried.
 
 ## Frontend architecture
 

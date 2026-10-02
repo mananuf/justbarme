@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
+import { OfflineError } from '../api/client';
 import { listProducts, type CatalogueProduct } from '../api/catalogue';
 import {
   addSaleRound,
@@ -16,8 +17,10 @@ import {
 } from '../api/tabs';
 import { AppBottomNav } from '../components/AppBottomNav';
 import { BillWorkspace } from '../components/BillWorkspace';
+import { type CartLine } from '../components/CartPanel';
 import { ProductGrid, type PickableVariant } from '../components/ProductGrid';
 import { useConnectivity } from '../hooks/useConnectivity';
+import { flushPendingBillActions, queueBillAction } from '../lib/billActionsSync';
 import { billLabel, formatNaira } from '../lib/billDisplay';
 import { db } from '../lib/db';
 import { describeActionError } from '../lib/errors';
@@ -74,6 +77,15 @@ export function Sell() {
   const [resolving, setResolving] = useState(false);
   const [resolveError, setResolveError] = useState<string | null>(null);
 
+  // Set only while a brand-new sale has been queued offline and has no
+  // real bill id yet -- BillWorkspace can't render without one, so this
+  // screen shows its own small local view instead until the queued
+  // 'open' action resolves (see the flush-on-reconnect effect below).
+  // Once resolved, this becomes just another activeBillId and everything
+  // from here on is identical to any other bill.
+  const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
+  const [offlineItems, setOfflineItems] = useState<CartLine[]>([]);
+
   const refreshOpenBills = () => {
     if (!selectedBusinessId) return;
     listBills(selectedBusinessId, 'open')
@@ -113,6 +125,26 @@ export function Sell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBusinessId]);
 
+  // Drains this device's queued bill actions whenever connectivity
+  // returns -- same trigger salesSync.ts always used, extended to a
+  // bill's multi-step actions. If this device's own not-yet-resolved
+  // session (pendingSessionId) is among what synced, switch straight into
+  // that bill's real, live workspace -- from here on it's indistinguishable
+  // from a bill that was always online.
+  useEffect(() => {
+    if (!isOnline || !selectedBusinessId || !csrfToken) return;
+    void (async () => {
+      const resolved = await flushPendingBillActions(selectedBusinessId, csrfToken);
+      refreshOpenBills();
+      if (pendingSessionId && resolved.has(pendingSessionId)) {
+        setActiveBillId(resolved.get(pendingSessionId)!);
+        setPendingSessionId(null);
+        setOfflineItems([]);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnline, selectedBusinessId, csrfToken, pendingSessionId]);
+
   function startNew() {
     setActiveBillId(null);
     setPickerMode('table');
@@ -123,6 +155,12 @@ export function Sell() {
     setAddingCustomer(false);
     setCustomerSearch('');
     setResolveError(null);
+    // Doesn't touch the queue itself -- a not-yet-resolved offline session
+    // started here stays safely queued and will still sync and settle into
+    // its own bill later; this only clears this screen's view of it, the
+    // same way navigating away from any in-progress screen would.
+    setPendingSessionId(null);
+    setOfflineItems([]);
   }
 
   function selectPickerMode(mode: PickerMode) {
@@ -174,15 +212,72 @@ export function Sell() {
     }
   }
 
-  // Tapping the first drink is what starts the sale: find-or-open the bill
-  // for whatever's currently picked (both pickers at their defaults means
-  // a plain walk-in), post this one item as a live round immediately, then
-  // switch this same screen into that bill's own workspace -- no
-  // "Start tab"/"Complete Sale" button in between.
-  async function handleFirstItem(variant: PickableVariant) {
+  function addOfflineItem(variant: { variantId: string; description: string; priceKobo: number }) {
+    setOfflineItems((items) => {
+      const existing = items.find((l) => l.variantId === variant.variantId);
+      if (existing) {
+        return items.map((l) =>
+          l.variantId === variant.variantId ? { ...l, quantity: l.quantity + 1 } : l,
+        );
+      }
+      return [
+        ...items,
+        {
+          variantId: variant.variantId,
+          description: variant.description,
+          unitPriceKobo: variant.priceKobo,
+          quantity: 1,
+        },
+      ];
+    });
+  }
+
+  // Tapping a drink is what starts (or continues) the sale: find-or-open
+  // the bill for whatever's currently picked (both pickers at their
+  // defaults means a plain walk-in), post this one item as a live round
+  // immediately, then switch this same screen into that bill's own
+  // workspace -- no "Start tab"/"Complete Sale" button in between. If
+  // there's no connection right now, the same two calls are queued
+  // locally instead (billActionsSync.ts) rather than shown as a failure --
+  // walk-in gets no special treatment here either, per
+  // docs/PHASE_UNIFIED_SELL_BILLS.md's "Revision" section.
+  async function handleProductTap(variant: PickableVariant) {
     if (!selectedBusinessId || !csrfToken || resolving || variant.outOfStock) return;
+
+    // Already mid-session, queued, waiting to reconnect -- another tap
+    // just appends another round to the same not-yet-resolved session,
+    // same as tapping a product on an already-open bill would.
+    if (pendingSessionId) {
+      await queueBillAction({
+        id: crypto.randomUUID(),
+        businessId: selectedBusinessId,
+        localSessionId: pendingSessionId,
+        billId: null,
+        idempotencyKey: crypto.randomUUID(),
+        occurredAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        status: 'pending',
+        payload: {
+          type: 'add_round',
+          items: [
+            {
+              variantId: variant.variantId,
+              description: variant.description,
+              quantity: 1,
+              unitPriceKobo: variant.priceKobo,
+            },
+          ],
+        },
+      });
+      addOfflineItem(variant);
+      return;
+    }
+
     setResolving(true);
     setResolveError(null);
+    const openKey = crypto.randomUUID();
+    const roundKey = crypto.randomUUID();
+    const occurredAt = new Date().toISOString();
     try {
       const bill = await openBill(
         { tableId: tableId || undefined, customerId: customerId || undefined },
@@ -192,8 +287,8 @@ export function Sell() {
       await addSaleRound(
         bill.id,
         {
-          idempotencyKey: crypto.randomUUID(),
-          occurredAt: new Date().toISOString(),
+          idempotencyKey: roundKey,
+          occurredAt,
           items: [{ variantId: variant.variantId, quantity: 1, unitPriceKobo: variant.priceKobo }],
         },
         selectedBusinessId,
@@ -202,7 +297,49 @@ export function Sell() {
       setActiveBillId(bill.id);
       refreshOpenBills();
     } catch (err) {
-      setResolveError(describeActionError(err, 'Could not start this sale.'));
+      if (err instanceof OfflineError) {
+        const sessionId = crypto.randomUUID();
+        await queueBillAction({
+          id: crypto.randomUUID(),
+          businessId: selectedBusinessId,
+          localSessionId: sessionId,
+          billId: null,
+          idempotencyKey: openKey,
+          occurredAt,
+          createdAt: occurredAt,
+          status: 'pending',
+          payload: {
+            type: 'open',
+            tableId: tableId || undefined,
+            customerId: customerId || undefined,
+          },
+        });
+        await queueBillAction({
+          id: crypto.randomUUID(),
+          businessId: selectedBusinessId,
+          localSessionId: sessionId,
+          billId: null,
+          idempotencyKey: roundKey,
+          occurredAt,
+          createdAt: occurredAt,
+          status: 'pending',
+          payload: {
+            type: 'add_round',
+            items: [
+              {
+                variantId: variant.variantId,
+                description: variant.description,
+                quantity: 1,
+                unitPriceKobo: variant.priceKobo,
+              },
+            ],
+          },
+        });
+        setPendingSessionId(sessionId);
+        addOfflineItem(variant);
+      } else {
+        setResolveError(describeActionError(err, 'Could not start this sale.'));
+      }
     } finally {
       setResolving(false);
     }
@@ -271,7 +408,8 @@ export function Sell() {
 
         {!isOnline && (
           <p className="text-[12px] text-jb-gold bg-jb-gold/10 rounded-xl px-4 py-2 mb-3">
-            You&apos;re offline — sales need a connection right now.
+            You&apos;re offline — new sales are queued on this device and will go through once
+            you&apos;re back online.
           </p>
         )}
         {resolveError && <p className="text-[13px] text-red-700 mb-3">{resolveError}</p>}
@@ -279,6 +417,39 @@ export function Sell() {
 
       {activeBillId !== null ? (
         <BillWorkspace billId={activeBillId} onBillChanged={refreshOpenBills} />
+      ) : pendingSessionId !== null ? (
+        <div className="max-w-md mx-auto px-5">
+          <div className="rounded-xl border border-jb-gold/30 bg-jb-gold/10 p-4 mb-4">
+            <p className="text-[13px] text-jb-ink/70">
+              Queued offline — this sale will open fully once you&apos;re back online. Keep tapping
+              drinks to add more; they&apos;ll go in the same order.
+            </p>
+          </div>
+          <div className="mb-4">
+            <div className="text-[11px] text-jb-ink/45 tracking-wide mb-2">QUEUED SO FAR</div>
+            <div className="space-y-1.5">
+              {offlineItems.map((l) => (
+                <div
+                  key={l.variantId}
+                  className="flex items-center justify-between rounded-xl border border-jb-ink/10 bg-white px-4 py-2.5 text-[13.5px]"
+                >
+                  <span>{l.description}</span>
+                  <span className="text-jb-ink/60">
+                    {l.quantity} × ₦{formatNaira(l.unitPriceKobo)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <ProductGrid
+            variants={variants}
+            isLoading={products === null && !loadError}
+            loadError={loadError}
+            cartQuantities={Object.fromEntries(offlineItems.map((l) => [l.variantId, l.quantity]))}
+            inCartLabel="queued"
+            onAdd={(v) => void handleProductTap(v)}
+          />
+        </div>
       ) : (
         <div className="max-w-md mx-auto px-5">
           <div className="rounded-xl border border-jb-ink/10 bg-white p-1 flex gap-1 mb-3">
@@ -458,7 +629,7 @@ export function Sell() {
             loadError={loadError}
             cartQuantities={{}}
             inCartLabel="just added"
-            onAdd={(v) => void handleFirstItem(v)}
+            onAdd={(v) => void handleProductTap(v)}
             emptyMessage={
               <p className="text-[13px] text-jb-ink/45">
                 You haven&apos;t stocked anything yet.{' '}

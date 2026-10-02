@@ -65,12 +65,23 @@ export interface CachedCatalogue {
 // server-side by comparing this figure against the *live* balance when the
 // count is actually processed (docs/PHASE_INVENTORY_COUNTS_AND_ADJUSTMENTS.md
 // §3), not by any client-side clock.
+// status: 'pending' means not yet synced, retried on every flush. A
+// successful sync deletes the row outright (there is no 'synced' status
+// -- it would never be read back, so there is nothing to keep it for).
+// 'failed' means the server has already rejected this one for a reason
+// that reflects real, permanent state (bad data, a permission issue) --
+// flushPendingStockCounts stops retrying it and leaves it visible (with
+// `error`) for the owner/staff to see and discard, rather than retrying
+// forever and silently blocking every other queued count behind it
+// (docs/PHASE_OFFLINE_QUEUE_FAILURES.md's "needs attention" design,
+// extended here from pendingBillActions, the first queue to get it).
 export interface PendingStockCount {
   idempotencyKey: string;
   businessId: string;
   startedAt: string;
   lines: { variantId: string; expectedQuantity: number; physicalQuantity: number }[];
-  status: 'pending' | 'synced';
+  status: 'pending' | 'failed';
+  error?: string;
   createdAt: string;
 }
 
@@ -78,6 +89,7 @@ export interface PendingStockCount {
 // staff_use/manual) recorded here before any network call -- same reasoning
 // as PendingStockCount. Never carries reasonCategory 'count_correction';
 // that one is only ever server-generated from a stock count.
+// status/error: see PendingStockCount's doc comment, same shape.
 export interface PendingAdjustmentRequest {
   idempotencyKey: string;
   businessId: string;
@@ -85,7 +97,8 @@ export interface PendingAdjustmentRequest {
   quantityDelta: number;
   reasonCategory: string;
   reasonNote: string;
-  status: 'pending' | 'synced';
+  status: 'pending' | 'failed';
+  error?: string;
   createdAt: string;
 }
 
@@ -93,6 +106,7 @@ export interface PendingAdjustmentRequest {
 // expenses:record is offline-safe (internal/tenancy/capabilities.go's
 // offlineSafeCapabilities), same "queue first" discipline as every other
 // pending* table here.
+// status/error: see PendingStockCount's doc comment, same shape.
 export interface PendingExpense {
   idempotencyKey: string;
   businessId: string;
@@ -101,7 +115,8 @@ export interface PendingExpense {
   amountKobo: number;
   paymentMethod: 'cash' | 'transfer' | 'card';
   occurredAt: string;
-  status: 'pending' | 'synced';
+  status: 'pending' | 'failed';
+  error?: string;
   createdAt: string;
 }
 

@@ -12,8 +12,14 @@ import {
   type PaymentMethod,
 } from '../api/expenses';
 import { useConnectivity } from '../hooks/useConnectivity';
+import type { PendingExpense } from '../lib/db';
 import { describeActionError } from '../lib/errors';
-import { flushPendingExpenses, queuePendingExpense } from '../lib/expensesSync';
+import {
+  discardPendingExpense,
+  flushPendingExpenses,
+  listFailedExpenses,
+  queuePendingExpense,
+} from '../lib/expensesSync';
 import { useSession } from '../lib/session';
 
 function PrimaryButton({ children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
@@ -72,6 +78,16 @@ export function Expenses() {
   const [reversingId, setReversingId] = useState<string | null>(null);
   const [reverseError, setReverseError] = useState<string | null>(null);
 
+  // Expenses the server has already rejected -- distinct from `done`'s
+  // "queued offline" message, which just means not-yet-sent. See
+  // expensesSync.ts's flushPendingExpenses doc comment.
+  const [failedExpenses, setFailedExpenses] = useState<PendingExpense[]>([]);
+
+  const refreshFailedExpenses = async () => {
+    if (!selectedBusinessId) return;
+    setFailedExpenses(await listFailedExpenses(selectedBusinessId));
+  };
+
   // A brand-new business has zero expense categories, which used to leave
   // the picker empty with no obvious next step -- "General" is
   // auto-provisioned the first time this loads empty, so there's always
@@ -121,9 +137,20 @@ export function Expenses() {
   }, [selectedBusinessId, isOwner]);
 
   useEffect(() => {
+    if (!selectedBusinessId) return;
+    void listFailedExpenses(selectedBusinessId).then(setFailedExpenses);
+  }, [selectedBusinessId]);
+
+  useEffect(() => {
     if (!isOnline || !selectedBusinessId || !csrfToken) return;
-    void flushPendingExpenses(selectedBusinessId, csrfToken);
+    void flushPendingExpenses(selectedBusinessId, csrfToken).then(() => refreshFailedExpenses());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOnline, selectedBusinessId, csrfToken]);
+
+  async function handleDiscardFailedExpense(idempotencyKey: string) {
+    await discardPendingExpense(idempotencyKey);
+    await refreshFailedExpenses();
+  }
 
   async function handleAddCategory() {
     if (!selectedBusinessId || !csrfToken || !newCategoryName.trim()) return;
@@ -213,6 +240,7 @@ export function Expenses() {
       setDone({ description: description.trim(), queuedOffline: !isOnline || !csrfToken });
       if (isOnline && csrfToken) {
         void flushPendingExpenses(selectedBusinessId, csrfToken).then(() => {
+          void refreshFailedExpenses();
           if (isOwner && selectedBusinessId) {
             listExpenses(selectedBusinessId, 20)
               .then(setHistory)
@@ -264,6 +292,35 @@ export function Expenses() {
           </Link>
           <h1 className="text-lg font-medium">Expenses</h1>
         </div>
+
+        {failedExpenses.length > 0 && (
+          <div className="mb-4">
+            <div className="text-[11px] text-jb-ink/45 tracking-wide mb-2">
+              COULDN&apos;T BE SAVED
+            </div>
+            <div className="space-y-1.5">
+              {failedExpenses.map((e) => (
+                <div
+                  key={e.idempotencyKey}
+                  className="rounded-xl border border-red-200 bg-red-50 p-3 text-[13px]"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-jb-ink/80">
+                      {e.description} — ₦{formatNaira(e.amountKobo)}
+                    </span>
+                    <button
+                      onClick={() => void handleDiscardFailedExpense(e.idempotencyKey)}
+                      className="shrink-0 text-[11px] text-jb-ink/40 underline underline-offset-2"
+                    >
+                      Discard
+                    </button>
+                  </div>
+                  {e.error && <p className="text-[12px] text-red-700 mt-1">{e.error}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {done ? (
           <div className="text-center py-10">

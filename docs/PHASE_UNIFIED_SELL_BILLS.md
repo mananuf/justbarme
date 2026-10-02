@@ -1,17 +1,18 @@
 # Unified Sell/Bills, and real offline support for tabs
 
-**Status:** Built and verified live against a running backend (see
-"Verification" at the end) — one scope narrowing from the original design
-below: the single-device offline queue for bill actions (open/round/
-payment/close) was **not** built in this pass. The walk-in path's existing
-`pendingSales`/`salesSync.ts` queue turned out to already cover the
-dominant real case once every sale was given a navigable bill behind it
-(see "What actually shipped" below) — building a second, more complex
-multi-action queue on top of that, untested, in the same pass would have
-cut against this codebase's "verified live end-to-end" discipline more
-than it would have delivered. It remains the next real step if a table/
-customer tab specifically (not a plain walk-in) needs to survive going
-offline mid-session — tracked here, not forgotten. Branch:
+**Status:** Built in two rounds. Round 1 (below, "What actually shipped")
+kept the walk-in path as a special-cased one-shot `createSale` call,
+invisible to the user, for offline simplicity. **Round 2 ("Revision:
+live-round for everything, header toggle" at the end) replaced that**
+after real screenshots showed the two-picker design was confusing (both a
+table and a customer could be selected at once) — the fix was a header
+toggle, plus the explicit decision, made by the project owner, that
+walk-in should get no special treatment at all: every sale now opens (or
+resumes) a bill and posts live rounds, exactly like a tab. That decision
+knowingly gives up walk-in's one-shot offline guarantee until the next
+piece of work (an offline queue for bill actions) lands — which is why
+that queue, deferred as a "nice to have" after round 1, is now the
+immediate next task, not a someday-maybe. Branch:
 `feature/unified-sell-bills`.
 **Depends on:** Phase 5 (`internal/sales`' walk-in selling, `CreateSale`,
 `pendingSales`/`salesSync.ts`) and Phase 6 (`internal/sales`' tab/table/
@@ -306,3 +307,68 @@ existing + preserved tests, and a production build) all pass.
 - The conflict-surfacing design ("needs attention" rather than silent
   corruption) described earlier in this doc only applies once that queue
   exists — there is nothing to verify yet.
+
+## Revision: live-round for everything, header toggle (round 2)
+
+Triggered by real screenshots from the project owner using round 1's
+build: the Table and Customer pickers were two always-visible,
+independently-selectable sections, so a table *and* a customer could both
+show a live selection at once with no way to tell which one actually
+governed the sale — confusing even to someone who built it. The fix,
+confirmed directly:
+
+- **A two-way header toggle, Table | Customer, replaces the two
+  always-visible sections.** Only one is ever the active selector;
+  switching it clears whichever side isn't active (picking a table resets
+  any chosen customer back to its default and vice versa), so exactly one
+  of `tableId`/`customerId` can be a real id at any moment. "Walk-in" is
+  not a third toggle option — it's simply both sides left at their
+  defaults ("No table" / "Walk-in customer"), matching the original ask's
+  literal wording ("toggle/pill nav for table *or* customer").
+- **Walk-in gets no special treatment, by explicit instruction:** *"walk-in
+  should not be different for simplicity sake, it should follow the same
+  live round."* Tapping the first drink is what starts any sale now,
+  regardless of what's picked: it calls the existing find-or-open
+  `openBill`, posts that one item as a live `addSaleRound` immediately, and
+  switches the screen into that bill's own live workspace. There is no
+  draft cart, no "Complete Sale"/"Start tab" button, and no longer any
+  one-shot `createSale` call from this screen at all --
+  `pendingSales`/`salesSync.ts` are consequently unused by `Sell.tsx` as of
+  this revision (left in place, not deleted, since the offline-queue work
+  below will determine what replaces them).
+- **A persistent pill strip of currently open bills sits above the
+  picker** (restoring the original Tabs.tsx's own "every open bill stays
+  one tap away" pattern), with "+ New" alongside it to start another. This
+  is what makes starting a second, unrelated sale while one is still open
+  (e.g. ringing up a walk-in while Table T9's tab is still running) a
+  one-tap switch rather than a trip back to a list page.
+- **New shared component, `web/src/components/BillWorkspace.tsx`** --
+  everything about *looking at and acting on* one bill (status banner,
+  add/adjust items, payments, share/close/void/write-off, rounds history),
+  extracted out of what was `BillDetail.tsx`'s entire body so it can be
+  reused inline by `Sell.tsx` (no page navigation when you switch pills or
+  resolve a new sale) and by `BillDetail.tsx` (now a thin page-chrome
+  wrapper, used for browsing a bill -- including settled/void history --
+  from the Bills list). Takes an optional `onDetailLoaded` callback so
+  `BillDetail.tsx`'s header can title itself from the same fetch instead of
+  re-querying the bill a second time.
+- **Verified**: `tsc -b`, `npm run lint`, `npm run format:check`, the
+  existing 39 Vitest tests (including `Sell.test.tsx`'s catalogue-cache
+  coverage, unaffected since that loading logic didn't change), and
+  `npm run build` all pass. A live curl simulation of the exact sequence
+  the new UI performs -- open a walk-in bill via defaults and post a round,
+  then switch the toggle to Table, pick a new table, and post a second,
+  separate round -- produced two independent open bills with correct
+  totals, matching what the pill strip and header toggle are meant to
+  produce. **Not done**: an actual click-through in a real browser --
+  Claude in Chrome's extension was not connected in this environment, so
+  this revision could not be visually verified end-to-end the way this
+  codebase's own standard calls for. Worth a manual pass before trusting it
+  in production, on top of the existing named Playwright gap.
+
+**Immediate next step, per explicit instruction ("build 1, then do 2
+immediately 1 is completed")**: the offline queue for bill actions is next,
+not deferred -- see the "Explicitly out of scope"/"Not verified yet"
+sections above for the design this revision now makes load-bearing rather
+than optional (walk-in has no offline guarantee again until that queue
+exists).

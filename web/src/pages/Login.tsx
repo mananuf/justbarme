@@ -2,15 +2,26 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 import { ApiError, OfflineError } from '../api/client';
+import { EmailIcon, WhatsAppIcon } from '../components/ChannelIcon';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { Logo } from '../components/Logo';
-import { useSession } from '../lib/session';
+import { PhoneInput } from '../components/PhoneInput';
+import { useSession, type Channel } from '../lib/session';
 
 export function Login() {
   const { login, memberships } = useSession();
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Which kind of identifier is being entered -- purely a UI choice, not
+  // sent to the backend. identity.Service.Authenticate still detects
+  // email vs. phone by format on its own; this only decides which input
+  // to show, and specifically, for phone, routes entry through
+  // PhoneInput so what gets submitted is always real E.164
+  // (+234803...), never a bare local number (0803...) the backend's exact
+  // phone lookup would never match -- the same bug PhoneInput was already
+  // built to close for SignUp/Team (see its own doc comment).
+  const [channel, setChannel] = useState<Channel>('email');
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -71,19 +82,56 @@ export function Login() {
           </h1>
           <p className="text-[13px] text-jb-ink/45 mb-8">Sign in to run your bar.</p>
 
+          <div className="flex gap-2 mb-4">
+            <button
+              type="button"
+              onClick={() => {
+                setChannel('email');
+                setIdentifier('');
+              }}
+              className={`flex-1 flex items-center justify-center gap-1.5 rounded-xl border py-2.5 text-[13px] font-medium transition-colors ${
+                channel === 'email'
+                  ? 'border-jb-ink bg-jb-ink text-jb-cream'
+                  : 'border-jb-ink/15 bg-white text-jb-ink/60'
+              }`}
+            >
+              <EmailIcon className="w-4 h-4" />
+              Email
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setChannel('whatsapp');
+                setIdentifier('');
+              }}
+              className={`flex-1 flex items-center justify-center gap-1.5 rounded-xl border py-2.5 text-[13px] font-medium transition-colors ${
+                channel === 'whatsapp'
+                  ? 'border-jb-ink bg-jb-ink text-jb-cream'
+                  : 'border-jb-ink/15 bg-white text-jb-ink/60'
+              }`}
+            >
+              <WhatsAppIcon className="w-4 h-4" />
+              WhatsApp
+            </button>
+          </div>
+
           <label className="block mb-4">
             <span className="block text-[13px] font-medium text-jb-ink/70 mb-1.5">
-              Email or WhatsApp number
+              {channel === 'email' ? 'Email' : 'WhatsApp number'}
             </span>
-            <input
-              type="text"
-              autoComplete="username"
-              required
-              placeholder="ada@example.com or 0803 123 4567"
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              className="w-full rounded-xl border border-jb-ink/15 bg-white px-4 py-3.5 text-[15px] text-jb-ink placeholder:text-jb-ink/30 focus:outline-none focus:border-jb-ink/40 transition-colors"
-            />
+            {channel === 'email' ? (
+              <input
+                type="email"
+                autoComplete="username"
+                required
+                placeholder="ada@example.com"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                className="w-full rounded-xl border border-jb-ink/15 bg-white px-4 py-3.5 text-[15px] text-jb-ink placeholder:text-jb-ink/30 focus:outline-none focus:border-jb-ink/40 transition-colors"
+              />
+            ) : (
+              <PhoneInput required onChange={setIdentifier} />
+            )}
           </label>
 
           <label className="block mb-4">

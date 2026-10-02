@@ -543,6 +543,64 @@ this.
   "Pricing" mode — Claude in Chrome's extension was not connected in this
   environment.
 
+## CSRF token stability, offline queue failures, and phone login
+
+Three targeted bug fixes from a session that validated a pasted external
+audit against this codebase's actual code, plus one separately-reported
+login bug — **not** part of `docs/`'s frozen plan. Branch:
+`fix/csrf-and-offline-and-login`.
+
+- **`GET /api/v1/me`'s CSRF token is now deterministic, not freshly
+  random on every call.** `identity.Service.EnsureCSRFToken` (renamed
+  from `RotateCSRFToken`) re-derives the same value every time via
+  `deriveCSRFToken(sessionTokenHash)` — `HashToken(sessionTokenHash +
+  ":csrf")`, a domain-separated hash of the session's own already-
+  high-entropy token hash, rather than a new independent secret. This
+  closes a real race: two near-simultaneous `/me` calls for the same
+  session (two browser tabs reloading together, or React StrictMode's
+  dev-only double effect invocation) used to be able to overwrite each
+  other's just-issued random token before either side could use it for a
+  write, producing a spurious `403 PERMISSION_DENIED`. `Session` gained a
+  `SessionTokenHash` field (never serialized) so a handler already
+  holding the session in context can derive the token with no extra
+  database round trip. Full reasoning, the rejected alternative (a new
+  HMAC signing key), and why `internal/platformadmin`'s parallel
+  implementation was deliberately left alone live in
+  `docs/PHASE_CSRF_TOKEN_STABILITY.md`.
+- **Three of the four offline queues now distinguish "still offline" from
+  "the server actually rejected this" instead of silently retrying a
+  doomed item forever and blocking every other queued item behind it.**
+  `flushPendingExpenses`/`flushPendingStockCounts`/
+  `flushPendingAdjustmentRequests` now stop (leaving items `'pending'`)
+  only on a real `OfflineError`; any other rejection marks just that one
+  row `'failed'` with a plain-language reason (`describeActionError`) and
+  moves on to the next item, since none of these three queues has an
+  ordering dependency between their own rows (unlike a bill's action
+  sequence). `Expenses.tsx`/`Stock.tsx` gained a "couldn't be saved"
+  section listing failed items with a Discard action, mirroring
+  `BillWorkspace.tsx`'s existing pending/failed-action styling.
+  `pendingSales`/`salesSync.ts` has the identical pre-fix shape but is
+  confirmed dead code (orphaned since `Sell.tsx`'s unification onto
+  `billActionsSync.ts`) and was deliberately left untouched. Full design
+  and the new tests (`expensesSync.test.ts`, `inventorySync.test.ts`)
+  live in `docs/PHASE_OFFLINE_QUEUE_FAILURES.md`.
+- **Login now accepts a WhatsApp number with real E.164 entry, not just
+  email.** `Login.tsx` gained the same email/WhatsApp channel toggle
+  `SignUp.tsx` already had, routing phone entry through the existing
+  `PhoneInput` component (country-code dropdown + local number, always
+  composing `+234...`) instead of a single free-text field whose
+  placeholder actively suggested typing a bare local number
+  (`0803...`). `identity.Service.Authenticate`'s phone lookup is an exact
+  match against E.164-stored values, so a locally-formatted number could
+  never have matched — this was a frontend-only fix, no backend change.
+- **Verified**: backend — `TestCSRFTokenIsStableAcrossConcurrentMeCalls`,
+  `TestCSRFTokenDiffersAcrossSessions`, full `go test ./cmd/...
+  ./internal/...` passing. Frontend — full `npm run check` (format, lint,
+  57 tests including 12 new ones, production build) passing. **Not
+  done**: an actual browser/Playwright pass over the new login channel
+  toggle or the failed-queue UI sections — same named gap this codebase
+  already carries for several other frontend features.
+
 ## Frontend architecture
 
 `web/` is a single Vite + React + TypeScript + Tailwind v4 PWA that carries **both** the public marketing/onboarding site and the authenticated app shell — there is no separate marketing project. It used to be split across two stacks (this Vite app plus a Next.js prototype in `marketing/`, built from a v0 export template); that Next.js app has been retired and its design system (brand tokens, fonts, and reusable components) ported in here. The v0 template it was originally adapted from was kept read-only at `agentic-build-and-orchestrate-ai-agents-while-you-sleep/` at the repo root purely as a design reference; it has since been deleted (its design system was already fully ported into `web/` by this point, so nothing was lost) — don't expect to find it, and never resurrect a second frontend stack from a copy of it.

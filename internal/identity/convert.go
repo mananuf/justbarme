@@ -73,9 +73,10 @@ func toDevice(d sqlc.Device) Device {
 
 func toSession(s sqlc.Session) Session {
 	return Session{
-		ID:            s.ID,
-		UserID:        s.UserID,
-		CSRFTokenHash: s.CsrfTokenHash,
-		ExpiresAt:     toTime(s.ExpiresAt),
+		ID:               s.ID,
+		UserID:           s.UserID,
+		CSRFTokenHash:    s.CsrfTokenHash,
+		SessionTokenHash: s.TokenHash,
+		ExpiresAt:        toTime(s.ExpiresAt),
 	}
 }

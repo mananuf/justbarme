@@ -466,9 +466,28 @@ func (s *Service) ListMembersForBusiness(ctx context.Context, userID, businessID
 	return out, nil
 }
 
-// CreateSession issues a new opaque session and CSRF token pair for userID.
-// The raw tokens are returned exactly once, here, at issuance — only their
-// hashes are ever persisted or returned again.
+// deriveCSRFToken computes a session's CSRF token deterministically from
+// its own token hash, rather than generating an independent random value.
+// Domain-separated from the session's own stored hash via a fixed suffix
+// (a standard, safe way to derive more than one secret-equivalent value
+// from one high-entropy secret) -- the session token itself already has
+// strong entropy (auth.GenerateToken()) and is known only to the browser
+// and server, so this is just as unguessable to a third party as an
+// independent random token would be, with one load-bearing difference:
+// it is the same value every time for a given session, computed fresh
+// with no stored state of its own to race against. See
+// docs/PHASE_CSRF_TOKEN_STABILITY.md for why this exists.
+func deriveCSRFToken(sessionTokenHash string) string {
+	return auth.HashToken(sessionTokenHash + ":csrf")
+}
+
+// CreateSession issues a new opaque session for userID, with its CSRF
+// token already set to the same deterministic value GET /me will keep
+// returning for the rest of this session's life (deriveCSRFToken) -- so
+// there is no transition window where the token login just issued differs
+// from the one a subsequent /me call would derive. The raw session token
+// is returned exactly once, here, at issuance -- only its hash is ever
+// persisted or returned again.
 func (s *Service) CreateSession(ctx context.Context, userID uuid.UUID, userAgent string, ttl time.Duration) (rawSessionToken, rawCSRFToken string, sess Session, err error) {
 	id, err := newID()
 	if err != nil {
@@ -478,17 +497,15 @@ func (s *Service) CreateSession(ctx context.Context, userID uuid.UUID, userAgent
 	if err != nil {
 		return "", "", Session{}, fmt.Errorf("generate session token: %w", err)
 	}
-	rawCSRFToken, err = auth.GenerateToken()
-	if err != nil {
-		return "", "", Session{}, fmt.Errorf("generate csrf token: %w", err)
-	}
+	sessionTokenHash := auth.HashToken(rawSessionToken)
+	rawCSRFToken = deriveCSRFToken(sessionTokenHash)
 
 	var created sqlc.Session
 	err = store.WithApp(ctx, s.pool, userID, func(ctx context.Context, q *sqlc.Queries) error {
 		row, err := q.CreateSession(ctx, sqlc.CreateSessionParams{
 			ID:            id,
 			UserID:        userID,
-			TokenHash:     auth.HashToken(rawSessionToken),
+			TokenHash:     sessionTokenHash,
 			CsrfTokenHash: auth.HashToken(rawCSRFToken),
 			UserAgent:     pgText(userAgent),
 			ExpiresAt:     pgTimestamptz(time.Now().Add(ttl)),
@@ -531,23 +548,31 @@ func (s *Service) GetActiveSessionByToken(ctx context.Context, rawToken string) 
 	return toSession(found), nil
 }
 
-// RotateCSRFToken issues and stores a new CSRF token for an existing
-// session without disturbing the session itself, so a reloaded frontend can
-// resume with a valid token via GET /api/v1/me (docs/API_CONTRACT.md §8).
-// The previous CSRF token stops working immediately.
-func (s *Service) RotateCSRFToken(ctx context.Context, sessionID uuid.UUID) (string, error) {
-	rawCSRF, err := auth.GenerateToken()
-	if err != nil {
-		return "", fmt.Errorf("generate csrf token: %w", err)
-	}
-	err = store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+// EnsureCSRFToken returns sessionID's CSRF token, re-deriving it
+// (deriveCSRFToken) from the session's own token hash and persisting it,
+// so a reloaded frontend can resume with a valid token via
+// GET /api/v1/me (docs/API_CONTRACT.md §8). Unlike this method's
+// predecessor (RotateCSRFToken, which generated and stored a fresh random
+// value on every call), this returns the exact same token every time for
+// a given session -- deliberately, to close a real race: two near-
+// simultaneous callers of GET /me for the same session (two browser tabs
+// reloading around the same time, or React StrictMode's dev-only double
+// effect invocation) used to be able to invalidate each other's
+// just-issued token before either had a chance to use it for a write. See
+// docs/PHASE_CSRF_TOKEN_STABILITY.md. The persisted write here is mostly
+// self-healing for a session created before this change shipped (whose
+// stored hash still reflects an old random token) -- for any session
+// created after, this writes back the same value its row already holds.
+func (s *Service) EnsureCSRFToken(ctx context.Context, sessionID uuid.UUID, sessionTokenHash string) (string, error) {
+	rawCSRF := deriveCSRFToken(sessionTokenHash)
+	err := store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
 		return q.UpdateSessionCSRFTokenHash(ctx, sqlc.UpdateSessionCSRFTokenHashParams{
 			ID:            sessionID,
 			CsrfTokenHash: auth.HashToken(rawCSRF),
 		})
 	})
 	if err != nil {
-		return "", fmt.Errorf("rotate csrf token: %w", err)
+		return "", fmt.Errorf("ensure csrf token: %w", err)
 	}
 	return rawCSRF, nil
 }

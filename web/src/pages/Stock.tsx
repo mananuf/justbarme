@@ -24,11 +24,16 @@ import {
 } from '../api/inventory';
 import { AppBottomNav } from '../components/AppBottomNav';
 import { Logo } from '../components/Logo';
+import type { PendingAdjustmentRequest, PendingStockCount } from '../lib/db';
 import { useConnectivity } from '../hooks/useConnectivity';
 import { describeActionError } from '../lib/errors';
 import {
+  discardPendingAdjustmentRequest,
+  discardPendingStockCount,
   flushPendingAdjustmentRequests,
   flushPendingStockCounts,
+  listFailedAdjustmentRequests,
+  listFailedStockCounts,
   queuePendingAdjustmentRequest,
   queuePendingStockCount,
 } from '../lib/inventorySync';
@@ -412,13 +417,45 @@ export function Stock() {
     return rows;
   }, [ownProducts]);
 
+  // Counts/adjustment requests the server has already rejected -- see
+  // inventorySync.ts's flushPendingStockCounts/flushPendingAdjustmentRequests
+  // doc comment. Shown regardless of which mode tab is active, since a
+  // rejected item from either queue needs a visible, discardable place to
+  // land rather than silently retrying forever.
+  const [failedCounts, setFailedCounts] = useState<PendingStockCount[]>([]);
+  const [failedAdjustments, setFailedAdjustments] = useState<PendingAdjustmentRequest[]>([]);
+
+  const refreshFailedQueues = useCallback(async () => {
+    if (!selectedBusinessId) return;
+    setFailedCounts(await listFailedStockCounts(selectedBusinessId));
+    setFailedAdjustments(await listFailedAdjustmentRequests(selectedBusinessId));
+  }, [selectedBusinessId]);
+
+  useEffect(() => {
+    if (!selectedBusinessId) return;
+    void listFailedStockCounts(selectedBusinessId).then(setFailedCounts);
+    void listFailedAdjustmentRequests(selectedBusinessId).then(setFailedAdjustments);
+  }, [selectedBusinessId]);
+
   useEffect(() => {
     if (!isOnline || !selectedBusinessId || !csrfToken) return;
     // Catches up on anything queued from an earlier offline session, same
     // reasoning as Sell.tsx's flushPendingSales effect.
-    void flushPendingStockCounts(selectedBusinessId, csrfToken);
-    void flushPendingAdjustmentRequests(selectedBusinessId, csrfToken);
-  }, [isOnline, selectedBusinessId, csrfToken]);
+    void flushPendingStockCounts(selectedBusinessId, csrfToken).then(() => refreshFailedQueues());
+    void flushPendingAdjustmentRequests(selectedBusinessId, csrfToken).then(() =>
+      refreshFailedQueues(),
+    );
+  }, [isOnline, selectedBusinessId, csrfToken, refreshFailedQueues]);
+
+  async function handleDiscardFailedCount(idempotencyKey: string) {
+    await discardPendingStockCount(idempotencyKey);
+    await refreshFailedQueues();
+  }
+
+  async function handleDiscardFailedAdjustment(idempotencyKey: string) {
+    await discardPendingAdjustmentRequest(idempotencyKey);
+    await refreshFailedQueues();
+  }
 
   function pickCountVariant(v: SimpleVariant) {
     setCountVariant(v);
@@ -460,9 +497,10 @@ export function Stock() {
         queuedOffline: !isOnline || !csrfToken,
       });
       if (isOnline && csrfToken) {
-        void flushPendingStockCounts(selectedBusinessId, csrfToken).then(
-          () => void loadCatalogue(),
-        );
+        void flushPendingStockCounts(selectedBusinessId, csrfToken).then(() => {
+          void loadCatalogue();
+          void refreshFailedQueues();
+        });
       }
     } finally {
       setCountSubmitting(false);
@@ -519,7 +557,9 @@ export function Stock() {
       });
       setAdjustDone({ label: adjustVariant.label, queuedOffline: !isOnline || !csrfToken });
       if (isOnline && csrfToken) {
-        void flushPendingAdjustmentRequests(selectedBusinessId, csrfToken);
+        void flushPendingAdjustmentRequests(selectedBusinessId, csrfToken).then(() =>
+          refreshFailedQueues(),
+        );
       }
     } finally {
       setAdjustSubmitting(false);
@@ -899,6 +939,55 @@ export function Stock() {
             </button>
           )}
         </div>
+
+        {(failedCounts.length > 0 || failedAdjustments.length > 0) && (
+          <div className="mb-5">
+            <div className="text-[11px] text-jb-ink/45 tracking-wide mb-2">
+              COULDN&apos;T BE SAVED
+            </div>
+            <div className="space-y-1.5">
+              {failedCounts.map((c) => (
+                <div
+                  key={c.idempotencyKey}
+                  className="rounded-xl border border-red-200 bg-red-50 p-3 text-[13px]"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-jb-ink/80">
+                      Stock count ({c.lines.length} item{c.lines.length === 1 ? '' : 's'})
+                    </span>
+                    <button
+                      onClick={() => void handleDiscardFailedCount(c.idempotencyKey)}
+                      className="shrink-0 text-[11px] text-jb-ink/40 underline underline-offset-2"
+                    >
+                      Discard
+                    </button>
+                  </div>
+                  {c.error && <p className="text-[12px] text-red-700 mt-1">{c.error}</p>}
+                </div>
+              ))}
+              {failedAdjustments.map((a) => (
+                <div
+                  key={a.idempotencyKey}
+                  className="rounded-xl border border-red-200 bg-red-50 p-3 text-[13px]"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-jb-ink/80">
+                      {a.reasonCategory} adjustment ({a.quantityDelta > 0 ? '+' : ''}
+                      {a.quantityDelta})
+                    </span>
+                    <button
+                      onClick={() => void handleDiscardFailedAdjustment(a.idempotencyKey)}
+                      className="shrink-0 text-[11px] text-jb-ink/40 underline underline-offset-2"
+                    >
+                      Discard
+                    </button>
+                  </div>
+                  {a.error && <p className="text-[12px] text-red-700 mt-1">{a.error}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {mode === 'pricing' && (
           <div>

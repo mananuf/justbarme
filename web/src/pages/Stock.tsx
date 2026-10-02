@@ -8,10 +8,13 @@ import {
   createVariant,
   listCatalogueTemplates,
   listProducts,
+  listVariantPricePacks,
   setVariantPrice,
+  setVariantPricePacks,
   updateVariant,
   type CatalogueProduct,
   type CatalogueTemplate,
+  type PricePack,
 } from '../api/catalogue';
 import {
   getInventoryHistory,
@@ -195,7 +198,7 @@ interface CustomTarget {
 type Target = ExistingTarget | TemplateTarget | CustomTarget;
 
 type Phase = 'search' | 'price' | 'receive' | 'done';
-type Mode = 'restock' | 'count' | 'adjust';
+type Mode = 'restock' | 'count' | 'adjust' | 'pricing';
 
 export function Stock() {
   const { csrfToken, selectedBusinessId, memberships } = useSession();
@@ -236,6 +239,20 @@ export function Stock() {
   const [adjustDone, setAdjustDone] = useState<{ label: string; queuedOffline: boolean } | null>(
     null,
   );
+
+  // Multi-buy pricing flow (docs/PHASE_MULTIBUY_PRICING.md) -- "N for a
+  // flat total," repeating indefinitely, for a service like a snooker game
+  // or (less commonly but not disallowed) a drink. Unlike count/adjust,
+  // this isn't about inventory at all, so it can apply to a service
+  // (tracksInventory=false) just as well as a tracked drink -- see
+  // allPricableVariants below, which (unlike allVariants) doesn't filter
+  // those out.
+  const [pricingVariant, setPricingVariant] = useState<SimpleVariant | null>(null);
+  const [pricingPacks, setPricingPacks] = useState<{ quantity: string; priceNaira: string }[]>([]);
+  const [pricingLoading, setPricingLoading] = useState(false);
+  const [pricingSaving, setPricingSaving] = useState(false);
+  const [pricingError, setPricingError] = useState<string | null>(null);
+  const [pricingDone, setPricingDone] = useState(false);
 
   // Stock history viewer, reachable from any product row.
   const [historyVariant, setHistoryVariant] = useState<SimpleVariant | null>(null);
@@ -366,6 +383,25 @@ export function Stock() {
         // non-stocked service item -- same reasoning as
         // matchingOwnVariants above.
         if (!variant.active || !variant.tracksInventory) continue;
+        rows.push({
+          variantId: variant.id,
+          label: `${product.name} — ${variant.name}`,
+          currentStock: variant.currentStock,
+        });
+      }
+    }
+    return rows;
+  }, [ownProducts]);
+
+  // Multi-buy pricing applies to any active variant, tracked or not --
+  // unlike allVariants above, a service (tracksInventory=false, e.g. a
+  // snooker game) is exactly the kind of item this is for, not excluded.
+  const allPricableVariants: SimpleVariant[] = useMemo(() => {
+    if (!ownProducts) return [];
+    const rows: SimpleVariant[] = [];
+    for (const product of ownProducts) {
+      for (const variant of product.variants) {
+        if (!variant.active) continue;
         rows.push({
           variantId: variant.id,
           label: `${product.name} — ${variant.name}`,
@@ -508,6 +544,75 @@ export function Stock() {
       .catch((err: unknown) =>
         setHistoryError(describeActionError(err, 'Could not load history.')),
       );
+  }
+
+  function pickPricingVariant(v: SimpleVariant) {
+    setPricingVariant(v);
+    setPricingError(null);
+    setPricingDone(false);
+    setPricingLoading(true);
+    if (!selectedBusinessId) return;
+    listVariantPricePacks(v.variantId, selectedBusinessId)
+      .then((packs) =>
+        setPricingPacks(
+          packs.map((p) => ({
+            quantity: String(p.quantity),
+            priceNaira: String(p.priceKobo / 100),
+          })),
+        ),
+      )
+      .catch((err: unknown) => setPricingError(describeActionError(err, 'Could not load pricing.')))
+      .finally(() => setPricingLoading(false));
+  }
+
+  function addPricingRow() {
+    setPricingPacks((rows) => [...rows, { quantity: '', priceNaira: '' }]);
+  }
+
+  function updatePricingRow(index: number, field: 'quantity' | 'priceNaira', value: string) {
+    setPricingPacks((rows) => rows.map((r, i) => (i === index ? { ...r, [field]: value } : r)));
+  }
+
+  function removePricingRow(index: number) {
+    setPricingPacks((rows) => rows.filter((_, i) => i !== index));
+  }
+
+  const parsedPricingPacks: PricePack[] | null = (() => {
+    const out: PricePack[] = [];
+    for (const row of pricingPacks) {
+      const quantity = Number(row.quantity);
+      const priceKobo = Math.round(Number(row.priceNaira) * 100);
+      if (!Number.isInteger(quantity) || quantity <= 1) return null;
+      if (!Number.isFinite(priceKobo) || priceKobo <= 0) return null;
+      out.push({ quantity, priceKobo });
+    }
+    return out;
+  })();
+
+  async function submitPricing() {
+    if (!pricingVariant || !selectedBusinessId || !csrfToken || !parsedPricingPacks) return;
+    setPricingSaving(true);
+    setPricingError(null);
+    try {
+      await setVariantPricePacks(
+        pricingVariant.variantId,
+        parsedPricingPacks,
+        selectedBusinessId,
+        csrfToken,
+      );
+      setPricingDone(true);
+    } catch (err) {
+      setPricingError(describeActionError(err, 'Could not save pricing.'));
+    } finally {
+      setPricingSaving(false);
+    }
+  }
+
+  function resetPricing() {
+    setPricingVariant(null);
+    setPricingPacks([]);
+    setPricingError(null);
+    setPricingDone(false);
   }
 
   function pickExisting(row: { variantId: string; label: string }) {
@@ -783,7 +888,111 @@ export function Stock() {
           >
             Report issue
           </button>
+          {isOwner && (
+            <button
+              onClick={() => setMode('pricing')}
+              className={`flex-1 rounded-lg py-2.5 text-[13px] font-medium transition-colors ${
+                mode === 'pricing' ? 'bg-white text-jb-ink shadow-sm' : 'text-jb-ink/45'
+              }`}
+            >
+              Pricing
+            </button>
+          )}
         </div>
+
+        {mode === 'pricing' && (
+          <div>
+            {pricingVariant ? (
+              <div>
+                <h2 className="text-lg font-medium mb-1">{pricingVariant.label}</h2>
+                <p className="text-[13px] text-jb-ink/45 mb-4">
+                  Set multi-buy pricing — e.g. "2 for ₦500" instead of the plain price, repeating
+                  for any quantity (4 = two lots of 2, 5 = two lots of 2 plus one single, and so
+                  on). Leave empty for plain pricing.
+                </p>
+                {pricingLoading ? (
+                  <p className="text-[13px] text-jb-ink/45">Loading…</p>
+                ) : pricingDone ? (
+                  <div className="text-center py-10">
+                    <div className="w-14 h-14 rounded-full bg-jb-ink text-jb-cream flex items-center justify-center text-xl mb-5 mx-auto">
+                      ✓
+                    </div>
+                    <h2 className="text-lg font-medium mb-1">Pricing saved</h2>
+                    <div className="flex flex-col gap-2.5 mt-6">
+                      <PrimaryButton onClick={resetPricing}>Price another</PrimaryButton>
+                      <Link to="/dashboard" className="text-[13px] text-jb-ink/40 py-2">
+                        Done for now
+                      </Link>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="space-y-2 mb-3">
+                      {pricingPacks.map((row, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            placeholder="Qty, e.g. 2"
+                            value={row.quantity}
+                            onChange={(e) => updatePricingRow(i, 'quantity', e.target.value)}
+                            className="w-24 rounded-xl border border-jb-ink/15 bg-white px-3 py-2.5 text-[14px] focus:outline-none focus:border-jb-ink/40"
+                          />
+                          <span className="text-[13px] text-jb-ink/40 shrink-0">for ₦</span>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            placeholder="Total price"
+                            value={row.priceNaira}
+                            onChange={(e) => updatePricingRow(i, 'priceNaira', e.target.value)}
+                            className="flex-1 rounded-xl border border-jb-ink/15 bg-white px-3 py-2.5 text-[14px] focus:outline-none focus:border-jb-ink/40"
+                          />
+                          <button
+                            onClick={() => removePricingRow(i)}
+                            aria-label="Remove this pack"
+                            className="shrink-0 text-jb-ink/40 hover:text-jb-ink text-lg leading-none px-1"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={addPricingRow}
+                      className="text-[13px] text-jb-ink/45 underline underline-offset-2 mb-4"
+                    >
+                      + Add a pack
+                    </button>
+                    {pricingError && (
+                      <p role="alert" className="text-[13px] text-red-700 mb-2">
+                        {pricingError}
+                      </p>
+                    )}
+                    <PrimaryButton
+                      onClick={() => void submitPricing()}
+                      disabled={pricingSaving || (pricingPacks.length > 0 && !parsedPricingPacks)}
+                    >
+                      {pricingSaving ? 'Saving…' : 'Save pricing'}
+                    </PrimaryButton>
+                    <button
+                      onClick={resetPricing}
+                      className="w-full text-[13px] text-jb-ink/40 py-3"
+                    >
+                      Back
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <p className="text-[13px] text-jb-ink/45 mb-4">
+                  Pick a product or service to set multi-buy pricing for.
+                </p>
+                <VariantPicker variants={allPricableVariants} onPick={pickPricingVariant} />
+              </div>
+            )}
+          </div>
+        )}
 
         {mode === 'count' && (
           <div>

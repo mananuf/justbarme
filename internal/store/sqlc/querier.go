@@ -15,6 +15,7 @@ type Querier interface {
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (Invitation, error)
 	ApproveInventoryAdjustmentRequest(ctx context.Context, arg ApproveInventoryAdjustmentRequestParams) (InventoryAdjustmentRequest, error)
 	CloseCurrentPrice(ctx context.Context, arg CloseCurrentPriceParams) error
+	CloseCurrentPricePacksForVariant(ctx context.Context, arg CloseCurrentPricePacksForVariantParams) error
 	CountApprovedAdjustmentsByDay(ctx context.Context, arg CountApprovedAdjustmentsByDayParams) ([]CountApprovedAdjustmentsByDayRow, error)
 	CountExpensesByDay(ctx context.Context, arg CountExpensesByDayParams) ([]CountExpensesByDayRow, error)
 	// The Activity page's GitHub-style daily heatmap needs a per-day count
@@ -59,6 +60,7 @@ type Querier interface {
 	CreatePlatformSession(ctx context.Context, arg CreatePlatformSessionParams) (PlatformSession, error)
 	CreatePlatformStaff(ctx context.Context, arg CreatePlatformStaffParams) (PlatformStaff, error)
 	CreatePrice(ctx context.Context, arg CreatePriceParams) (ProductPrice, error)
+	CreatePricePack(ctx context.Context, arg CreatePricePackParams) (ProductVariantPricePack, error)
 	CreateProduct(ctx context.Context, arg CreateProductParams) (Product, error)
 	CreateReversalStockReceipt(ctx context.Context, arg CreateReversalStockReceiptParams) (StockReceipt, error)
 	CreateSale(ctx context.Context, arg CreateSaleParams) (Sale, error)
@@ -201,6 +203,11 @@ type Querier interface {
 	ListCatalogueTemplates(ctx context.Context) ([]CatalogueTemplate, error)
 	ListCatalogueTemplatesByIDs(ctx context.Context, ids []uuid.UUID) ([]CatalogueTemplate, error)
 	ListCategories(ctx context.Context, businessID uuid.UUID) ([]Category, error)
+	// Backs Service.ListCatalogue's one-query-per-business composition, the
+	// same shape ListCurrentPricesByBusiness already uses for the flat prices
+	// themselves.
+	ListCurrentPricePacksByBusiness(ctx context.Context, businessID uuid.UUID) ([]ProductVariantPricePack, error)
+	ListCurrentPricePacksByVariant(ctx context.Context, arg ListCurrentPricePacksByVariantParams) ([]ProductVariantPricePack, error)
 	ListCurrentPricesByBusiness(ctx context.Context, businessID uuid.UUID) ([]ProductPrice, error)
 	ListCustomers(ctx context.Context, businessID uuid.UUID) ([]Customer, error)
 	ListDevicesForBusiness(ctx context.Context, businessID uuid.UUID) ([]Device, error)

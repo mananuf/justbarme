@@ -15,6 +15,10 @@ var (
 	ErrVariantNotFound   = errors.New("product variant not found")
 	ErrVariantNameTaken  = errors.New("a variant with this name already exists for this product")
 	ErrNoCurrentPrice    = errors.New("variant has no current price")
+
+	ErrInvalidPackQuantity   = errors.New("a pack quantity must be greater than 1")
+	ErrInvalidPackPrice      = errors.New("a pack price must be greater than zero")
+	ErrDuplicatePackQuantity = errors.New("each pack quantity must be used at most once")
 )
 
 // pgErrorCode reports err's Postgres SQLSTATE code, if any. Duplicated from

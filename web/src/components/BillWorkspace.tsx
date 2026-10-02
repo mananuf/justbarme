@@ -186,19 +186,42 @@ export function BillWorkspace({
   // it, so this is always "what's actually on the bill right now."
   const currentOrderLines: CartLine[] = useMemo(() => {
     if (!detail) return [];
-    const byVariant = new Map<string, CartLine>();
+    // Accumulates each variant's real summed total alongside its net
+    // quantity, deriving "each" as total ÷ quantity rather than just
+    // taking whichever round happened to be processed last. For a plain,
+    // flat-priced variant every round shares the same per-unit price, so
+    // this produces exactly the same number as before -- no change for
+    // anything that isn't multi-buy-priced. For one that is
+    // (docs/PHASE_MULTIBUY_PRICING.md), rounds can carry genuinely
+    // different marginal prices (e.g. a snooker game's 2nd unit costing
+    // less than its 1st), and showing the true average is what keeps
+    // "quantity × each" actually equal to what's being charged, instead of
+    // an arbitrary single round's price implying the wrong total.
+    const byVariant = new Map<
+      string,
+      { description: string; quantity: number; totalKobo: number }
+    >();
     for (const round of detail.sales) {
       for (const item of round.items) {
         const existing = byVariant.get(item.variantId);
         byVariant.set(item.variantId, {
-          variantId: item.variantId,
           description: item.description,
-          unitPriceKobo: item.unitPriceKobo,
           quantity: (existing?.quantity ?? 0) + item.quantity,
+          totalKobo: (existing?.totalKobo ?? 0) + item.lineTotalKobo,
         });
       }
     }
-    return Array.from(byVariant.values()).filter((l) => l.quantity > 0);
+    const lines: CartLine[] = [];
+    for (const [variantId, v] of byVariant) {
+      if (v.quantity <= 0) continue;
+      lines.push({
+        variantId,
+        description: v.description,
+        unitPriceKobo: Math.round(v.totalKobo / v.quantity),
+        quantity: v.quantity,
+      });
+    }
+    return lines;
   }, [detail]);
   const currentOrderQuantities = Object.fromEntries(
     currentOrderLines.map((l) => [l.variantId, l.quantity]),

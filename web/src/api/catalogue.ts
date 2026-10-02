@@ -43,6 +43,15 @@ export async function listCatalogueTemplates(): Promise<CatalogueTemplate[]> {
   }));
 }
 
+// PricePack is one "N units for a flat total" multi-buy rule -- e.g.
+// {quantity: 2, priceKobo: 50000} means "2 for ₦500," repeating
+// indefinitely in combination with the variant's own plain price and any
+// other packs. See docs/PHASE_MULTIBUY_PRICING.md.
+export interface PricePack {
+  quantity: number;
+  priceKobo: number;
+}
+
 export interface CatalogueVariant {
   id: string;
   name: string;
@@ -56,6 +65,8 @@ export interface CatalogueVariant {
   // see internal/catalogue.Variant's own doc comment. Such a variant is
   // never "restocked" and never shows a meaningful currentStock number.
   tracksInventory: boolean;
+  // Empty for a plain, linearly-priced variant (the common case).
+  pricePacks: PricePack[];
 }
 
 export interface CatalogueProduct {
@@ -65,6 +76,11 @@ export interface CatalogueProduct {
   variants: CatalogueVariant[];
 }
 
+interface RawPricePack {
+  quantity: number;
+  price_kobo: number;
+}
+
 interface RawVariant {
   id: string;
   name: string;
@@ -72,6 +88,11 @@ interface RawVariant {
   current_price: { amount_kobo: number };
   current_stock: number;
   tracks_inventory: boolean;
+  price_packs?: RawPricePack[];
+}
+
+function toPricePacks(raw?: RawPricePack[]): PricePack[] {
+  return (raw ?? []).map((p) => ({ quantity: p.quantity, priceKobo: p.price_kobo }));
 }
 
 interface RawProduct {
@@ -95,6 +116,7 @@ function toCatalogueProduct(p: RawProduct): CatalogueProduct {
       currentPriceKobo: v.current_price.amount_kobo,
       currentStock: v.current_stock,
       tracksInventory: v.tracks_inventory,
+      pricePacks: toPricePacks(v.price_packs),
     })),
   };
 }
@@ -172,6 +194,7 @@ export async function createVariant(
     currentPriceKobo: raw.current_price.amount_kobo,
     currentStock: raw.current_stock,
     tracksInventory: raw.tracks_inventory,
+    pricePacks: toPricePacks(raw.price_packs),
   };
 }
 
@@ -296,5 +319,37 @@ export async function updateVariant(
     currentPriceKobo: raw.current_price.amount_kobo,
     currentStock: raw.current_stock,
     tracksInventory: raw.tracks_inventory,
+    pricePacks: toPricePacks(raw.price_packs),
   };
+}
+
+// listVariantPricePacks wraps GET /api/v1/variants/{variant_id}/price-packs.
+export async function listVariantPricePacks(
+  variantId: string,
+  businessId: string,
+): Promise<PricePack[]> {
+  const raw = await apiRequest<RawPricePack[]>(`/api/v1/variants/${variantId}/price-packs`, {
+    headers: { 'X-Business-ID': businessId },
+  });
+  return toPricePacks(raw);
+}
+
+// setVariantPricePacks wraps POST /api/v1/variants/{variant_id}/price-packs
+// -- full replacement of a variant's multi-buy pricing, same PATCH-the-
+// whole-set convention as updateVariant. An empty array removes multi-buy
+// pricing entirely, reverting to plain linear pricing.
+export async function setVariantPricePacks(
+  variantId: string,
+  packs: PricePack[],
+  businessId: string,
+  csrfToken: string,
+): Promise<PricePack[]> {
+  const raw = await apiRequest<RawPricePack[]>(`/api/v1/variants/${variantId}/price-packs`, {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
+    body: JSON.stringify({
+      packs: packs.map((p) => ({ quantity: p.quantity, price_kobo: p.priceKobo })),
+    }),
+  });
+  return toPricePacks(raw);
 }

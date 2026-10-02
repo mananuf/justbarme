@@ -542,6 +542,100 @@ func (s *Service) ListPriceHistory(ctx context.Context, userID, businessID, vari
 	return out, nil
 }
 
+// PricePackInput is one caller-supplied "N units for a flat total" rule,
+// as submitted to SetVariantPricePacks.
+type PricePackInput struct {
+	Quantity  int32
+	PriceKobo int64
+}
+
+// SetVariantPricePacks replaces the complete set of multi-buy packs for a
+// variant in one transaction -- full-replacement, matching this
+// codebase's PATCH convention (see UpdateVariantParams' own doc comment:
+// "the caller resends the whole mutable set, not a partial merge"). An
+// empty packs slice removes multi-buy pricing entirely, reverting the
+// variant to plain linear pricing. See docs/PHASE_MULTIBUY_PRICING.md.
+func (s *Service) SetVariantPricePacks(
+	ctx context.Context, userID, businessID, variantID uuid.UUID, packs []PricePackInput,
+) ([]PricePack, error) {
+	seen := make(map[int32]bool, len(packs))
+	for _, p := range packs {
+		if p.Quantity <= 1 {
+			return nil, ErrInvalidPackQuantity
+		}
+		if p.PriceKobo <= 0 {
+			return nil, ErrInvalidPackPrice
+		}
+		if seen[p.Quantity] {
+			return nil, ErrDuplicatePackQuantity
+		}
+		seen[p.Quantity] = true
+	}
+
+	var created []sqlc.ProductVariantPricePack
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		if _, err := q.GetVariantByID(ctx, sqlc.GetVariantByIDParams{BusinessID: businessID, ID: variantID}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrVariantNotFound
+			}
+			return fmt.Errorf("look up variant: %w", err)
+		}
+
+		now := time.Now()
+		if err := q.CloseCurrentPricePacksForVariant(ctx, sqlc.CloseCurrentPricePacksForVariantParams{
+			BusinessID: businessID, VariantID: variantID, ValidTo: pgTimestamptz(now),
+		}); err != nil {
+			return fmt.Errorf("close current price packs: %w", err)
+		}
+
+		for _, p := range packs {
+			id, err := newID()
+			if err != nil {
+				return err
+			}
+			row, err := q.CreatePricePack(ctx, sqlc.CreatePricePackParams{
+				ID: id, BusinessID: businessID, VariantID: variantID,
+				PackQuantity: p.Quantity, PackPriceKobo: p.PriceKobo,
+				ValidFrom: pgTimestamptz(now), CreatedBy: userID,
+			})
+			if err != nil {
+				return fmt.Errorf("insert price pack: %w", err)
+			}
+			created = append(created, row)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PricePack, 0, len(created))
+	for _, c := range created {
+		out = append(out, toPricePack(c))
+	}
+	return out, nil
+}
+
+// ListVariantPricePacks returns variantID's current multi-buy packs, if
+// any, ordered by quantity.
+func (s *Service) ListVariantPricePacks(ctx context.Context, userID, businessID, variantID uuid.UUID) ([]PricePack, error) {
+	var rows []sqlc.ProductVariantPricePack
+	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
+		var err error
+		rows, err = q.ListCurrentPricePacksByVariant(ctx, sqlc.ListCurrentPricePacksByVariantParams{
+			BusinessID: businessID, VariantID: variantID,
+		})
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list price packs: %w", err)
+	}
+	out := make([]PricePack, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, toPricePack(r))
+	}
+	return out, nil
+}
+
 // ListCatalogue assembles every product, its variants, and each variant's
 // current price for businessID -- the shape both an owner's catalogue
 // management screen and a device's offline replication read need.
@@ -550,6 +644,7 @@ func (s *Service) ListCatalogue(ctx context.Context, userID, businessID uuid.UUI
 		products []sqlc.Product
 		variants []sqlc.ProductVariant
 		prices   []sqlc.ProductPrice
+		packs    []sqlc.ProductVariantPricePack
 	)
 	err := store.WithTenant(ctx, s.pool, userID, businessID, func(ctx context.Context, q *sqlc.Queries) error {
 		var err error
@@ -562,6 +657,10 @@ func (s *Service) ListCatalogue(ctx context.Context, userID, businessID uuid.UUI
 			return err
 		}
 		prices, err = q.ListCurrentPricesByBusiness(ctx, businessID)
+		if err != nil {
+			return err
+		}
+		packs, err = q.ListCurrentPricePacksByBusiness(ctx, businessID)
 		return err
 	})
 	if err != nil {
@@ -572,9 +671,13 @@ func (s *Service) ListCatalogue(ctx context.Context, userID, businessID uuid.UUI
 	for _, p := range prices {
 		priceByVariant[p.VariantID] = p
 	}
+	packsByVariant := make(map[uuid.UUID][]PricePack, len(packs))
+	for _, p := range packs {
+		packsByVariant[p.VariantID] = append(packsByVariant[p.VariantID], toPricePack(p))
+	}
 	variantsByProduct := make(map[uuid.UUID][]VariantWithPrice, len(variants))
 	for _, v := range variants {
-		vp := VariantWithPrice{Variant: toVariant(v)}
+		vp := VariantWithPrice{Variant: toVariant(v), PricePacks: packsByVariant[v.ID]}
 		if p, ok := priceByVariant[v.ID]; ok {
 			vp.CurrentPrice = toPrice(p)
 		}

@@ -170,21 +170,70 @@ func postSaleRound(
 			return Sale{}, fmt.Errorf("look up variant: %w", err)
 		}
 
-		lineTotal := int64(item.Quantity) * item.UnitPriceKobo
-		totalKobo += lineTotal
-
 		reviewReason := ""
 		if !variant.Active {
 			reviewReason = ReviewReasonDeactivatedVariant
-		} else if price, err := q.GetPriceAt(ctx, sqlc.GetPriceAtParams{
-			BusinessID: businessID, VariantID: item.VariantID, ValidFrom: pgTimestamptz(occurredAt),
-		}); err != nil || price.AmountKobo != item.UnitPriceKobo {
-			reviewReason = ReviewReasonPriceMismatch
 		}
+
+		packs, err := q.ListCurrentPricePacksByVariant(ctx, sqlc.ListCurrentPricePacksByVariantParams{
+			BusinessID: businessID, VariantID: item.VariantID,
+		})
+		if err != nil {
+			return Sale{}, fmt.Errorf("list price packs: %w", err)
+		}
+
+		var lineTotal, unitPriceKobo int64
+		if len(packs) > 0 {
+			// Multi-buy pricing (docs/PHASE_MULTIBUY_PRICING.md): the
+			// server is authoritative here, not the client -- a client
+			// can't be trusted to correctly reconstruct bundle math, unlike
+			// an ordinary flat price where a stale client submission is
+			// merely flagged for review below. item.UnitPriceKobo is
+			// ignored entirely for a pack-priced variant; the charge is the
+			// marginal cost of moving this bill's net quantity of this
+			// variant from its current count to current+item.Quantity --
+			// negative for item.Quantity < 0 (RemoveBillItem's compensating
+			// round), which is exactly the right refund, computed the same
+			// way regardless of sign or how many previous rounds got here.
+			currentOnBill, err := q.SumBillItemQuantityByVariant(ctx, sqlc.SumBillItemQuantityByVariantParams{
+				BusinessID: businessID, BillID: billID, VariantID: item.VariantID,
+			})
+			if err != nil {
+				return Sale{}, fmt.Errorf("sum bill item quantity: %w", err)
+			}
+			basePrice, err := q.GetPriceAt(ctx, sqlc.GetPriceAtParams{
+				BusinessID: businessID, VariantID: item.VariantID, ValidFrom: pgTimestamptz(occurredAt),
+			})
+			if err != nil {
+				return Sale{}, fmt.Errorf("get base price for pack pricing: %w", err)
+			}
+			before := priceForQuantity(basePrice.AmountKobo, packs, currentOnBill)
+			after := priceForQuantity(basePrice.AmountKobo, packs, currentOnBill+item.Quantity)
+			lineTotal = after - before
+			if item.Quantity != 0 {
+				// Informational only (what display shows as "each") --
+				// lineTotal, not this, is what the bill's balance is built
+				// from. Exact (no rounding loss) for the common quantity=1
+				// case every live tap already uses; only an approximation
+				// for a hypothetical larger batch.
+				unitPriceKobo = lineTotal / int64(item.Quantity)
+			}
+		} else {
+			lineTotal = int64(item.Quantity) * item.UnitPriceKobo
+			unitPriceKobo = item.UnitPriceKobo
+			if reviewReason == "" {
+				if price, err := q.GetPriceAt(ctx, sqlc.GetPriceAtParams{
+					BusinessID: businessID, VariantID: item.VariantID, ValidFrom: pgTimestamptz(occurredAt),
+				}); err != nil || price.AmountKobo != item.UnitPriceKobo {
+					reviewReason = ReviewReasonPriceMismatch
+				}
+			}
+		}
+		totalKobo += lineTotal
 
 		resolved = append(resolved, resolvedItem{
 			variantID: item.VariantID, description: variant.ProductName + " — " + variant.Name, quantity: item.Quantity,
-			unitPriceKobo: item.UnitPriceKobo, lineTotalKobo: lineTotal, reviewReason: reviewReason,
+			unitPriceKobo: unitPriceKobo, lineTotalKobo: lineTotal, reviewReason: reviewReason,
 			tracksInventory: variant.TracksInventory,
 		})
 	}

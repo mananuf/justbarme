@@ -296,6 +296,8 @@ func NewHandler(deps Dependencies) http.Handler {
 				router.Patch("/variants/{variant_id}", api.updateVariant)
 				router.Get("/variants/{variant_id}/prices", api.listVariantPrices)
 				router.Post("/variants/{variant_id}/prices", api.setVariantPrice)
+				router.Get("/variants/{variant_id}/price-packs", api.listVariantPricePacks)
+				router.Post("/variants/{variant_id}/price-packs", api.setVariantPricePacks)
 
 				router.Post("/stock-receipts", api.receiveStock)
 				router.Get("/stock-receipts/{receipt_id}", api.getStockReceipt)

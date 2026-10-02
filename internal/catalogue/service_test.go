@@ -2,6 +2,7 @@ package catalogue_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -619,5 +620,129 @@ func TestProductKeepsTemplateLinkAcrossRenameAndAutoLinksExactNames(t *testing.T
 	}
 	if typed.TemplateID != templateID {
 		t.Fatalf("expected a hand-typed exact template name to auto-link, got %s", typed.TemplateID)
+	}
+}
+
+func TestSetVariantPricePacksReplacesTheWholeSet(t *testing.T) {
+	svc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID := newTenant(t, ctx, identitySvc, pool)
+
+	product, err := svc.CreateProduct(ctx, ownerID, businessID, uuid.Nil, uniqueName("Snooker"))
+	if err != nil {
+		t.Fatalf("CreateProduct: %v", err)
+	}
+	variant, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "Game", 30000, false)
+	if err != nil {
+		t.Fatalf("CreateVariant: %v", err)
+	}
+
+	packs, err := svc.SetVariantPricePacks(ctx, ownerID, businessID, variant.ID, []catalogue.PricePackInput{
+		{Quantity: 2, PriceKobo: 50000},
+	})
+	if err != nil {
+		t.Fatalf("SetVariantPricePacks: %v", err)
+	}
+	if len(packs) != 1 || packs[0].PackQuantity != 2 || packs[0].PackPriceKobo != 50000 {
+		t.Fatalf("expected one 2-for-50000 pack, got %+v", packs)
+	}
+
+	listed, err := svc.ListVariantPricePacks(ctx, ownerID, businessID, variant.ID)
+	if err != nil {
+		t.Fatalf("ListVariantPricePacks: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("expected ListVariantPricePacks to agree, got %d rows", len(listed))
+	}
+
+	// Full replacement: setting a new set drops the old one entirely, not
+	// a merge -- same PATCH convention as UpdateVariant.
+	replaced, err := svc.SetVariantPricePacks(ctx, ownerID, businessID, variant.ID, []catalogue.PricePackInput{
+		{Quantity: 3, PriceKobo: 80000},
+	})
+	if err != nil {
+		t.Fatalf("SetVariantPricePacks (replace): %v", err)
+	}
+	if len(replaced) != 1 || replaced[0].PackQuantity != 3 {
+		t.Fatalf("expected the old 2-pack gone and only a new 3-pack, got %+v", replaced)
+	}
+
+	// Empty set removes multi-buy pricing entirely.
+	cleared, err := svc.SetVariantPricePacks(ctx, ownerID, businessID, variant.ID, nil)
+	if err != nil {
+		t.Fatalf("SetVariantPricePacks (clear): %v", err)
+	}
+	if len(cleared) != 0 {
+		t.Fatalf("expected an empty pack list to clear multi-buy pricing, got %+v", cleared)
+	}
+}
+
+func TestSetVariantPricePacksRejectsInvalidInput(t *testing.T) {
+	svc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID := newTenant(t, ctx, identitySvc, pool)
+
+	product, err := svc.CreateProduct(ctx, ownerID, businessID, uuid.Nil, uniqueName("Pool"))
+	if err != nil {
+		t.Fatalf("CreateProduct: %v", err)
+	}
+	variant, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "Game", 30000, false)
+	if err != nil {
+		t.Fatalf("CreateVariant: %v", err)
+	}
+
+	if _, err := svc.SetVariantPricePacks(ctx, ownerID, businessID, variant.ID, []catalogue.PricePackInput{
+		{Quantity: 1, PriceKobo: 50000},
+	}); !errors.Is(err, catalogue.ErrInvalidPackQuantity) {
+		t.Fatalf("expected ErrInvalidPackQuantity for quantity 1, got %v", err)
+	}
+	if _, err := svc.SetVariantPricePacks(ctx, ownerID, businessID, variant.ID, []catalogue.PricePackInput{
+		{Quantity: 2, PriceKobo: 0},
+	}); !errors.Is(err, catalogue.ErrInvalidPackPrice) {
+		t.Fatalf("expected ErrInvalidPackPrice for zero price, got %v", err)
+	}
+	if _, err := svc.SetVariantPricePacks(ctx, ownerID, businessID, variant.ID, []catalogue.PricePackInput{
+		{Quantity: 2, PriceKobo: 50000}, {Quantity: 2, PriceKobo: 60000},
+	}); !errors.Is(err, catalogue.ErrDuplicatePackQuantity) {
+		t.Fatalf("expected ErrDuplicatePackQuantity for a repeated quantity, got %v", err)
+	}
+}
+
+func TestListCataloguePopulatesPricePacks(t *testing.T) {
+	svc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID := newTenant(t, ctx, identitySvc, pool)
+
+	product, err := svc.CreateProduct(ctx, ownerID, businessID, uuid.Nil, uniqueName("Snooker"))
+	if err != nil {
+		t.Fatalf("CreateProduct: %v", err)
+	}
+	variant, err := svc.CreateVariant(ctx, ownerID, businessID, product.ID, "Game", 30000, false)
+	if err != nil {
+		t.Fatalf("CreateVariant: %v", err)
+	}
+	if _, err := svc.SetVariantPricePacks(ctx, ownerID, businessID, variant.ID, []catalogue.PricePackInput{
+		{Quantity: 2, PriceKobo: 50000},
+	}); err != nil {
+		t.Fatalf("SetVariantPricePacks: %v", err)
+	}
+
+	list, err := svc.ListCatalogue(ctx, ownerID, businessID)
+	if err != nil {
+		t.Fatalf("ListCatalogue: %v", err)
+	}
+	var found *catalogue.VariantWithPrice
+	for i := range list {
+		for j := range list[i].Variants {
+			if list[i].Variants[j].ID == variant.ID {
+				found = &list[i].Variants[j]
+			}
+		}
+	}
+	if found == nil {
+		t.Fatal("expected the snooker variant in the catalogue listing")
+	}
+	if len(found.PricePacks) != 1 || found.PricePacks[0].PackQuantity != 2 {
+		t.Fatalf("expected ListCatalogue to surface the current pack, got %+v", found.PricePacks)
 	}
 }

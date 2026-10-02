@@ -101,6 +101,7 @@ describe('Sell offline catalogue cache', () => {
               currentPriceKobo: 100000,
               currentStock: 10,
               tracksInventory: true,
+              pricePacks: [],
             },
           ],
         },

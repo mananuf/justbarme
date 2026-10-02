@@ -377,29 +377,38 @@ func (s *Service) RemoveBillItem(
 		if quantity > present {
 			return ErrInsufficientQuantityOnBill
 		}
-		// An open bill deliberately never auto-settles just because its
-		// balance hit zero (see recomputeBillBalance) -- a tab can sit at
-		// zero and still take more rounds later (pay-as-you-go). But that
-		// means status alone can't gate removal: once a payment has
-		// already covered what's currently on the bill, taking an item
-		// back off would push the balance negative -- a refund owed, not
-		// a correction, and never what this action is for. Checked as "would
-		// this removal's amount exceed what's still outstanding" rather
-		// than a blunt balance<=0 test, so removing the last of an item
-		// that was never actually paid for (balance reached zero purely
-		// because nothing net remains, not because money changed hands)
-		// still correctly falls through to the quantity check above
-		// instead. Adding is unaffected -- it only ever increases what's
-		// owed, so it stays fine at any balance.
-		if int64(quantity)*unitPriceKobo > bill.BalanceKobo {
-			return ErrBillFullyPaid
-		}
 
 		sale, err := postSaleRound(ctx, q, businessID, billID, sellerID, bill.LocationID, saleID, idempotencyKey, occurredAt, receivedAt,
 			[]SaleItemInput{{VariantID: variantID, Quantity: -quantity, UnitPriceKobo: unitPriceKobo}},
 		)
 		if err != nil {
 			return err
+		}
+
+		// An open bill deliberately never auto-settles just because its
+		// balance hit zero (see recomputeBillBalance) -- a tab can sit at
+		// zero and still take more rounds later (pay-as-you-go). But that
+		// means status alone can't gate removal: once a payment has
+		// already covered what's currently on the bill, taking an item
+		// back off would push the balance negative -- a refund owed, not
+		// a correction, and never what this action is for. Checked here,
+		// after postSaleRound, against sale.TotalKobo (the real amount
+		// just computed -- always <= 0 for a removal) rather than a
+		// client-estimated int64(quantity)*unitPriceKobo beforehand: for a
+		// multi-buy-priced variant (docs/PHASE_MULTIBUY_PRICING.md) that
+		// estimate would use the wrong basis entirely, since the true
+		// refund is the pack-aware marginal amount, not a flat per-unit
+		// guess. Returning a non-nil error here still rolls back
+		// everything postSaleRound just wrote -- we're still inside the
+		// same transaction, nothing has committed yet. This also still
+		// correctly falls through for an item that was never actually paid
+		// for (balance reached zero purely because nothing net remains,
+		// not because money changed hands), since sale.TotalKobo would
+		// already be constrained to what's present by the quantity check
+		// above. Adding is unaffected -- it only ever increases what's
+		// owed, so it stays fine at any balance.
+		if bill.BalanceKobo+sale.TotalKobo < 0 {
+			return ErrBillFullyPaid
 		}
 
 		if _, err := recomputeBillBalance(ctx, q, businessID, billID, bill.Status); err != nil {

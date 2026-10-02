@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/mananuf/justbarme/internal/catalogue"
 	"github.com/mananuf/justbarme/internal/sales"
 )
 
@@ -707,5 +708,166 @@ func TestRecordPaymentIsIdempotent(t *testing.T) {
 	}
 	if detail.Bill.BalanceKobo != 0 {
 		t.Fatalf("expected balance 0 after the (single, deduped) payment, got %d", detail.Bill.BalanceKobo)
+	}
+}
+
+// TestAddSaleRoundAppliesMultiBuyPricingAcrossRounds exercises the exact
+// example docs/PHASE_MULTIBUY_PRICING.md was built for: 1 game = 300, 2
+// games for 500 (discounted), repeating indefinitely. Every tap still
+// posts its own live, quantity-1 round (unchanged); what varies is the
+// server-computed marginal price charged for each one, based on how many
+// of this variant are already on the bill -- never the client's own
+// submitted unit price, which this test deliberately keeps wrong (300 on
+// every call) to prove it is ignored for a multi-buy-priced variant.
+func TestAddSaleRoundAppliesMultiBuyPricingAcrossRounds(t *testing.T) {
+	salesSvc, inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, _ := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
+
+	product, err := catalogueSvc.CreateProduct(ctx, ownerID, businessID, uuid.Nil, uniqueName("Snooker"))
+	if err != nil {
+		t.Fatalf("CreateProduct: %v", err)
+	}
+	variant, err := catalogueSvc.CreateVariant(ctx, ownerID, businessID, product.ID, "Game", 30000, false)
+	if err != nil {
+		t.Fatalf("CreateVariant: %v", err)
+	}
+	if _, err := catalogueSvc.SetVariantPricePacks(ctx, ownerID, businessID, variant.ID, []catalogue.PricePackInput{
+		{Quantity: 2, PriceKobo: 50000},
+	}); err != nil {
+		t.Fatalf("SetVariantPricePacks: %v", err)
+	}
+
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("OpenBill: %v", err)
+	}
+
+	wantMarginals := []int64{30000, 20000, 30000, 20000}
+	wantCumulative := []int64{30000, 50000, 80000, 100000}
+	for i, wantMarginal := range wantMarginals {
+		round, err := salesSvc.AddSaleRound(ctx, ownerID, businessID, bill.ID, ownerID, uuid.New(), time.Now(),
+			[]sales.SaleItemInput{{VariantID: variant.ID, Quantity: 1, UnitPriceKobo: 30000}},
+		)
+		if err != nil {
+			t.Fatalf("AddSaleRound #%d: %v", i+1, err)
+		}
+		if round.TotalKobo != wantMarginal {
+			t.Fatalf("round #%d: got marginal %d, want %d", i+1, round.TotalKobo, wantMarginal)
+		}
+		detail, err := salesSvc.GetBillDetail(ctx, ownerID, businessID, bill.ID)
+		if err != nil {
+			t.Fatalf("GetBillDetail: %v", err)
+		}
+		if detail.Bill.BalanceKobo != wantCumulative[i] {
+			t.Fatalf("after round #%d: got balance %d, want cumulative %d", i+1, detail.Bill.BalanceKobo, wantCumulative[i])
+		}
+	}
+}
+
+// TestRemoveBillItemRefundsMultiBuyMarginal exercises the inverse: taking
+// one game off a 4-game bill refunds exactly the marginal cost of that
+// 4th unit (200, not the client's flat 300 guess), leaving the bill at
+// the correct 3-game price (800), not a naive 4-game-price-minus-300.
+func TestRemoveBillItemRefundsMultiBuyMarginal(t *testing.T) {
+	salesSvc, inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, _ := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
+
+	product, err := catalogueSvc.CreateProduct(ctx, ownerID, businessID, uuid.Nil, uniqueName("Snooker"))
+	if err != nil {
+		t.Fatalf("CreateProduct: %v", err)
+	}
+	variant, err := catalogueSvc.CreateVariant(ctx, ownerID, businessID, product.ID, "Game", 30000, false)
+	if err != nil {
+		t.Fatalf("CreateVariant: %v", err)
+	}
+	if _, err := catalogueSvc.SetVariantPricePacks(ctx, ownerID, businessID, variant.ID, []catalogue.PricePackInput{
+		{Quantity: 2, PriceKobo: 50000},
+	}); err != nil {
+		t.Fatalf("SetVariantPricePacks: %v", err)
+	}
+
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("OpenBill: %v", err)
+	}
+	for i := 0; i < 4; i++ {
+		if _, err := salesSvc.AddSaleRound(ctx, ownerID, businessID, bill.ID, ownerID, uuid.New(), time.Now(),
+			[]sales.SaleItemInput{{VariantID: variant.ID, Quantity: 1, UnitPriceKobo: 30000}},
+		); err != nil {
+			t.Fatalf("AddSaleRound #%d: %v", i+1, err)
+		}
+	}
+
+	removal, err := salesSvc.RemoveBillItem(ctx, ownerID, businessID, bill.ID, ownerID, variant.ID,
+		uuid.New(), 1, 30000, time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("RemoveBillItem: %v", err)
+	}
+	if removal.TotalKobo != -20000 {
+		t.Fatalf("expected the refund to be the 4th unit's marginal (-20000), got %d", removal.TotalKobo)
+	}
+	detail, err := salesSvc.GetBillDetail(ctx, ownerID, businessID, bill.ID)
+	if err != nil {
+		t.Fatalf("GetBillDetail: %v", err)
+	}
+	if detail.Bill.BalanceKobo != 80000 {
+		t.Fatalf("expected balance back to the correct 3-game price 80000, got %d", detail.Bill.BalanceKobo)
+	}
+}
+
+// TestRemoveBillItemFullyPaidCheckUsesTrueMultiBuyRefund confirms
+// ErrBillFullyPaid is judged against the real, pack-aware refund amount,
+// not the client's flat per-unit guess -- the restructuring that moved
+// this check to after postSaleRound (docs/PHASE_MULTIBUY_PRICING.md).
+func TestRemoveBillItemFullyPaidCheckUsesTrueMultiBuyRefund(t *testing.T) {
+	salesSvc, inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, _ := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
+
+	product, err := catalogueSvc.CreateProduct(ctx, ownerID, businessID, uuid.Nil, uniqueName("Snooker"))
+	if err != nil {
+		t.Fatalf("CreateProduct: %v", err)
+	}
+	variant, err := catalogueSvc.CreateVariant(ctx, ownerID, businessID, product.ID, "Game", 30000, false)
+	if err != nil {
+		t.Fatalf("CreateVariant: %v", err)
+	}
+	if _, err := catalogueSvc.SetVariantPricePacks(ctx, ownerID, businessID, variant.ID, []catalogue.PricePackInput{
+		{Quantity: 2, PriceKobo: 50000},
+	}); err != nil {
+		t.Fatalf("SetVariantPricePacks: %v", err)
+	}
+
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("OpenBill: %v", err)
+	}
+	for i := 0; i < 4; i++ {
+		if _, err := salesSvc.AddSaleRound(ctx, ownerID, businessID, bill.ID, ownerID, uuid.New(), time.Now(),
+			[]sales.SaleItemInput{{VariantID: variant.ID, Quantity: 1, UnitPriceKobo: 30000}},
+		); err != nil {
+			t.Fatalf("AddSaleRound #%d: %v", i+1, err)
+		}
+	}
+	// Bill is now 100000 (4 games). Pay it off in full.
+	if _, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 100000, sales.PaymentMethodCash, uuid.Nil); err != nil {
+		t.Fatalf("RecordPayment: %v", err)
+	}
+
+	// Removing one game now would refund 20000 (the 4th unit's true
+	// marginal) against a balance of 0 -- correctly rejected. A naive
+	// client-guess-based check using the submitted 30000 would also
+	// reject this particular case, so this alone wouldn't distinguish the
+	// fix from the old behavior -- the real proof is
+	// TestRemoveBillItemRefundsMultiBuyMarginal above succeeding with a
+	// non-30000 refund at all while this one still correctly blocks an
+	// over-the-balance removal.
+	if _, err := salesSvc.RemoveBillItem(ctx, ownerID, businessID, bill.ID, ownerID, variant.ID,
+		uuid.New(), 1, 30000, time.Now(),
+	); !errors.Is(err, sales.ErrBillFullyPaid) {
+		t.Fatalf("expected ErrBillFullyPaid, got %v", err)
 	}
 }

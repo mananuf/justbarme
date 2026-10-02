@@ -345,6 +345,18 @@ type ProductVariant struct {
 	TracksInventory bool               `json:"tracks_inventory"`
 }
 
+type ProductVariantPricePack struct {
+	ID            uuid.UUID          `json:"id"`
+	BusinessID    uuid.UUID          `json:"business_id"`
+	VariantID     uuid.UUID          `json:"variant_id"`
+	PackQuantity  int32              `json:"pack_quantity"`
+	PackPriceKobo int64              `json:"pack_price_kobo"`
+	ValidFrom     pgtype.Timestamptz `json:"valid_from"`
+	ValidTo       pgtype.Timestamptz `json:"valid_to"`
+	CreatedBy     uuid.UUID          `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type Sale struct {
 	ID               uuid.UUID          `json:"id"`
 	BusinessID       uuid.UUID          `json:"business_id"`

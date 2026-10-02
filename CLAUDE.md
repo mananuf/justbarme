@@ -467,6 +467,82 @@ just the first design, before extending any of this.
   either pass. Worth a manual verification pass before trusting this in
   production, same named gap the original `Sell.tsx` already carried.
 
+## Multi-buy / bundle pricing
+
+Lets a variant price in "N for a flat total" packs that repeat
+indefinitely in combination with its plain price (e.g. a snooker game: 1
+for ₦300, 2 for ₦500, so 3 = ₦800, 4 = ₦1,000, continuing) — **not** part
+of `docs/`'s frozen plan, designed in conversation once a concrete pilot
+need (that exact snooker pricing) made plain linear per-unit pricing
+insufficient. Full design record and the live-verification transcript live
+in `docs/PHASE_MULTIBUY_PRICING.md` — read it before extending any of
+this.
+
+- **A variant's own current price is the implicit "pack of 1."** A new
+  table, `product_variant_price_packs` (migration `000031`, same
+  append-oriented shape as `product_prices`), only ever holds packs of
+  size > 1 — a variant with none behaves exactly as it always has. The
+  price for any quantity is a genuine dynamic-programming minimum over
+  every defined pack plus the plain price at every step
+  (`internal/sales/pricing.go`'s `priceForQuantity`), not a "biggest/
+  best-rate pack first" shortcut — the shortcut is not guaranteed optimal
+  once pack shapes aren't as simple as a single 2-for-X deal, and a test
+  pins a real case where it would overcharge.
+- **No change to how a sale is recorded, only to how one unit's price is
+  decided.** Every tap in the unified Sell flow already adds exactly one
+  unit, live; for a pack-priced variant, `postSaleRound` charges the
+  *marginal* price of that tap (the cost of moving the bill's net quantity
+  of that variant from its current count to current+quantity, reusing the
+  same `SumBillItemQuantityByVariant` lookup `RemoveBillItem` already used
+  for its cap check) instead of the client's submitted flat price.
+  Sign-agnostic, so a removal's negative delta is the correct refund,
+  computed the same way regardless of add/remove order.
+- **The server becomes authoritative on price for a pack-priced variant —
+  a deliberate, narrow exception to this codebase's usual "trust the
+  client's unit price, only flag a stale one for review" rule.** A client
+  cannot be trusted to reconstruct bundle math correctly; every other
+  variant keeps today's exact behavior unchanged. Verified live: a client
+  sending the same flat, wrong price on every tap still gets charged the
+  correct 300/200/300/200 sequence.
+- **`RemoveBillItem`'s "already fully paid" guard now checks the real
+  computed refund** (`bill.BalanceKobo + sale.TotalKobo < 0`, checked
+  *after* `postSaleRound` posts the compensating round in the same
+  transaction, rolling back if it would go negative) rather than a
+  client-estimated `quantity × unitPriceKobo` beforehand, which would use
+  the wrong basis for a pack-priced variant. Exactly reproduces the old
+  behavior for an ordinary item (confirmed by the full pre-existing test
+  suite passing unchanged).
+- **`internal/sales` reads the packs table directly via the shared sqlc
+  layer**, not through `catalogue.Service` — the same "each feature
+  package stays self-contained, duplicate a small pure check rather than
+  call into another package's Service" convention Phase 7's
+  negative-inventory detection already established.
+- **Frontend**: `Stock.tsx` gained a fourth, owner-only mode, "Pricing"
+  (alongside Restock/Count/Report issue), over a new
+  `allPricableVariants` list that — unlike `allVariants` — does not
+  exclude non-stocked service items, since a service is exactly the
+  motivating case. `BillWorkspace`'s "current order" netting was also
+  fixed to show a true average price (summed real line totals ÷ quantity)
+  rather than whichever round happened to be processed last, which would
+  otherwise misleadingly imply the wrong total once rounds can carry
+  genuinely different marginal prices.
+- **Deliberately not built**: a live marginal-price preview in the
+  product grid before tapping (the server is authoritative regardless of
+  what the UI shows beforehand, so this is polish, not correctness), and
+  grouping a pack-priced variant's rounds into one summarized receipt line
+  (kept as individual, honestly-varying-priced rounds for now, matching
+  how every other correction in this app is already shown).
+- **Verified live** against a running backend: the exact snooker example
+  end to end (four taps charged 300/200/300/200 for a correct ₦1,000
+  total, a removal refunding the true ₦200 marginal rather than a flat
+  ₦300), each tap deliberately sending the same wrong client-side price to
+  prove it's ignored. Backend: full `go test ./cmd/... ./internal/...`
+  passes, including every pre-existing test unchanged. Frontend: full
+  `npm run check` (format, lint, all 45 tests, production build) passes.
+  **Not done**: an actual browser/Playwright pass over the new `Stock.tsx`
+  "Pricing" mode — Claude in Chrome's extension was not connected in this
+  environment.
+
 ## Frontend architecture
 
 `web/` is a single Vite + React + TypeScript + Tailwind v4 PWA that carries **both** the public marketing/onboarding site and the authenticated app shell — there is no separate marketing project. It used to be split across two stacks (this Vite app plus a Next.js prototype in `marketing/`, built from a v0 export template); that Next.js app has been retired and its design system (brand tokens, fonts, and reusable components) ported in here. The v0 template it was originally adapted from was kept read-only at `agentic-build-and-orchestrate-ai-agents-while-you-sleep/` at the repo root purely as a design reference; it has since been deleted (its design system was already fully ported into `web/` by this point, so nothing was lost) — don't expect to find it, and never resurrect a second frontend stack from a copy of it.

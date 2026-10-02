@@ -42,6 +42,9 @@ type variantResponse struct {
 	// TracksInventory is false for a non-stocked service item (a snooker
 	// game, table time) -- see catalogue.Variant's own doc comment.
 	TracksInventory bool `json:"tracks_inventory"`
+	// PricePacks is empty for a plain, linearly-priced variant (the common
+	// case) -- see docs/PHASE_MULTIBUY_PRICING.md.
+	PricePacks []pricePackResponse `json:"price_packs,omitempty"`
 }
 
 type productResponse struct {
@@ -66,10 +69,14 @@ func toPriceResponse(p catalogue.Price) priceResponse {
 }
 
 func toVariantResponse(v catalogue.VariantWithPrice, balances map[uuid.UUID]int64) variantResponse {
-	return variantResponse{
+	out := variantResponse{
 		ID: v.ID.String(), Name: v.Name, Active: v.Active, CurrentPrice: toPriceResponse(v.CurrentPrice),
 		CurrentStock: balances[v.ID], TracksInventory: v.TracksInventory,
 	}
+	for _, p := range v.PricePacks {
+		out.PricePacks = append(out.PricePacks, toPricePackResponse(p))
+	}
+	return out
 }
 
 func toProductResponse(p catalogue.ProductWithVariants, balances map[uuid.UUID]int64) productResponse {
@@ -112,6 +119,10 @@ func catalogueErrorResponse(api *API, w http.ResponseWriter, r *http.Request, er
 		errors.Is(err, catalogue.ErrProductNameTaken),
 		errors.Is(err, catalogue.ErrVariantNameTaken):
 		api.conflictResponse(w, r, err.Error())
+	case errors.Is(err, catalogue.ErrInvalidPackQuantity),
+		errors.Is(err, catalogue.ErrInvalidPackPrice),
+		errors.Is(err, catalogue.ErrDuplicatePackQuantity):
+		api.badRequestResponse(w, r, err.Error())
 	default:
 		api.internalErrorResponse(w, r, fmt.Errorf("%s: %w", action, err))
 	}
@@ -620,5 +631,113 @@ func (api *API) setVariantPrice(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := writeJSON(w, http.StatusCreated, envelope{"data": toPriceResponse(price)}, nil); err != nil {
 		api.logger.Error("write set variant price response", "request_id", RequestID(r.Context()), "error", err)
+	}
+}
+
+type pricePackResponse struct {
+	Quantity  int32 `json:"quantity"`
+	PriceKobo int64 `json:"price_kobo"`
+}
+
+func toPricePackResponse(p catalogue.PricePack) pricePackResponse {
+	return pricePackResponse{Quantity: p.PackQuantity, PriceKobo: p.PackPriceKobo}
+}
+
+// listVariantPricePacks implements GET /api/v1/variants/{variant_id}/price-packs
+// (catalogue:read) -- a variant with none returns an empty list, meaning
+// plain linear pricing.
+func (api *API) listVariantPricePacks(w http.ResponseWriter, r *http.Request) {
+	principal, ok := tenancy.PrincipalFromContext(r.Context())
+	if !ok {
+		api.internalErrorResponse(w, r, errors.New("listVariantPricePacks ran without requireAuth"))
+		return
+	}
+	business, ok := api.requireCapability(w, r, tenancy.CapabilityCatalogueRead)
+	if !ok {
+		return
+	}
+
+	variantID, err := uuid.Parse(chi.URLParam(r, "variant_id"))
+	if err != nil {
+		api.badRequestResponse(w, r, "variant_id must be a valid UUID.")
+		return
+	}
+
+	packs, err := api.catalogue.ListVariantPricePacks(r.Context(), principal.UserID, business.BusinessID, variantID)
+	if err != nil {
+		api.internalErrorResponse(w, r, fmt.Errorf("list variant price packs: %w", err))
+		return
+	}
+	out := make([]pricePackResponse, 0, len(packs))
+	for _, p := range packs {
+		out = append(out, toPricePackResponse(p))
+	}
+	if err := writeJSON(w, http.StatusOK, envelope{"data": out}, nil); err != nil {
+		api.logger.Error("write list variant price packs response", "request_id", RequestID(r.Context()), "error", err)
+	}
+}
+
+type setVariantPricePacksRequest struct {
+	Packs []struct {
+		Quantity  int32 `json:"quantity"`
+		PriceKobo int64 `json:"price_kobo"`
+	} `json:"packs"`
+}
+
+// setVariantPricePacks implements POST /api/v1/variants/{variant_id}/price-packs
+// (catalogue:manage, owner-only): full-replacement of a variant's
+// multi-buy pricing, same PATCH-the-whole-set convention as UpdateVariant
+// -- an empty "packs" array removes multi-buy pricing entirely, reverting
+// to plain linear pricing. See docs/PHASE_MULTIBUY_PRICING.md.
+func (api *API) setVariantPricePacks(w http.ResponseWriter, r *http.Request) {
+	principal, ok := tenancy.PrincipalFromContext(r.Context())
+	if !ok {
+		api.internalErrorResponse(w, r, errors.New("setVariantPricePacks ran without requireAuth"))
+		return
+	}
+	business, ok := api.requireCapability(w, r, tenancy.CapabilityCatalogueManage)
+	if !ok {
+		return
+	}
+
+	variantID, err := uuid.Parse(chi.URLParam(r, "variant_id"))
+	if err != nil {
+		api.badRequestResponse(w, r, "variant_id must be a valid UUID.")
+		return
+	}
+
+	var req setVariantPricePacksRequest
+	if err := readJSON(w, r, &req, 1<<16); err != nil {
+		api.badRequestResponse(w, r, err.Error())
+		return
+	}
+
+	v := validator.New()
+	seen := make(map[int32]bool, len(req.Packs))
+	inputs := make([]catalogue.PricePackInput, 0, len(req.Packs))
+	for i, p := range req.Packs {
+		field := fmt.Sprintf("packs[%d]", i)
+		v.Check(p.Quantity > 1, field+".quantity", "must be greater than 1")
+		v.Check(p.PriceKobo > 0, field+".price_kobo", "must be greater than zero")
+		v.Check(!seen[p.Quantity], field+".quantity", "must not repeat another pack's quantity")
+		seen[p.Quantity] = true
+		inputs = append(inputs, catalogue.PricePackInput{Quantity: p.Quantity, PriceKobo: p.PriceKobo})
+	}
+	if !v.IsValid() {
+		api.validationFailedResponse(w, r, v.Errors)
+		return
+	}
+
+	packs, err := api.catalogue.SetVariantPricePacks(r.Context(), principal.UserID, business.BusinessID, variantID, inputs)
+	if err != nil {
+		catalogueErrorResponse(api, w, r, err, "set variant price packs")
+		return
+	}
+	out := make([]pricePackResponse, 0, len(packs))
+	for _, p := range packs {
+		out = append(out, toPricePackResponse(p))
+	}
+	if err := writeJSON(w, http.StatusOK, envelope{"data": out}, nil); err != nil {
+		api.logger.Error("write set variant price packs response", "request_id", RequestID(r.Context()), "error", err)
 	}
 }

@@ -86,3 +86,16 @@ func toPrice(p sqlc.ProductPrice) Price {
 		CreatedBy:  p.CreatedBy,
 	}
 }
+
+func toPricePack(p sqlc.ProductVariantPricePack) PricePack {
+	return PricePack{
+		ID:            p.ID,
+		BusinessID:    p.BusinessID,
+		VariantID:     p.VariantID,
+		PackQuantity:  p.PackQuantity,
+		PackPriceKobo: p.PackPriceKobo,
+		ValidFrom:     toTime(p.ValidFrom),
+		ValidTo:       toTimePtr(p.ValidTo),
+		CreatedBy:     p.CreatedBy,
+	}
+}

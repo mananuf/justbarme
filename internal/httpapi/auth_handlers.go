@@ -109,9 +109,11 @@ func (api *API) logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// me implements GET /api/v1/me: current user, active memberships, and a
-// freshly rotated CSRF token so a reloaded frontend can resume safely (see
-// docs/API_CONTRACT.md §8). It is global — it does not require
+// me implements GET /api/v1/me: current user, active memberships, and the
+// session's own stable CSRF token (identity.Service.EnsureCSRFToken) so a
+// reloaded frontend can resume safely (see docs/API_CONTRACT.md §8) --
+// the same token every call, not a freshly rotated one, per
+// docs/PHASE_CSRF_TOKEN_STABILITY.md. It is global — it does not require
 // X-Business-ID.
 func (api *API) me(w http.ResponseWriter, r *http.Request) {
 	principal, ok := tenancy.PrincipalFromContext(r.Context())
@@ -131,9 +133,9 @@ func (api *API) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	csrfToken, err := api.identity.RotateCSRFToken(r.Context(), sess.ID)
+	csrfToken, err := api.identity.EnsureCSRFToken(r.Context(), sess.ID, sess.SessionTokenHash)
 	if err != nil {
-		api.internalErrorResponse(w, r, fmt.Errorf("rotate csrf token: %w", err))
+		api.internalErrorResponse(w, r, fmt.Errorf("ensure csrf token: %w", err))
 		return
 	}
 

@@ -72,5 +72,11 @@ type Session struct {
 	// CSRFTokenHash is for internal comparison against an incoming
 	// X-CSRF-Token header's hash only. Handlers must never serialize it.
 	CSRFTokenHash string
-	ExpiresAt     time.Time
+	// SessionTokenHash is the hash of this session's own bearer token --
+	// carried here only so a handler that already has this Session in
+	// context (via requireAuth) can derive its CSRF token
+	// (deriveCSRFToken) without a second database round trip. Never the
+	// raw token, and handlers must never serialize this either.
+	SessionTokenHash string
+	ExpiresAt        time.Time
 }

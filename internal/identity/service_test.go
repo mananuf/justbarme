@@ -301,3 +301,78 @@ func TestDeviceLifecycle(t *testing.T) {
 		t.Fatalf("expected re-revoking an already-revoked device to report ErrDeviceNotFound, got %v", err)
 	}
 }
+
+// TestCSRFTokenIsStableAcrossConcurrentMeCalls pins the fix for a real
+// race: two near-simultaneous GET /me calls for the same session (two
+// browser tabs reloading around the same time) used to each generate an
+// independent random CSRF token, invalidating whichever one issued first
+// before it could be used for a write. EnsureCSRFToken must return the
+// identical value every time for a given session.
+func TestCSRFTokenIsStableAcrossConcurrentMeCalls(t *testing.T) {
+	svc, pool := testService(t)
+	ctx := context.Background()
+
+	user, err := svc.CreateUser(ctx, uniqueEmail(), "", "CSRF Stability User", "password123")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	cleanupUser(t, pool, user.ID)
+
+	_, loginCSRF, sess, err := svc.CreateSession(ctx, user.ID, "test-agent", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// Simulate two tabs' GET /me firing around the same time -- both must
+	// get back the exact same token, and it must match what login itself
+	// already issued (no transition window even on the very first call).
+	first, err := svc.EnsureCSRFToken(ctx, sess.ID, sess.SessionTokenHash)
+	if err != nil {
+		t.Fatalf("EnsureCSRFToken (first): %v", err)
+	}
+	second, err := svc.EnsureCSRFToken(ctx, sess.ID, sess.SessionTokenHash)
+	if err != nil {
+		t.Fatalf("EnsureCSRFToken (second): %v", err)
+	}
+	if first != second {
+		t.Fatalf("expected the same CSRF token across repeated calls, got %q then %q", first, second)
+	}
+	if first != loginCSRF {
+		t.Fatalf("expected GET /me's token to match what login already issued, got %q vs login's %q", first, loginCSRF)
+	}
+}
+
+// TestCSRFTokenDiffersAcrossSessions guards against a derivation that's
+// accidentally constant or user-scoped rather than session-scoped -- two
+// different sessions (even for the same user, e.g. two devices) must never
+// share a CSRF token.
+func TestCSRFTokenDiffersAcrossSessions(t *testing.T) {
+	svc, pool := testService(t)
+	ctx := context.Background()
+
+	user, err := svc.CreateUser(ctx, uniqueEmail(), "", "CSRF Uniqueness User", "password123")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	cleanupUser(t, pool, user.ID)
+
+	_, csrfA, sessA, err := svc.CreateSession(ctx, user.ID, "device-a", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateSession (A): %v", err)
+	}
+	_, csrfB, _, err := svc.CreateSession(ctx, user.ID, "device-b", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateSession (B): %v", err)
+	}
+	if csrfA == csrfB {
+		t.Fatal("expected two different sessions for the same user to get different CSRF tokens")
+	}
+
+	rederivedA, err := svc.EnsureCSRFToken(ctx, sessA.ID, sessA.SessionTokenHash)
+	if err != nil {
+		t.Fatalf("EnsureCSRFToken (A): %v", err)
+	}
+	if rederivedA != csrfA {
+		t.Fatalf("expected re-deriving session A's token to match what login issued, got %q vs %q", rederivedA, csrfA)
+	}
+}

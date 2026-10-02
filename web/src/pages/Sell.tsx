@@ -1,22 +1,46 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
+import { OfflineError } from '../api/client';
 import { listProducts, type CatalogueProduct } from '../api/catalogue';
+import {
+  addSaleRound,
+  createCustomer,
+  createTable,
+  listBills,
+  listCustomers,
+  listTables,
+  openBill,
+  type Bill,
+  type Customer,
+  type Table,
+} from '../api/tabs';
 import { AppBottomNav } from '../components/AppBottomNav';
-import { CartPanel, type CartLine } from '../components/CartPanel';
+import { BillWorkspace } from '../components/BillWorkspace';
+import { type CartLine } from '../components/CartPanel';
 import { ProductGrid, type PickableVariant } from '../components/ProductGrid';
 import { useConnectivity } from '../hooks/useConnectivity';
+import { flushPendingBillActions, queueBillAction } from '../lib/billActionsSync';
+import { billLabel, formatNaira } from '../lib/billDisplay';
 import { db } from '../lib/db';
 import { describeActionError } from '../lib/errors';
-import { flushPendingSales, queuePendingSale } from '../lib/salesSync';
 import { useSession } from '../lib/session';
 
-type PaymentMethod = 'cash' | 'transfer' | 'card';
+type PickerMode = 'table' | 'customer';
 
-function formatNaira(kobo: number): string {
-  return (kobo / 100).toLocaleString();
-}
-
+// Sell is the one screen for recording any sale -- walk-in or tab, no
+// separate tools, no mode a non-technical user has to understand
+// (docs/PHASE_UNIFIED_SELL_BILLS.md). A persistent pill strip of currently
+// open bills sits at the top (jump back into any of them with one tap,
+// same as the original Tabs.tsx always did); "+ New" reveals a two-way
+// Table/Customer toggle -- never both selectable at once, which is what
+// made the previous version of this screen confusing -- each defaulting to
+// a plain pseudo-option ("No table" / "Walk-in customer") rather than a
+// real row. Tapping the first drink is what starts the sale: it opens (or
+// resumes, via the backend's find-or-open) the bill and posts that round
+// immediately, live, exactly like every other round on a tab -- there is
+// no separate "Start tab"/"Complete Sale" step, and walk-in is not a
+// special case any more than Table or Customer is.
 export function Sell() {
   const { csrfToken, selectedBusinessId } = useSession();
   const isOnline = useConnectivity();
@@ -27,10 +51,47 @@ export function Sell() {
   // as an honest "may be out of date" note rather than presented as
   // current (docs/ARCHITECTURE.md §10.7's fixed, honest sync states).
   const [usingCachedCatalogue, setUsingCachedCatalogue] = useState(false);
-  const [cart, setCart] = useState<CartLine[]>([]);
-  const [method, setMethod] = useState<PaymentMethod>('cash');
-  const [done, setDone] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+
+  const [openBills, setOpenBills] = useState<Bill[]>([]);
+  const [tables, setTables] = useState<Table[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+
+  // null = the "+ New" picker is showing; a real id = that bill's live
+  // workspace is showing instead, inline, no navigation.
+  const [activeBillId, setActiveBillId] = useState<string | null>(null);
+
+  // Picker state -- only meaningful while activeBillId is null. pickerMode
+  // decides which of the two is the active, visible selector; switching it
+  // resets the other back to its default, so exactly one of
+  // tableId/customerId can ever be a real id at a time.
+  const [pickerMode, setPickerMode] = useState<PickerMode>('table');
+  const [tableId, setTableId] = useState('');
+  const [customerId, setCustomerId] = useState('');
+  const [addingTable, setAddingTable] = useState(false);
+  const [newTableLabel, setNewTableLabel] = useState('');
+  const [addingCustomer, setAddingCustomer] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [newCustomerName, setNewCustomerName] = useState('');
+  const [newCustomerPhone, setNewCustomerPhone] = useState('');
+
+  const [resolving, setResolving] = useState(false);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+
+  // Set only while a brand-new sale has been queued offline and has no
+  // real bill id yet -- BillWorkspace can't render without one, so this
+  // screen shows its own small local view instead until the queued
+  // 'open' action resolves (see the flush-on-reconnect effect below).
+  // Once resolved, this becomes just another activeBillId and everything
+  // from here on is identical to any other bill.
+  const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
+  const [offlineItems, setOfflineItems] = useState<CartLine[]>([]);
+
+  const refreshOpenBills = () => {
+    if (!selectedBusinessId) return;
+    listBills(selectedBusinessId, 'open')
+      .then(setOpenBills)
+      .catch(() => undefined);
+  };
 
   useEffect(() => {
     if (!selectedBusinessId) return;
@@ -54,25 +115,113 @@ export function Sell() {
           setLoadError(describeActionError(err, 'Could not load your products.'));
         });
       });
+    listTables(selectedBusinessId)
+      .then(setTables)
+      .catch(() => undefined);
+    listCustomers(selectedBusinessId)
+      .then(setCustomers)
+      .catch(() => undefined);
+    refreshOpenBills();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBusinessId]);
 
+  // Drains this device's queued bill actions whenever connectivity
+  // returns -- same trigger salesSync.ts always used, extended to a
+  // bill's multi-step actions. If this device's own not-yet-resolved
+  // session (pendingSessionId) is among what synced, switch straight into
+  // that bill's real, live workspace -- from here on it's indistinguishable
+  // from a bill that was always online.
   useEffect(() => {
     if (!isOnline || !selectedBusinessId || !csrfToken) return;
-    // Catches up on anything queued from an earlier offline session, and
-    // on regaining connectivity mid-session -- see src/lib/salesSync.ts.
-    void flushPendingSales(selectedBusinessId, csrfToken);
-  }, [isOnline, selectedBusinessId, csrfToken]);
+    void (async () => {
+      const resolved = await flushPendingBillActions(selectedBusinessId, csrfToken);
+      refreshOpenBills();
+      if (pendingSessionId && resolved.has(pendingSessionId)) {
+        setActiveBillId(resolved.get(pendingSessionId)!);
+        setPendingSessionId(null);
+        setOfflineItems([]);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnline, selectedBusinessId, csrfToken, pendingSessionId]);
 
-  const addOne = (variant: PickableVariant) => {
-    if (variant.outOfStock) return;
-    setCart((c) => {
-      const existing = c.find((l) => l.variantId === variant.variantId);
-      if (existing)
-        return c.map((l) =>
+  function startNew() {
+    setActiveBillId(null);
+    setPickerMode('table');
+    setTableId('');
+    setCustomerId('');
+    setAddingTable(false);
+    setNewTableLabel('');
+    setAddingCustomer(false);
+    setCustomerSearch('');
+    setResolveError(null);
+    // Doesn't touch the queue itself -- a not-yet-resolved offline session
+    // started here stays safely queued and will still sync and settle into
+    // its own bill later; this only clears this screen's view of it, the
+    // same way navigating away from any in-progress screen would.
+    setPendingSessionId(null);
+    setOfflineItems([]);
+  }
+
+  function selectPickerMode(mode: PickerMode) {
+    setPickerMode(mode);
+    // Exactly one of table/customer can be a real selection at a time --
+    // switching the toggle clears whichever side isn't active, rather than
+    // letting both quietly stay selected underneath (the exact confusion
+    // this toggle replaced two independently-selectable sections to fix).
+    if (mode === 'table') setCustomerId('');
+    else setTableId('');
+  }
+
+  async function handleAddTable() {
+    if (!selectedBusinessId || !csrfToken || !newTableLabel.trim()) return;
+    setResolving(true);
+    setResolveError(null);
+    try {
+      const table = await createTable(newTableLabel.trim(), selectedBusinessId, csrfToken);
+      setTables((t) => [...t, table]);
+      setTableId(table.id);
+      setAddingTable(false);
+      setNewTableLabel('');
+    } catch (err) {
+      setResolveError(describeActionError(err, 'Could not add that table.'));
+    } finally {
+      setResolving(false);
+    }
+  }
+
+  async function handleAddCustomer() {
+    if (!selectedBusinessId || !csrfToken || !newCustomerName.trim()) return;
+    setResolving(true);
+    setResolveError(null);
+    try {
+      const customer = await createCustomer(
+        { name: newCustomerName.trim(), phone: newCustomerPhone.trim() || undefined },
+        selectedBusinessId,
+        csrfToken,
+      );
+      setCustomers((c) => [...c, customer]);
+      setCustomerId(customer.id);
+      setAddingCustomer(false);
+      setNewCustomerName('');
+      setNewCustomerPhone('');
+    } catch (err) {
+      setResolveError(describeActionError(err, 'Could not add that customer.'));
+    } finally {
+      setResolving(false);
+    }
+  }
+
+  function addOfflineItem(variant: { variantId: string; description: string; priceKobo: number }) {
+    setOfflineItems((items) => {
+      const existing = items.find((l) => l.variantId === variant.variantId);
+      if (existing) {
+        return items.map((l) =>
           l.variantId === variant.variantId ? { ...l, quantity: l.quantity + 1 } : l,
         );
+      }
       return [
-        ...c,
+        ...items,
         {
           variantId: variant.variantId,
           description: variant.description,
@@ -81,61 +230,121 @@ export function Sell() {
         },
       ];
     });
-  };
+  }
 
-  const changeQty = (variantId: string, delta: number) => {
-    if (delta > 0 && variants.find((v) => v.variantId === variantId)?.outOfStock) return;
-    setCart((c) =>
-      c
-        .map((l) => (l.variantId === variantId ? { ...l, quantity: l.quantity + delta } : l))
-        .filter((l) => l.quantity > 0),
-    );
-  };
+  // Tapping a drink is what starts (or continues) the sale: find-or-open
+  // the bill for whatever's currently picked (both pickers at their
+  // defaults means a plain walk-in), post this one item as a live round
+  // immediately, then switch this same screen into that bill's own
+  // workspace -- no "Start tab"/"Complete Sale" button in between. If
+  // there's no connection right now, the same two calls are queued
+  // locally instead (billActionsSync.ts) rather than shown as a failure --
+  // walk-in gets no special treatment here either, per
+  // docs/PHASE_UNIFIED_SELL_BILLS.md's "Revision" section.
+  async function handleProductTap(variant: PickableVariant) {
+    if (!selectedBusinessId || !csrfToken || resolving || variant.outOfStock) return;
 
-  const total = cart.reduce((sum, l) => sum + l.unitPriceKobo * l.quantity, 0);
-  const cartQuantities = Object.fromEntries(cart.map((l) => [l.variantId, l.quantity]));
-
-  async function completeSale() {
-    if (!selectedBusinessId || cart.length === 0) return;
-    setSubmitting(true);
-    try {
-      const idempotencyKey = crypto.randomUUID();
-      // Written to IndexedDB first, before any network call -- this is
-      // what makes "sale recorded" true even fully offline. Confirmation
-      // below never waits on the network.
-      await queuePendingSale({
-        idempotencyKey,
+    // Already mid-session, queued, waiting to reconnect -- another tap
+    // just appends another round to the same not-yet-resolved session,
+    // same as tapping a product on an already-open bill would.
+    if (pendingSessionId) {
+      await queueBillAction({
+        id: crypto.randomUUID(),
         businessId: selectedBusinessId,
+        localSessionId: pendingSessionId,
+        billId: null,
+        idempotencyKey: crypto.randomUUID(),
         occurredAt: new Date().toISOString(),
-        items: cart.map((l) => ({
-          variantId: l.variantId,
-          description: l.description,
-          quantity: l.quantity,
-          unitPriceKobo: l.unitPriceKobo,
-        })),
-        payment: { amountKobo: total, method },
-        totalKobo: total,
-        status: 'pending',
         createdAt: new Date().toISOString(),
+        status: 'pending',
+        payload: {
+          type: 'add_round',
+          items: [
+            {
+              variantId: variant.variantId,
+              description: variant.description,
+              quantity: 1,
+              unitPriceKobo: variant.priceKobo,
+            },
+          ],
+        },
       });
-      setDone(true);
-      if (isOnline && csrfToken) {
-        void flushPendingSales(selectedBusinessId, csrfToken);
+      addOfflineItem(variant);
+      return;
+    }
+
+    setResolving(true);
+    setResolveError(null);
+    const openKey = crypto.randomUUID();
+    const roundKey = crypto.randomUUID();
+    const occurredAt = new Date().toISOString();
+    try {
+      const bill = await openBill(
+        { tableId: tableId || undefined, customerId: customerId || undefined },
+        selectedBusinessId,
+        csrfToken,
+      );
+      await addSaleRound(
+        bill.id,
+        {
+          idempotencyKey: roundKey,
+          occurredAt,
+          items: [{ variantId: variant.variantId, quantity: 1, unitPriceKobo: variant.priceKobo }],
+        },
+        selectedBusinessId,
+        csrfToken,
+      );
+      setActiveBillId(bill.id);
+      refreshOpenBills();
+    } catch (err) {
+      if (err instanceof OfflineError) {
+        const sessionId = crypto.randomUUID();
+        await queueBillAction({
+          id: crypto.randomUUID(),
+          businessId: selectedBusinessId,
+          localSessionId: sessionId,
+          billId: null,
+          idempotencyKey: openKey,
+          occurredAt,
+          createdAt: occurredAt,
+          status: 'pending',
+          payload: {
+            type: 'open',
+            tableId: tableId || undefined,
+            customerId: customerId || undefined,
+          },
+        });
+        await queueBillAction({
+          id: crypto.randomUUID(),
+          businessId: selectedBusinessId,
+          localSessionId: sessionId,
+          billId: null,
+          idempotencyKey: roundKey,
+          occurredAt,
+          createdAt: occurredAt,
+          status: 'pending',
+          payload: {
+            type: 'add_round',
+            items: [
+              {
+                variantId: variant.variantId,
+                description: variant.description,
+                quantity: 1,
+                unitPriceKobo: variant.priceKobo,
+              },
+            ],
+          },
+        });
+        setPendingSessionId(sessionId);
+        addOfflineItem(variant);
+      } else {
+        setResolveError(describeActionError(err, 'Could not start this sale.'));
       }
     } finally {
-      setSubmitting(false);
+      setResolving(false);
     }
   }
 
-  // A drink's price is fetched fresh, but this uncommitted local cart
-  // hasn't posted yet -- currentStock still reflects the server's real
-  // stock, so outOfStock has to subtract what's already sitting in the
-  // cart itself (unlike Tabs.tsx, where each round posts immediately and
-  // is already reflected in a freshly re-fetched currentStock). Not
-  // memoized -- it has to recompute whenever `cart` changes anyway, and
-  // this catalogue is small enough that recomputing on every render costs
-  // nothing worth guarding against.
-  const inCart = new Map(cart.map((l) => [l.variantId, l.quantity]));
   const variants: PickableVariant[] = (products ?? []).flatMap((p) =>
     p.variants
       .filter((v) => v.active)
@@ -143,44 +352,17 @@ export function Sell() {
         variantId: v.id,
         description: `${p.name} — ${v.name}`,
         priceKobo: v.currentPriceKobo,
-        outOfStock: v.tracksInventory && v.currentStock - (inCart.get(v.id) ?? 0) <= 0,
+        outOfStock: v.tracksInventory && v.currentStock <= 0,
       })),
   );
 
-  if (done) {
-    return (
-      <div className="min-h-screen bg-jb-cream text-jb-ink flex flex-col items-center justify-center px-6 text-center pb-28">
-        <div
-          className="w-16 h-16 rounded-full bg-jb-ink text-jb-cream flex items-center justify-center text-2xl mb-6"
-          style={{ animation: 'pop-in 0.5s cubic-bezier(0.16,1,0.3,1) both' }}
-        >
-          ✓
-        </div>
-        <h1
-          className="text-2xl font-light tracking-tight mb-2"
-          style={{ fontFamily: 'var(--font-display)' }}
-        >
-          Sale recorded
-        </h1>
-        <p className="text-[13px] text-jb-ink/45 mb-8 max-w-xs">
-          Saved on this device{isOnline ? ' and synced' : ''}. It will sync automatically once
-          you&apos;re back online.
-        </p>
-        <Link
-          to="/dashboard"
-          className="rounded-xl bg-jb-ink text-jb-cream text-[15px] font-medium py-4 px-8 hover:bg-jb-green transition-colors"
-        >
-          Back to Dashboard
-        </Link>
-        <AppBottomNav />
-      </div>
-    );
-  }
+  const filteredCustomers = customerSearch.trim()
+    ? customers.filter((c) => c.name.toLowerCase().includes(customerSearch.trim().toLowerCase()))
+    : customers;
 
   return (
-    <div className="h-screen flex flex-col bg-jb-cream text-jb-ink">
-      {/* Fixed header -- never scrolls */}
-      <div className="max-w-md mx-auto w-full px-5 pt-6 shrink-0">
+    <div className="min-h-screen bg-jb-cream text-jb-ink pb-28">
+      <div className="max-w-md mx-auto px-5 pt-6">
         <div className="flex items-center gap-4 mb-4">
           <Link
             to="/dashboard"
@@ -190,15 +372,251 @@ export function Sell() {
             ←
           </Link>
           <div>
-            <div className="text-[11px] text-jb-ink/45">Quick Sell</div>
-            <h1 className="text-lg font-medium">Walk-in sale</h1>
+            <div className="text-[11px] text-jb-ink/45">Sell</div>
+            <h1 className="text-lg font-medium">New sale</h1>
           </div>
         </div>
+
+        {/* Persistent pill strip -- every open bill stays one tap away, no
+            matter which one (or none) is currently active. */}
+        <div className="flex flex-wrap gap-2 mb-4">
+          {openBills.map((bill) => (
+            <button
+              key={bill.id}
+              onClick={() => setActiveBillId(bill.id)}
+              className={`rounded-full px-4 py-2 text-[13px] font-medium whitespace-nowrap transition-colors ${
+                activeBillId === bill.id
+                  ? 'bg-jb-ink text-jb-cream'
+                  : 'bg-white border border-jb-ink/15 text-jb-ink/70'
+              }`}
+            >
+              {billLabel(bill, tables, customers)}
+              {bill.balanceKobo > 0 && ` · ₦${formatNaira(bill.balanceKobo)}`}
+            </button>
+          ))}
+          <button
+            onClick={startNew}
+            className={`shrink-0 rounded-full px-4 py-2 text-[13px] font-medium whitespace-nowrap border transition-colors ${
+              activeBillId === null
+                ? 'border-jb-ink text-jb-ink'
+                : 'border-dashed border-jb-ink/25 text-jb-ink/50'
+            }`}
+          >
+            + New
+          </button>
+        </div>
+
+        {!isOnline && (
+          <p className="text-[12px] text-jb-gold bg-jb-gold/10 rounded-xl px-4 py-2 mb-3">
+            You&apos;re offline — new sales are queued on this device and will go through once
+            you&apos;re back online.
+          </p>
+        )}
+        {resolveError && <p className="text-[13px] text-red-700 mb-3">{resolveError}</p>}
       </div>
 
-      {/* Top half: the product picker -- scrolls independently */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="max-w-md mx-auto w-full px-5 pb-3">
+      {activeBillId !== null ? (
+        <BillWorkspace billId={activeBillId} onBillChanged={refreshOpenBills} />
+      ) : pendingSessionId !== null ? (
+        <div className="max-w-md mx-auto px-5">
+          <div className="rounded-xl border border-jb-gold/30 bg-jb-gold/10 p-4 mb-4">
+            <p className="text-[13px] text-jb-ink/70">
+              Queued offline — this sale will open fully once you&apos;re back online. Keep tapping
+              drinks to add more; they&apos;ll go in the same order.
+            </p>
+          </div>
+          <div className="mb-4">
+            <div className="text-[11px] text-jb-ink/45 tracking-wide mb-2">QUEUED SO FAR</div>
+            <div className="space-y-1.5">
+              {offlineItems.map((l) => (
+                <div
+                  key={l.variantId}
+                  className="flex items-center justify-between rounded-xl border border-jb-ink/10 bg-white px-4 py-2.5 text-[13.5px]"
+                >
+                  <span>{l.description}</span>
+                  <span className="text-jb-ink/60">
+                    {l.quantity} × ₦{formatNaira(l.unitPriceKobo)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <ProductGrid
+            variants={variants}
+            isLoading={products === null && !loadError}
+            loadError={loadError}
+            cartQuantities={Object.fromEntries(offlineItems.map((l) => [l.variantId, l.quantity]))}
+            inCartLabel="queued"
+            onAdd={(v) => void handleProductTap(v)}
+          />
+        </div>
+      ) : (
+        <div className="max-w-md mx-auto px-5">
+          <div className="rounded-xl border border-jb-ink/10 bg-white p-1 flex gap-1 mb-3">
+            {(['table', 'customer'] as PickerMode[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => selectPickerMode(m)}
+                className={`flex-1 rounded-lg py-2 text-[13px] font-medium capitalize transition-colors ${
+                  pickerMode === m ? 'bg-jb-ink text-jb-cream' : 'text-jb-ink/55'
+                }`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+
+          {pickerMode === 'table' ? (
+            <div className="mb-4">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => setTableId('')}
+                  className={`rounded-full px-3.5 py-1.5 text-[12.5px] font-medium transition-colors ${
+                    tableId === ''
+                      ? 'bg-jb-ink text-jb-cream'
+                      : 'bg-white border border-jb-ink/15 text-jb-ink/60'
+                  }`}
+                >
+                  No table
+                </button>
+                {tables.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setTableId(t.id)}
+                    className={`rounded-full px-3.5 py-1.5 text-[12.5px] font-medium transition-colors ${
+                      tableId === t.id
+                        ? 'bg-jb-ink text-jb-cream'
+                        : 'bg-white border border-jb-ink/15 text-jb-ink/60'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+                {!addingTable ? (
+                  <button
+                    onClick={() => setAddingTable(true)}
+                    className="rounded-full px-3.5 py-1.5 text-[12.5px] border border-dashed border-jb-ink/25 text-jb-ink/45"
+                  >
+                    + Add table
+                  </button>
+                ) : (
+                  <div className="flex gap-1.5 w-full mt-1">
+                    <input
+                      autoFocus
+                      type="text"
+                      placeholder="Table label (e.g. T4)"
+                      value={newTableLabel}
+                      onChange={(e) => setNewTableLabel(e.target.value)}
+                      className="flex-1 rounded-lg border border-jb-ink/15 bg-white px-3 py-1.5 text-[12.5px] focus:outline-none focus:border-jb-ink/40"
+                    />
+                    <button
+                      onClick={() => void handleAddTable()}
+                      disabled={resolving || !newTableLabel.trim()}
+                      className="rounded-lg bg-jb-ink text-jb-cream text-[12.5px] font-medium px-3 disabled:opacity-40"
+                    >
+                      Add
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="mb-4">
+              <div className="flex flex-wrap gap-2 mb-1.5">
+                <button
+                  onClick={() => setCustomerId('')}
+                  className={`rounded-full px-3.5 py-1.5 text-[12.5px] font-medium transition-colors ${
+                    customerId === ''
+                      ? 'bg-jb-ink text-jb-cream'
+                      : 'bg-white border border-jb-ink/15 text-jb-ink/60'
+                  }`}
+                >
+                  Walk-in customer
+                </button>
+                {customers
+                  .filter((c) => c.id === customerId)
+                  .map((c) => (
+                    <button
+                      key={c.id}
+                      className="rounded-full px-3.5 py-1.5 text-[12.5px] font-medium bg-jb-ink text-jb-cream"
+                    >
+                      {c.name}
+                    </button>
+                  ))}
+              </div>
+              {customerId === '' && (
+                <p className="text-[11.5px] text-jb-ink/40 mb-2">
+                  No specific customer — for someone paying now and leaving. Search below only if
+                  you want to name who this sale belongs to.
+                </p>
+              )}
+              <input
+                type="text"
+                placeholder="Search customers…"
+                value={customerSearch}
+                onChange={(e) => setCustomerSearch(e.target.value)}
+                className="w-full rounded-xl border border-jb-ink/15 bg-white px-4 py-2 text-[13px] focus:outline-none focus:border-jb-ink/40 mb-1.5"
+              />
+              {customerSearch.trim() && filteredCustomers.length > 0 && (
+                <div className="flex flex-col gap-1 mb-1.5">
+                  {filteredCustomers.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => {
+                        setCustomerId(c.id);
+                        setCustomerSearch('');
+                      }}
+                      className="text-left rounded-lg border border-jb-ink/15 px-3 py-1.5 text-[12.5px]"
+                    >
+                      {c.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {!addingCustomer ? (
+                <button
+                  onClick={() => setAddingCustomer(true)}
+                  className="text-[12px] text-jb-ink/45 underline underline-offset-2"
+                >
+                  + New customer
+                </button>
+              ) : (
+                <div className="rounded-xl border border-jb-ink/10 bg-white p-3 mt-1.5 space-y-2">
+                  <input
+                    autoFocus
+                    type="text"
+                    placeholder="Name (required)"
+                    value={newCustomerName}
+                    onChange={(e) => setNewCustomerName(e.target.value)}
+                    className="w-full rounded-lg border border-jb-ink/15 bg-white px-3 py-2 text-[12.5px] focus:outline-none focus:border-jb-ink/40"
+                  />
+                  <input
+                    type="tel"
+                    placeholder="Phone (optional)"
+                    value={newCustomerPhone}
+                    onChange={(e) => setNewCustomerPhone(e.target.value)}
+                    className="w-full rounded-lg border border-jb-ink/15 bg-white px-3 py-2 text-[12.5px] focus:outline-none focus:border-jb-ink/40"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => void handleAddCustomer()}
+                      disabled={resolving || !newCustomerName.trim()}
+                      className="flex-1 rounded-lg bg-jb-ink text-jb-cream text-[12.5px] font-medium py-2 disabled:opacity-40"
+                    >
+                      Add customer
+                    </button>
+                    <button
+                      onClick={() => setAddingCustomer(false)}
+                      className="text-[12.5px] text-jb-ink/45 px-3"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {usingCachedCatalogue && (
             <p className="text-[12px] text-jb-gold bg-jb-gold/10 rounded-xl px-4 py-2 mb-3">
               Showing saved products — may be out of date. Prices and stock will refresh once
@@ -209,9 +627,9 @@ export function Sell() {
             variants={variants}
             isLoading={products === null && !loadError}
             loadError={loadError}
-            cartQuantities={cartQuantities}
-            inCartLabel="in sale"
-            onAdd={addOne}
+            cartQuantities={{}}
+            inCartLabel="just added"
+            onAdd={(v) => void handleProductTap(v)}
             emptyMessage={
               <p className="text-[13px] text-jb-ink/45">
                 You haven&apos;t stocked anything yet.{' '}
@@ -223,52 +641,8 @@ export function Sell() {
             }
           />
         </div>
-      </div>
+      )}
 
-      {/* Bottom half: what's been added for this customer -- its own
-          scroll region, always visible so the sale-in-progress never
-          disappears behind the product list. */}
-      <CartPanel
-        label="THIS SALE"
-        lines={cart.map((l) => ({
-          ...l,
-          atStockLimit: variants.find((v) => v.variantId === l.variantId)?.outOfStock,
-        }))}
-        emptyMessage="Tap a drink above to add it here."
-        onChangeQty={changeQty}
-        footer={
-          <>
-            <div className="flex gap-2 p-1 rounded-xl bg-jb-ink/[0.05] mb-2">
-              {(['cash', 'transfer', 'card'] as PaymentMethod[]).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setMethod(m)}
-                  className={`flex-1 rounded-lg py-2 text-[12.5px] font-medium capitalize transition-colors ${
-                    method === m ? 'bg-white text-jb-ink shadow-sm' : 'text-jb-ink/45'
-                  }`}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center justify-between text-[12px] text-jb-ink/55 mb-2 px-1">
-              <span>Total</span>
-              <span className="text-jb-ink font-medium text-[15px]">₦{formatNaira(total)}</span>
-            </div>
-            <button
-              onClick={() => void completeSale()}
-              disabled={submitting}
-              className="w-full rounded-xl bg-jb-ink text-jb-cream text-[15px] font-medium py-3.5 active:scale-[0.98] transition-transform disabled:opacity-40"
-            >
-              {submitting ? 'Saving…' : 'Complete Sale'}
-            </button>
-          </>
-        }
-      />
-
-      {/* Reserves room for the fixed bottom nav below, matching the
-          clearance every other app-shell page uses. */}
-      <div className="h-28 shrink-0" />
       <AppBottomNav />
     </div>
   );

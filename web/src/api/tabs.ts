@@ -201,25 +201,39 @@ export async function createCustomer(
   return toCustomer(raw);
 }
 
+// openBill wraps POST /api/v1/bills. Find-or-open: when tableId/customerId
+// is given and already has a non-terminal bill, the server returns that
+// bill instead of creating a second one (docs/PHASE_UNIFIED_SELL_BILLS.md)
+// -- the unified Sell flow's table/customer picker relies on this rather
+// than checking client-side first. idempotencyKey is only consulted for
+// the plain walk-in case (no table, no customer) -- the queued-offline
+// path; an interactive online open can omit it.
 export async function openBill(
-  input: { tableId?: string; customerId?: string },
+  input: { tableId?: string; customerId?: string; idempotencyKey?: string },
   businessId: string,
   csrfToken: string,
 ): Promise<Bill> {
   const raw = await apiRequest<RawBill>('/api/v1/bills', {
     method: 'POST',
     headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
-    body: JSON.stringify({ table_id: input.tableId, customer_id: input.customerId }),
+    body: JSON.stringify({
+      table_id: input.tableId,
+      customer_id: input.customerId,
+      idempotency_key: input.idempotencyKey,
+    }),
   });
   return toBill(raw);
 }
 
+export type BillStatusFilter = Bill['status'] | 'outstanding' | 'all';
+
 // listBills wraps GET /api/v1/bills. status 'open' (default) returns open
 // and closed_unpaid tabs; 'outstanding' returns every bill with a nonzero
-// balance regardless of status.
+// balance regardless of status; 'all' or a specific status (closed_unpaid,
+// settled, void) backs the unified Bills screen's status filter.
 export async function listBills(
   businessId: string,
-  status: 'open' | 'outstanding' = 'open',
+  status: BillStatusFilter = 'open',
 ): Promise<Bill[]> {
   const raw = await apiRequest<RawBill[]>(`/api/v1/bills?status=${status}`, {
     headers: { 'X-Business-ID': businessId },
@@ -348,17 +362,21 @@ export async function writeOffBill(
   return toBill(raw);
 }
 
+// recordPayment wraps POST /api/v1/bills/{bill_id}/payments. idempotencyKey
+// is optional -- the queued-offline path (docs/PHASE_UNIFIED_SELL_BILLS.md);
+// an interactive online payment can omit it.
 export async function recordPayment(
   billId: string,
   amountKobo: number,
   method: PaymentMethod,
   businessId: string,
   csrfToken: string,
+  idempotencyKey?: string,
 ): Promise<BillPayment> {
   const raw = await apiRequest<RawPayment>(`/api/v1/bills/${billId}/payments`, {
     method: 'POST',
     headers: { 'X-CSRF-Token': csrfToken, 'X-Business-ID': businessId },
-    body: JSON.stringify({ amount_kobo: amountKobo, method }),
+    body: JSON.stringify({ amount_kobo: amountKobo, method, idempotency_key: idempotencyKey }),
   });
   return { amountKobo: raw.amount_kobo, method: raw.method };
 }

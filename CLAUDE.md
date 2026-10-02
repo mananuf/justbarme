@@ -355,11 +355,123 @@ receipt. Full design confirmed in conversation; the concrete shape below.
   cleaned up via the RLS-aware `SET LOCAL ROLE jbm_app` transaction
   pattern afterward.
 
+## Unified Sell/Bills
+
+Merges Quick Sell and Bills into one screen/mechanism for recording any
+sale — a deliberate, user-requested usability change triggered by real
+pilot feedback (a staff member conflating the two), **not** part of
+`docs/`'s frozen plan. Full design record and the live-verification
+transcript live in `docs/PHASE_UNIFIED_SELL_BILLS.md` — read it before
+extending any of this. The guiding principle, stated directly by the
+project owner: *"a sale is always a sale, users need to have one view for
+that... this is built for non technical/savvy people"* — simplicity for
+end users outranks keeping the walk-in/tab distinction visible, even
+though that distinction still exists underneath.
+
+This went through two rounds — the phase doc's "Revision" and "Part 2"
+sections record why and what changed each time — so read the code, not
+just the first design, before extending any of this.
+
+- **`Service.OpenBill` is now find-or-open, not blind creation.** Picking
+  an already-occupied table or an already-open customer tab resumes that
+  bill instead of opening a second, concurrent one for the same table —
+  closing a real latent gap in the original Phase 6 behavior, not just a
+  nicety for the new flow. `OpenBill`'s walk-in case (no table, no
+  customer) gained its own optional `idempotencyKey` (new nullable
+  `bills.idempotency_key`, migration `000030`) for the same
+  retried-POST-is-safe reason `sales.idempotency_key` exists.
+  `Service.RecordPayment` gained the identical optional-idempotency-key
+  contract (`payments.idempotency_key`, same migration) — before this,
+  neither method could detect a replayed request, unlike `AddSaleRound`/
+  `RemoveBillItem`, which already reused `sales.idempotency_key` via
+  `postSaleRound`.
+- **`GET /api/v1/bills?status=`** now accepts any real bill status plus
+  `all`, not just the pre-existing `open`/`outstanding` shortcuts —
+  backing the Bills screen's filter (`Service.ListBillsByStatus`/
+  `ListAllBills`).
+- **Every sale now carries its `bill_id` in the API response**
+  (`saleResponse.BillID`, always populated) — including a one-shot sale
+  recorded via `CreateSale`, which already wrapped a bill around itself
+  internally but never exposed it.
+- **One header toggle, Table | Customer — never both selectable at once.**
+  The first version of `Sell.tsx` showed two always-visible, independently
+  selectable sections (a table picker and a customer picker), which real
+  pilot screenshots showed was confusing: a table *and* a customer could
+  both carry a live selection with no clear answer to "what is this sale
+  against?" Switching the toggle clears whichever side isn't active, so
+  exactly one of table/customer can be real at a time; a plain walk-in is
+  simply both sides left at their defaults ("No table" / "Walk-in
+  customer", the latter shown with a one-line explanation) — it is not a
+  third toggle option.
+- **Walk-in gets no special treatment, by explicit instruction.** Every
+  sale — table, customer, or neither — opens (or resumes, via find-or-open)
+  a bill and posts live rounds immediately as items are tapped; there is no
+  draft cart and no separate "Complete Sale"/"Start tab" step. This retired
+  the original one-shot `createSale` call from `Sell.tsx` entirely
+  (`pendingSales`/`salesSync.ts` are consequently unused by it, left in
+  place rather than deleted).
+- **A persistent pill strip of currently open bills** sits above the
+  picker on `Sell.tsx` (restoring the original Tabs.tsx "every open bill
+  one tap away" pattern) with "+ New" to start another — switching between
+  them is instant, no page navigation.
+- **Three pages, sharing one live-bill component.**
+  `web/src/components/BillWorkspace.tsx` is everything about looking at
+  and acting on one bill (status, add/adjust items, payments, share/close/
+  void/write-off, rounds history with `ActivityDetailSheet`) — rendered
+  inline by `Sell.tsx` for whichever bill is currently active (no
+  navigation when switching pills or starting a new sale) and reused by
+  `BillDetail.tsx` (`/dashboard/tabs/:billId`, a thin page-chrome wrapper)
+  for browsing any bill, including settled/void history, from the Bills
+  list. `Tabs.tsx` itself is a pure Bills *list* (status filter, rows
+  linking into `BillDetail.tsx`, a "+ New sale" button to `Sell.tsx`).
+  `web/src/lib/billDisplay.ts` (`billLabel`/`statusLabel`) is shared by
+  all three. `CartPanel` gained one prop, `showFooterWhenEmpty`, so
+  `Sell.tsx`'s picker can post a round against a still-empty bill.
+- **Real offline support for bill actions, not just the walk-in path.**
+  `web/src/lib/db.ts`'s `pendingBillActions` (Dexie version 6) queues a
+  bill's lifecycle steps (open/add_round/remove_item/record_payment/close)
+  grouped by `localSessionId`, resolved and replayed in order by
+  `web/src/lib/billActionsSync.ts`'s `flushPendingBillActions` — the same
+  "oldest first, stop at the first failure" discipline `salesSync.ts`
+  already holds itself to, extended to a *sequence* of dependent actions.
+  A real server rejection (not connectivity) marks that one action
+  `failed` with a plain reason rather than retrying forever or silently
+  dropping it — surfaced as a "PENDING (OFFLINE)" section on
+  `BillWorkspace` with a Discard button, never blended into the
+  server-confirmed PAYMENTS/ROUNDS lists (`docs/ARCHITECTURE.md` §10.7).
+  `BillWorkspace` queues directly against its own already-known `billId`;
+  `Sell.tsx`'s first tap (no bill exists yet) queues an `open` + `add_round`
+  pair under a fresh local session and shows its own small local view
+  until that session resolves to a real bill on the next successful flush,
+  at which point it switches straight into the normal, live
+  `BillWorkspace` — indistinguishable from there on from a bill that was
+  always online. Not built: removing an item from a still-unresolved
+  session (add-only until it has a real bill id), and a pill for an
+  unresolved session in the open-bills strip.
+- **Verified**: backend — `go test ./cmd/... ./internal/...`, plus live
+  curl against a running server (find-or-open resolving to the same bill
+  twice, a one-shot sale's `bill_id` round-tripping through
+  `GET /bills/{id}`, the status filter, idempotent payment replay).
+  Frontend — `npm run check` (format, lint, a full production build, and
+  45 Vitest tests: the pre-existing 39 plus 6 new ones for
+  `billActionsSync.ts` that cover the open→add_round happy path, queuing
+  directly against an already-resolved bill, stopping one session at
+  `OfflineError` without blocking others, marking a real rejection
+  `failed`, and treating a replayed close against an already-closed bill
+  as fulfilled rather than a failure — one of which caught and pinned a
+  real bug during development, where a failed action's resolved `billId`
+  wasn't being persisted before the row was marked `failed`, making it
+  permanently invisible to the by-`billId` lookup `BillWorkspace` needs).
+  **Not done, either round**: an actual browser/Playwright click-through —
+  Claude in Chrome's extension was not connected in this environment for
+  either pass. Worth a manual verification pass before trusting this in
+  production, same named gap the original `Sell.tsx` already carried.
+
 ## Frontend architecture
 
 `web/` is a single Vite + React + TypeScript + Tailwind v4 PWA that carries **both** the public marketing/onboarding site and the authenticated app shell — there is no separate marketing project. It used to be split across two stacks (this Vite app plus a Next.js prototype in `marketing/`, built from a v0 export template); that Next.js app has been retired and its design system (brand tokens, fonts, and reusable components) ported in here. The v0 template it was originally adapted from was kept read-only at `agentic-build-and-orchestrate-ai-agents-while-you-sleep/` at the repo root purely as a design reference; it has since been deleted (its design system was already fully ported into `web/` by this point, so nothing was lost) — don't expect to find it, and never resurrect a second frontend stack from a copy of it.
 
-Routes (`src/app/App.tsx`, `react-router-dom`): `/` (landing page), `/login`, `/signup`, `/invite/:token` (public invitation landing page, see the Invitations and WhatsApp messaging section), `/onboarding` (4-step wizard — step 1 is a real `POST /businesses`, steps 2-3 are still a UI preview of product/price setup pending Phase 3), `/install` (PWA install guide that performs real device enrollment), `/dashboard`, `/dashboard/sell`, `/dashboard/stock`, `/dashboard/tabs`, `/dashboard/team`, `/dashboard/reviews` (owner-only, see the Phase 4, revisited section), `/dashboard/expenses` (both roles), and `/dashboard/activity`/`/dashboard/reports` (owner-only, see the Phase 8 section) (the app shell — auth, business identity and offline-lease status are real). The public pages (`/`, `/login`, `/signup`, `/invite/:token`) need no auth; `/onboarding`, `/install`, `/dashboard*` are wrapped in `RequireAuth`, and the dashboard routes additionally pass `requireBusiness` (see below). The public pages (`/`, `/onboarding`, `/install`) have no offline requirement; only the `/dashboard*` app screens do, per `docs/ARCHITECTURE.md`.
+Routes (`src/app/App.tsx`, `react-router-dom`): `/` (landing page), `/login`, `/signup`, `/invite/:token` (public invitation landing page, see the Invitations and WhatsApp messaging section), `/onboarding` (4-step wizard — step 1 is a real `POST /businesses`, steps 2-3 are still a UI preview of product/price setup pending Phase 3), `/install` (PWA install guide that performs real device enrollment), `/dashboard`, `/dashboard/sell` (the unified Sell flow, see the Unified Sell/Bills section), `/dashboard/stock`, `/dashboard/tabs` (the Bills list) and `/dashboard/tabs/:billId` (a bill's full-page receipt-style detail), `/dashboard/team`, `/dashboard/reviews` (owner-only, see the Phase 4, revisited section), `/dashboard/expenses` (both roles), and `/dashboard/activity`/`/dashboard/reports` (owner-only, see the Phase 8 section) (the app shell — auth, business identity and offline-lease status are real). The public pages (`/`, `/login`, `/signup`, `/invite/:token`) need no auth; `/onboarding`, `/install`, `/dashboard*` are wrapped in `RequireAuth`, and the dashboard routes additionally pass `requireBusiness` (see below). The public pages (`/`, `/onboarding`, `/install`) have no offline requirement; only the `/dashboard*` app screens do, per `docs/ARCHITECTURE.md`.
 
 Phase 2 frontend wiring (login, business creation, device enrollment) is real and hits the Go backend:
 

@@ -16,7 +16,7 @@ func TestCreateOrRotateShareLinkChangesTheTokenEachTime(t *testing.T) {
 	ctx := context.Background()
 	ownerID, businessID, locationID, _ := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
 
-	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil)
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestResolveShareLinkRejectsUnknownRevokedAndExpiredTokens(t *testing.T) {
 		t.Fatalf("expected ErrShareLinkNotFound for an unknown token, got %v", err)
 	}
 
-	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil)
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}

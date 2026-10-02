@@ -27,13 +27,26 @@ interface CartPanelProps {
    * payment method + Complete Sale button for a walk-in, or a plain "Add
    * round" button for a tab. */
   footer?: ReactNode;
+  /** Shows the footer even with zero lines -- the unified Sell flow's
+   * "Start tab" button (docs/PHASE_UNIFIED_SELL_BILLS.md) is valid on an
+   * empty cart (seat a table, order later), unlike a one-shot walk-in
+   * sale, which can't sell nothing. Defaults to false, preserving every
+   * existing caller's behavior. */
+  showFooterWhenEmpty?: boolean;
 }
 
 // CartPanel is the shared "what's been picked so far" bottom sheet, paired
 // with ProductGrid above it. Kept as its own component (rather than folded
 // into ProductGrid) because the two callers need different footers, not
 // because the picking/reviewing halves ever need to vary independently.
-export function CartPanel({ label, lines, emptyMessage, onChangeQty, footer }: CartPanelProps) {
+export function CartPanel({
+  label,
+  lines,
+  emptyMessage,
+  onChangeQty,
+  footer,
+  showFooterWhenEmpty,
+}: CartPanelProps) {
   const itemCount = lines.reduce((sum, l) => sum + l.quantity, 0);
 
   return (
@@ -88,7 +101,9 @@ export function CartPanel({ label, lines, emptyMessage, onChangeQty, footer }: C
           ))}
         </div>
 
-        {lines.length > 0 && footer && <div className="shrink-0 pt-3">{footer}</div>}
+        {(lines.length > 0 || showFooterWhenEmpty) && footer && (
+          <div className="shrink-0 pt-3">{footer}</div>
+        )}
       </div>
     </div>
   );

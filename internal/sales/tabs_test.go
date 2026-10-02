@@ -21,7 +21,7 @@ func TestAddSaleRoundAppendsToOpenBillAndAllowsClosedUnpaid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCustomer: %v", err)
 	}
-	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, customer.ID)
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, customer.ID, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestAddSaleRoundAppendsToOpenBillAndAllowsClosedUnpaid(t *testing.T) {
 	}
 
 	// Fully pay and settle -- now editing is rejected.
-	if _, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 320000, sales.PaymentMethodCash); err != nil {
+	if _, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 320000, sales.PaymentMethodCash, uuid.Nil); err != nil {
 		t.Fatalf("RecordPayment: %v", err)
 	}
 	settled, err := salesSvc.GetBillDetail(ctx, ownerID, businessID, bill.ID)
@@ -92,7 +92,7 @@ func TestRemoveBillItemNetsAgainstEarlierRoundsAndCapsAtWhatsPresent(t *testing.
 	ctx := context.Background()
 	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
 
-	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil)
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestRemoveBillItemRejectsOnceFullyPaid(t *testing.T) {
 	ctx := context.Background()
 	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
 
-	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil)
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestRemoveBillItemRejectsOnceFullyPaid(t *testing.T) {
 		[]sales.SaleItemInput{{VariantID: variantID, Quantity: 2, UnitPriceKobo: 80000}}); err != nil {
 		t.Fatalf("AddSaleRound: %v", err)
 	}
-	if _, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 160000, sales.PaymentMethodCard); err != nil {
+	if _, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 160000, sales.PaymentMethodCard, uuid.Nil); err != nil {
 		t.Fatalf("RecordPayment: %v", err)
 	}
 
@@ -207,7 +207,7 @@ func TestCloseBillRequiresCustomerForOutstandingBalance(t *testing.T) {
 		t.Fatalf("CreateCustomer: %v", err)
 	}
 
-	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, customer.ID)
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, customer.ID, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestCloseBillSettlesDirectlyWhenFullyPaid(t *testing.T) {
 	ctx := context.Background()
 	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
 
-	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil)
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestCloseBillSettlesDirectlyWhenFullyPaid(t *testing.T) {
 		[]sales.SaleItemInput{{VariantID: variantID, Quantity: 1, UnitPriceKobo: 80000}}); err != nil {
 		t.Fatalf("AddSaleRound: %v", err)
 	}
-	if _, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 80000, sales.PaymentMethodCash); err != nil {
+	if _, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 80000, sales.PaymentMethodCash, uuid.Nil); err != nil {
 		t.Fatalf("RecordPayment: %v", err)
 	}
 
@@ -266,7 +266,7 @@ func TestRecordPaymentRejectsOverpaymentAndSettlesOnFullPayment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCustomer: %v", err)
 	}
-	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, customer.ID)
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, customer.ID, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}
@@ -278,11 +278,11 @@ func TestRecordPaymentRejectsOverpaymentAndSettlesOnFullPayment(t *testing.T) {
 		t.Fatalf("CloseBill: %v", err)
 	}
 
-	if _, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 999999, sales.PaymentMethodCash); !errors.Is(err, sales.ErrOverpayment) {
+	if _, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 999999, sales.PaymentMethodCash, uuid.Nil); !errors.Is(err, sales.ErrOverpayment) {
 		t.Fatalf("expected ErrOverpayment, got %v", err)
 	}
 
-	partial, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 80000, sales.PaymentMethodCash)
+	partial, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 80000, sales.PaymentMethodCash, uuid.Nil)
 	if err != nil {
 		t.Fatalf("partial RecordPayment: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestRecordPaymentRejectsOverpaymentAndSettlesOnFullPayment(t *testing.T) {
 		t.Fatalf("expected closed_unpaid with balance 80000 after partial payment, got status=%q balance=%d", detail.Status, detail.BalanceKobo)
 	}
 
-	final, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 80000, sales.PaymentMethodTransfer)
+	final, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 80000, sales.PaymentMethodTransfer, uuid.Nil)
 	if err != nil {
 		t.Fatalf("final RecordPayment: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestReversePaymentRevertsSettledBillAndRejectsDoubleReversal(t *testing.T) 
 	ctx := context.Background()
 	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
 
-	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil)
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestReversePaymentRevertsSettledBillAndRejectsDoubleReversal(t *testing.T) 
 		[]sales.SaleItemInput{{VariantID: variantID, Quantity: 1, UnitPriceKobo: 80000}}); err != nil {
 		t.Fatalf("AddSaleRound: %v", err)
 	}
-	payment, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 80000, sales.PaymentMethodCash)
+	payment, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 80000, sales.PaymentMethodCash, uuid.Nil)
 	if err != nil {
 		t.Fatalf("RecordPayment: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestWriteOffBillRequiresClosedUnpaidAndCannotExceedBalance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCustomer: %v", err)
 	}
-	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, customer.ID)
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, customer.ID, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}
@@ -406,7 +406,7 @@ func TestVoidBillRejectsActivityAndSucceedsWhenClean(t *testing.T) {
 	ctx := context.Background()
 	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
 
-	billWithActivity, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil)
+	billWithActivity, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}
@@ -418,7 +418,7 @@ func TestVoidBillRejectsActivityAndSucceedsWhenClean(t *testing.T) {
 		t.Fatalf("expected ErrBillHasOutstandingActivity, got %v", err)
 	}
 
-	emptyBill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil)
+	emptyBill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}
@@ -443,7 +443,7 @@ func TestConcurrentPaymentsNeverExceedBalance(t *testing.T) {
 	ctx := context.Background()
 	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
 
-	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil)
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}
@@ -458,7 +458,7 @@ func TestConcurrentPaymentsNeverExceedBalance(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, results[i] = salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 80000, sales.PaymentMethodCash)
+			_, results[i] = salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 80000, sales.PaymentMethodCash, uuid.Nil)
 		}(i)
 	}
 	wg.Wait()
@@ -497,7 +497,7 @@ func TestReverseSaleRejectsWhenBillHasOtherSales(t *testing.T) {
 	ctx := context.Background()
 	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
 
-	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil)
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}
@@ -535,7 +535,7 @@ func TestReverseSaleWithNoPaymentYetDoesNotCrash(t *testing.T) {
 	ctx := context.Background()
 	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
 
-	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil)
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
 	if err != nil {
 		t.Fatalf("OpenBill: %v", err)
 	}
@@ -565,5 +565,147 @@ func TestReverseSaleWithNoPaymentYetDoesNotCrash(t *testing.T) {
 	}
 	if reversal.TotalKobo != -80000 {
 		t.Fatalf("expected reversal total -80000, got %d", reversal.TotalKobo)
+	}
+}
+
+// TestOpenBillResolvesToExistingOpenBillForSameTable exercises the
+// find-or-open behavior docs/PHASE_UNIFIED_SELL_BILLS.md requires: picking
+// an already-occupied table must resume its tab, never open a second,
+// concurrent one for the same table.
+func TestOpenBillResolvesToExistingOpenBillForSameTable(t *testing.T) {
+	salesSvc, inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, _ := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
+
+	table, err := salesSvc.CreateTable(ctx, ownerID, businessID, "T1")
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	first, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, table.ID, uuid.Nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("OpenBill (first): %v", err)
+	}
+	second, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, table.ID, uuid.Nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("OpenBill (second): %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("expected picking the same table to resume bill %s, got a new bill %s", first.ID, second.ID)
+	}
+
+	// Once the bill is settled (terminal), the table is free again -- a
+	// third open against the same table must create a new bill, not
+	// resolve to the now-closed one.
+	if _, err := salesSvc.CloseBill(ctx, ownerID, businessID, first.ID); err != nil {
+		t.Fatalf("CloseBill: %v", err)
+	}
+	third, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, table.ID, uuid.Nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("OpenBill (third): %v", err)
+	}
+	if third.ID == first.ID {
+		t.Fatal("expected a new bill once the previous one settled, got the same bill back")
+	}
+}
+
+// TestOpenBillResolvesToExistingOpenBillForSameCustomer mirrors the table
+// case for a named customer tab with no table attached.
+func TestOpenBillResolvesToExistingOpenBillForSameCustomer(t *testing.T) {
+	salesSvc, inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, _ := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
+
+	customer, err := salesSvc.CreateCustomer(ctx, ownerID, businessID, "Amara", "", "", "")
+	if err != nil {
+		t.Fatalf("CreateCustomer: %v", err)
+	}
+
+	first, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, customer.ID, uuid.Nil)
+	if err != nil {
+		t.Fatalf("OpenBill (first): %v", err)
+	}
+	second, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, customer.ID, uuid.Nil)
+	if err != nil {
+		t.Fatalf("OpenBill (second): %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("expected picking the same customer to resume bill %s, got a new bill %s", first.ID, second.ID)
+	}
+}
+
+// TestOpenBillWalkInIsIdempotent exercises the plain walk-in path's own
+// idempotency key (no table/customer to resolve against) -- a retried
+// queued "open a new walk-in bill" must not create a duplicate.
+func TestOpenBillWalkInIsIdempotent(t *testing.T) {
+	salesSvc, inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, _ := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
+
+	key := uuid.New()
+	first, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, key)
+	if err != nil {
+		t.Fatalf("OpenBill (first): %v", err)
+	}
+	second, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, key)
+	if err != nil {
+		t.Fatalf("OpenBill (second): %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("expected a replayed idempotency key to return the same bill %s, got %s", first.ID, second.ID)
+	}
+
+	// A different key (or none at all) must still open a genuinely new
+	// walk-in bill -- the key scopes the replay, it doesn't make every
+	// walk-in open collapse into one.
+	third, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.New())
+	if err != nil {
+		t.Fatalf("OpenBill (third): %v", err)
+	}
+	if third.ID == first.ID {
+		t.Fatal("expected a different idempotency key to open a new bill")
+	}
+}
+
+// TestRecordPaymentIsIdempotent mirrors CreateSale's own idempotency-key
+// contract for RecordPayment -- the real backend gap
+// docs/PHASE_UNIFIED_SELL_BILLS.md identified before offline queuing of a
+// bill's payment step could be made safe.
+func TestRecordPaymentIsIdempotent(t *testing.T) {
+	salesSvc, inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, inventorySvc, catalogueSvc, identitySvc, pool)
+
+	bill, err := salesSvc.OpenBill(ctx, ownerID, businessID, locationID, ownerID, uuid.Nil, uuid.Nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("OpenBill: %v", err)
+	}
+	if _, err := salesSvc.AddSaleRound(ctx, ownerID, businessID, bill.ID, ownerID, uuid.New(), time.Now(),
+		[]sales.SaleItemInput{{VariantID: variantID, Quantity: 1, UnitPriceKobo: 100000}}); err != nil {
+		t.Fatalf("AddSaleRound: %v", err)
+	}
+
+	key := uuid.New()
+	first, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 100000, sales.PaymentMethodCash, key)
+	if err != nil {
+		t.Fatalf("RecordPayment (first): %v", err)
+	}
+	second, err := salesSvc.RecordPayment(ctx, ownerID, businessID, bill.ID, ownerID, 100000, sales.PaymentMethodCash, key)
+	if err != nil {
+		t.Fatalf("RecordPayment (second): %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("expected a replayed idempotency key to return the same payment %s, got %s", first.ID, second.ID)
+	}
+
+	detail, err := salesSvc.GetBillDetail(ctx, ownerID, businessID, bill.ID)
+	if err != nil {
+		t.Fatalf("GetBillDetail: %v", err)
+	}
+	if len(detail.Payments) != 1 {
+		t.Fatalf("expected exactly one payment to have landed (not double-applied), got %d", len(detail.Payments))
+	}
+	if detail.Bill.BalanceKobo != 0 {
+		t.Fatalf("expected balance 0 after the (single, deduped) payment, got %d", detail.Bill.BalanceKobo)
 	}
 }

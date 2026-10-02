@@ -223,7 +223,13 @@ func (api *API) listCustomers(w http.ResponseWriter, r *http.Request) {
 
 // openBill implements POST /api/v1/bills (bills:manage): opens a tab
 // against an optional table and/or named customer -- neither is a plain
-// walk-in tab opened ahead of its first round.
+// walk-in tab opened ahead of its first round. Find-or-open: when
+// table_id/customer_id is given and already has a non-terminal bill, this
+// returns that bill instead of creating a second one
+// (docs/PHASE_UNIFIED_SELL_BILLS.md). idempotency_key is optional and only
+// consulted for the plain walk-in case (no table, no customer) -- the
+// queued-offline path the unified Sell flow needs; an interactive online
+// open can omit it.
 func (api *API) openBill(w http.ResponseWriter, r *http.Request) {
 	business, ok := api.requireCapability(w, r, tenancy.CapabilityBillsManage)
 	if !ok {
@@ -232,8 +238,9 @@ func (api *API) openBill(w http.ResponseWriter, r *http.Request) {
 	principal, _ := tenancy.PrincipalFromContext(r.Context())
 
 	var req struct {
-		TableID    string `json:"table_id"`
-		CustomerID string `json:"customer_id"`
+		TableID        string `json:"table_id"`
+		CustomerID     string `json:"customer_id"`
+		IdempotencyKey string `json:"idempotency_key"`
 	}
 	if err := readJSON(w, r, &req, 1<<12); err != nil {
 		api.badRequestResponse(w, r, err.Error())
@@ -241,7 +248,7 @@ func (api *API) openBill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	v := validator.New()
-	var tableID, customerID uuid.UUID
+	var tableID, customerID, idempotencyKey uuid.UUID
 	if req.TableID != "" {
 		var err error
 		tableID, err = uuid.Parse(req.TableID)
@@ -251,6 +258,11 @@ func (api *API) openBill(w http.ResponseWriter, r *http.Request) {
 		var err error
 		customerID, err = uuid.Parse(req.CustomerID)
 		v.Check(err == nil, "customer_id", "must be a valid UUID")
+	}
+	if req.IdempotencyKey != "" {
+		var err error
+		idempotencyKey, err = uuid.Parse(req.IdempotencyKey)
+		v.Check(err == nil, "idempotency_key", "must be a valid UUID")
 	}
 	if !v.IsValid() {
 		api.validationFailedResponse(w, r, v.Errors)
@@ -263,7 +275,7 @@ func (api *API) openBill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bill, err := api.sales.OpenBill(r.Context(), principal.UserID, business.BusinessID, location.ID, principal.UserID, tableID, customerID)
+	bill, err := api.sales.OpenBill(r.Context(), principal.UserID, business.BusinessID, location.ID, principal.UserID, tableID, customerID, idempotencyKey)
 	if err != nil {
 		tabsErrorResponse(api, w, r, err, "open bill")
 		return
@@ -273,10 +285,14 @@ func (api *API) openBill(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// listBills implements GET /api/v1/bills?status=open|outstanding
-// (bills:read). Defaults to open/closed-unpaid tabs (the table grid / open
-// tabs view); ?status=outstanding lists every bill with a nonzero balance
-// regardless of status.
+// listBills implements GET /api/v1/bills?status=open|outstanding|<any bill
+// status>|all (bills:read). Defaults to open/closed-unpaid tabs (the table
+// grid / open tabs view); ?status=outstanding lists every bill with a
+// nonzero balance regardless of status; ?status=all lists every bill
+// regardless of status; any other value (settled, void, closed_unpaid) is
+// passed through literally -- the unified Bills screen's status filter
+// (docs/PHASE_UNIFIED_SELL_BILLS.md) needs to show history, not just
+// what's currently actionable.
 func (api *API) listBills(w http.ResponseWriter, r *http.Request) {
 	business, ok := api.requireCapability(w, r, tenancy.CapabilityBillsRead)
 	if !ok {
@@ -286,10 +302,19 @@ func (api *API) listBills(w http.ResponseWriter, r *http.Request) {
 
 	var list []sales.Bill
 	var err error
-	if r.URL.Query().Get("status") == "outstanding" {
-		list, err = api.sales.ListOutstandingBills(r.Context(), principal.UserID, business.BusinessID)
-	} else {
+	switch status := r.URL.Query().Get("status"); status {
+	case "", "open":
 		list, err = api.sales.ListOpenBills(r.Context(), principal.UserID, business.BusinessID)
+	case "outstanding":
+		list, err = api.sales.ListOutstandingBills(r.Context(), principal.UserID, business.BusinessID)
+	case "all":
+		list, err = api.sales.ListAllBills(r.Context(), principal.UserID, business.BusinessID)
+	default:
+		if !validator.PermittedValue(status, sales.BillStatusOpen, sales.BillStatusClosedUnpaid, sales.BillStatusSettled, sales.BillStatusVoid) {
+			api.badRequestResponse(w, r, "status must be one of open, closed_unpaid, settled, void, outstanding, or all.")
+			return
+		}
+		list, err = api.sales.ListBillsByStatus(r.Context(), principal.UserID, business.BusinessID, status)
 	}
 	if err != nil {
 		api.internalErrorResponse(w, r, fmt.Errorf("list bills: %w", err))
@@ -572,6 +597,9 @@ func (api *API) writeOffBill(w http.ResponseWriter, r *http.Request) {
 
 // recordPayment implements POST /api/v1/bills/{bill_id}/payments
 // (payments:record). Overpayment is rejected (409) rather than clamped.
+// idempotency_key is optional -- the queued-offline path a bill's payment
+// step needs (docs/PHASE_UNIFIED_SELL_BILLS.md); an interactive online
+// payment can omit it.
 func (api *API) recordPayment(w http.ResponseWriter, r *http.Request) {
 	business, ok := api.requireCapability(w, r, tenancy.CapabilityPaymentsRecord)
 	if !ok {
@@ -585,7 +613,11 @@ func (api *API) recordPayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req paymentRequest
+	var req struct {
+		AmountKobo     int64  `json:"amount_kobo"`
+		Method         string `json:"method"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}
 	if err := readJSON(w, r, &req, 1<<12); err != nil {
 		api.badRequestResponse(w, r, err.Error())
 		return
@@ -593,12 +625,18 @@ func (api *API) recordPayment(w http.ResponseWriter, r *http.Request) {
 	v := validator.New()
 	v.Check(req.AmountKobo > 0, "amount_kobo", "must be positive")
 	v.Check(validator.PermittedValue(req.Method, "cash", "transfer", "card"), "method", "must be cash, transfer, or card")
+	var idempotencyKey uuid.UUID
+	if req.IdempotencyKey != "" {
+		var err error
+		idempotencyKey, err = uuid.Parse(req.IdempotencyKey)
+		v.Check(err == nil, "idempotency_key", "must be a valid UUID")
+	}
 	if !v.IsValid() {
 		api.validationFailedResponse(w, r, v.Errors)
 		return
 	}
 
-	payment, err := api.sales.RecordPayment(r.Context(), principal.UserID, business.BusinessID, billID, principal.UserID, req.AmountKobo, req.Method)
+	payment, err := api.sales.RecordPayment(r.Context(), principal.UserID, business.BusinessID, billID, principal.UserID, req.AmountKobo, req.Method, idempotencyKey)
 	if err != nil {
 		tabsErrorResponse(api, w, r, err, "record payment")
 		return

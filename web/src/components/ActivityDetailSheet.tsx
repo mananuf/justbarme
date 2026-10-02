@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { getAdjustmentRequest, getStockReceipt, reverseStockReceipt } from '../api/inventory';
 import { getExpense, reverseExpense } from '../api/expenses';
@@ -36,12 +37,16 @@ function useDetailRows(
   error: string | null;
   // Whether an owner's "Fix" button should show at all for this entry, and
   // why not when it shouldn't (shown as a small note instead of the
-  // button).
-  fixable: { yes: true } | { yes: false; reason: string };
+  // button). billId is only ever set on the "shared tab" reason -- it's
+  // what lets the sheet offer a direct way there instead of just saying
+  // so, without turning every other not-fixable reason into a link too.
+  fixable: { yes: true } | { yes: false; reason: string; billId?: string };
 } {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [fixable, setFixable] = useState<{ yes: true } | { yes: false; reason: string }>({
+  const [fixable, setFixable] = useState<
+    { yes: true } | { yes: false; reason: string; billId?: string }
+  >({
     yes: false,
     reason: '',
   });
@@ -80,6 +85,7 @@ function useDetailRows(
             setFixable({
               yes: false,
               reason: 'This is part of a shared tab — adjust it from the tab instead.',
+              billId: sale.billId,
             });
           } else {
             setFixable({ yes: true });
@@ -167,6 +173,7 @@ export function ActivityDetailSheet({
   // priority over whatever the detail fetch itself would have decided.
   forceNotFixable?: string;
 }) {
+  const navigate = useNavigate();
   const detail = useDetailRows(entry, businessId);
   const { rows, error } = detail;
   const fixable = forceNotFixable
@@ -197,6 +204,14 @@ export function ActivityDetailSheet({
     } finally {
       setFixing(false);
     }
+  }
+
+  // Closes the sheet and sends the owner straight to the shared tab this
+  // sale belongs to, rather than leaving them with only a text hint that
+  // it exists -- the one not-fixable reason that has somewhere real to go.
+  function handleGoToTab(billId: string) {
+    onClose();
+    void navigate(`/dashboard/tabs/${billId}`);
   }
 
   async function handleFlag() {
@@ -272,7 +287,17 @@ export function ActivityDetailSheet({
                 {fixing ? 'Working…' : 'Fix — undo this and redo it correctly'}
               </button>
             ) : (
-              <p className="text-[12px] text-jb-ink/40">{fixable.reason}</p>
+              <>
+                <p className="text-[12px] text-jb-ink/40">{fixable.reason}</p>
+                {fixable.billId && (
+                  <button
+                    onClick={() => handleGoToTab(fixable.billId as string)}
+                    className="w-full rounded-xl border border-jb-ink/15 text-jb-ink text-[13.5px] font-medium py-2.5 mt-2"
+                  >
+                    Go to tab →
+                  </button>
+                )}
+              </>
             )}
             {fixError && (
               <p role="alert" className="text-[12px] text-red-700 mt-1.5">

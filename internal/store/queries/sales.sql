@@ -1,10 +1,45 @@
 -- name: CreateBill :one
-INSERT INTO bills (id, business_id, location_id, status, opened_by, opened_at, table_id, customer_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO bills (id, business_id, location_id, status, opened_by, opened_at, table_id, customer_id, idempotency_key)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING *;
 
 -- name: GetBillByID :one
 SELECT * FROM bills WHERE business_id = $1 AND id = $2;
+
+-- name: GetBillByIdempotencyKey :one
+-- Backs OpenBill's walk-in path (no table, no customer to resolve
+-- against) -- the same retried-POST-is-safe contract
+-- GetSaleByIdempotencyKey already gives sales.
+SELECT * FROM bills WHERE business_id = $1 AND idempotency_key = $2;
+
+-- name: GetOpenBillByTableID :one
+-- Find-or-open: the most recently opened non-terminal bill against a
+-- table, so picking an already-occupied table resumes its tab instead of
+-- opening a second, concurrent one. There is no DB constraint today
+-- preventing two non-terminal bills on the same table (a pre-existing gap,
+-- not introduced here) -- ORDER BY opened_at DESC LIMIT 1 is a pragmatic
+-- "most recent wins" choice if that ever happens, not a correctness
+-- guarantee.
+SELECT * FROM bills
+WHERE business_id = $1 AND table_id = $2 AND status IN ('open', 'closed_unpaid')
+ORDER BY opened_at DESC LIMIT 1;
+
+-- name: GetOpenBillByCustomerID :one
+-- Same find-or-open reasoning as GetOpenBillByTableID, keyed by customer
+-- instead of table (a named credit tab with no table attached).
+SELECT * FROM bills
+WHERE business_id = $1 AND customer_id = $2 AND status IN ('open', 'closed_unpaid')
+ORDER BY opened_at DESC LIMIT 1;
+
+-- name: ListBillsByStatus :many
+-- Backs the Bills screen's status filter (docs/PHASE_UNIFIED_SELL_BILLS.md)
+-- -- unlike ListOpenBills/ListOutstandingBills, this takes any one status
+-- literally, including 'settled'/'void' history a staff member might want
+-- to look back at.
+SELECT * FROM bills WHERE business_id = $1 AND status = $2 ORDER BY opened_at DESC;
+
+-- name: ListAllBills :many
+SELECT * FROM bills WHERE business_id = $1 ORDER BY opened_at DESC;
 
 -- name: CreateSale :one
 INSERT INTO sales (id, business_id, bill_id, seller_id, idempotency_key, occurred_at, received_at, total_kobo, reversal_of_sale_id)
@@ -51,9 +86,15 @@ RETURNING *;
 SELECT * FROM sale_items WHERE business_id = $1 AND sale_id = $2;
 
 -- name: CreatePayment :one
-INSERT INTO payments (id, business_id, bill_id, amount_kobo, method, actor_id, reversal_of_payment_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO payments (id, business_id, bill_id, amount_kobo, method, actor_id, reversal_of_payment_id, idempotency_key)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
+
+-- name: GetPaymentByIdempotencyKey :one
+-- Same retried-POST-is-safe contract as GetSaleByIdempotencyKey, for
+-- RecordPayment -- a queued offline payment replayed after it already
+-- landed returns the payment already posted rather than double-charging.
+SELECT * FROM payments WHERE business_id = $1 AND idempotency_key = $2;
 
 -- name: ListPaymentsByBillID :many
 SELECT * FROM payments WHERE business_id = $1 AND bill_id = $2;

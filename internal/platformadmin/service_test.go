@@ -460,3 +460,81 @@ func TestRecordBusinessActivityViewedAndStats(t *testing.T) {
 		t.Fatalf("expected the just-created business/user to be counted, got %+v", stats)
 	}
 }
+
+// TestDeepDrillCapabilitiesBySupportAndSuperadminRole pins
+// docs/PHASE_PLATFORM_ADMIN_DEEP_DRILL.md's role split: both roles can
+// read deep-drill detail, only superadmin can post a corrective action.
+func TestDeepDrillCapabilitiesBySupportAndSuperadminRole(t *testing.T) {
+	support := platformadmin.ForRole(platformadmin.RoleSupport)
+	if !support.Has(platformadmin.CapabilityBusinessesReadDetail) {
+		t.Fatal("expected support to have businesses:read_detail")
+	}
+	if support.Has(platformadmin.CapabilityBusinessesAdjust) {
+		t.Fatal("expected support NOT to have businesses:adjust -- every platform write is superadmin-only")
+	}
+
+	superadmin := platformadmin.ForRole(platformadmin.RoleSuperadmin)
+	if !superadmin.Has(platformadmin.CapabilityBusinessesReadDetail) || !superadmin.Has(platformadmin.CapabilityBusinessesAdjust) {
+		t.Fatal("expected superadmin to have both deep-drill capabilities")
+	}
+}
+
+// TestRecordDetailViewedAndCorrectiveActionCarryTargetResource exercises
+// the two new audit-write methods deep-drill reads/writes call: both must
+// persist TargetResource (the specific record touched), which the
+// pre-existing audit actions (login, suspend, activity-viewed) never set.
+func TestRecordDetailViewedAndCorrectiveActionCarryTargetResource(t *testing.T) {
+	svc, idsvc, pool := testServices(t)
+	ctx := context.Background()
+
+	staff, err := svc.CreateStaff(ctx, uniqueEmail(), "Deep Drill Staff", "password123", platformadmin.RoleSuperadmin)
+	if err != nil {
+		t.Fatalf("CreateStaff: %v", err)
+	}
+	cleanupStaff(t, pool, staff.ID)
+	owner, err := idsvc.CreateUser(ctx, uniqueEmail(), "", "Owner", "password123")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	biz, _, _, err := idsvc.CreateBusinessWithOwner(ctx, owner.ID, "Deep Drill Test Bar "+uuid.New().String())
+	if err != nil {
+		t.Fatalf("CreateBusinessWithOwner: %v", err)
+	}
+	cleanupBusiness(t, pool, owner.ID, biz.ID)
+
+	fakeSaleID := "sale:" + uuid.New().String()
+	if err := svc.RecordDetailViewed(ctx, staff.ID, biz.ID, fakeSaleID, "req-detail-1"); err != nil {
+		t.Fatalf("RecordDetailViewed: %v", err)
+	}
+	if err := svc.RecordCorrectiveAction(ctx, staff.ID, biz.ID,
+		platformadmin.ActionBusinessSaleReversed, fakeSaleID, "customer disputed the charge", "req-detail-2",
+	); err != nil {
+		t.Fatalf("RecordCorrectiveAction: %v", err)
+	}
+
+	entries, err := svc.ListAuditLog(ctx, 50)
+	if err != nil {
+		t.Fatalf("ListAuditLog: %v", err)
+	}
+	var sawView, sawAction bool
+	for _, e := range entries {
+		if e.StaffID != staff.ID || e.TargetBusinessID != biz.ID || e.TargetResource != fakeSaleID {
+			continue
+		}
+		switch e.Action {
+		case platformadmin.ActionBusinessDetailViewed:
+			sawView = true
+		case platformadmin.ActionBusinessSaleReversed:
+			sawAction = true
+			if e.Reason != "customer disputed the charge" {
+				t.Fatalf("expected the reason to round-trip, got %q", e.Reason)
+			}
+		}
+	}
+	if !sawView {
+		t.Fatal("expected a business.detail_viewed entry carrying the target resource")
+	}
+	if !sawAction {
+		t.Fatal("expected a business.sale_reversed entry carrying the target resource and reason")
+	}
+}

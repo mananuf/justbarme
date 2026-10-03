@@ -193,6 +193,10 @@ type Querier interface {
 	ListActivity(ctx context.Context, arg ListActivityParams) ([]ListActivityRow, error)
 	ListAllBills(ctx context.Context, businessID uuid.UUID) ([]Bill, error)
 	ListAllBusinesses(ctx context.Context) ([]Business, error)
+	// Unlike ListPendingInventoryAdjustmentRequestsDetailed, includes decided
+	// (approved/rejected) requests too -- platform admin's deep-drill view
+	// needs to see what was already decided, not just what's still open.
+	ListAllInventoryAdjustmentRequestsDetailed(ctx context.Context, businessID uuid.UUID) ([]ListAllInventoryAdjustmentRequestsDetailedRow, error)
 	ListAllocationsBySaleItem(ctx context.Context, arg ListAllocationsBySaleItemParams) ([]SaleItemLotAllocation, error)
 	// Backs the Bills screen's status filter (docs/PHASE_UNIFIED_SELL_BILLS.md)
 	// -- unlike ListOpenBills/ListOutstandingBills, this takes any one status
@@ -335,6 +339,11 @@ type Querier interface {
 	UpsertInventoryBalanceDelta(ctx context.Context, arg UpsertInventoryBalanceDeltaParams) (InventoryBalance, error)
 	UpsertSignupVerificationByEmail(ctx context.Context, arg UpsertSignupVerificationByEmailParams) (SignupVerification, error)
 	UpsertSignupVerificationByPhone(ctx context.Context, arg UpsertSignupVerificationByPhoneParams) (SignupVerification, error)
+	// Idempotently ensures the reserved "Platform Support" system user row
+	// exists -- called once at process startup (internal/app.Run), never by a
+	// request handler. See internal/identity.PlatformSupportUserID's doc
+	// comment for why this user exists and why password_hash is NULL.
+	UpsertSystemUser(ctx context.Context, arg UpsertSystemUserParams) (User, error)
 }
 
 var _ Querier = (*Queries)(nil)

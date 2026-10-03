@@ -226,8 +226,13 @@ func (s *Service) RevokeSession(ctx context.Context, staffID, sessionID uuid.UUI
 // Deliberately not audited: it exposes no tenant-owned data (no sales,
 // members, or catalogue), the same non-sensitive fields visible in any
 // business's own onboarding confirmation. Reading a business's actual
-// tenant data requires a still-unbuilt, separately audited impersonation
-// flow.
+// tenant data goes through two separately audited mechanisms, neither of
+// which is impersonation: the aggregate activity summary
+// (RecordBusinessActivityViewed) and, for full line items, the deep-drill
+// endpoints this package's RecordDetailViewed/RecordCorrectiveAction back
+// (docs/PHASE_PLATFORM_ADMIN_DEEP_DRILL.md). There is still no
+// impersonation flow, by design -- see that doc's "What this deliberately
+// does not do" section.
 func (s *Service) ListBusinesses(ctx context.Context) ([]Business, error) {
 	var rows []sqlc.Business
 	err := store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
@@ -341,6 +346,65 @@ func (s *Service) RecordBusinessActivityViewed(ctx context.Context, staffID, bus
 	})
 	if err != nil {
 		return fmt.Errorf("record business activity view: %w", err)
+	}
+	return nil
+}
+
+// RecordDetailViewed logs a deep-drill line-item read (docs/
+// PHASE_PLATFORM_ADMIN_DEEP_DRILL.md), the same non-best-effort discipline
+// RecordBusinessActivityViewed already uses: callers must write this
+// before returning any tenant data, so an unrecordable read is a refused
+// read, never an undetectable one. targetResource names what was viewed
+// (e.g. "sale:<id>" for one record, or a bare resource-type name like
+// "sales" for a list).
+func (s *Service) RecordDetailViewed(ctx context.Context, staffID, businessID uuid.UUID, targetResource, requestID string) error {
+	id, err := newID()
+	if err != nil {
+		return err
+	}
+	err = store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+		_, err := q.CreatePlatformAuditEntry(ctx, sqlc.CreatePlatformAuditEntryParams{
+			ID: id, PlatformStaffID: staffID, Action: ActionBusinessDetailViewed,
+			TargetBusinessID: pgUUID(businessID), TargetResource: pgText(targetResource), RequestID: pgText(requestID),
+		})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("record business detail view: %w", err)
+	}
+	return nil
+}
+
+// RecordCorrectiveAction logs a platform-admin corrective action against a
+// business's tenant data (docs/PHASE_PLATFORM_ADMIN_DEEP_DRILL.md).
+//
+// Unlike SuspendBusiness/setBusinessStatus, this is NOT written in the
+// same transaction as the mutation it records -- the mutation itself runs
+// through a different package's own Service method (internal/sales,
+// internal/expenses, internal/inventory), each opening its own
+// store.WithTenant transaction against tenant-owned tables, while this
+// audit entry is a separate store.WithApp write against the non-tenant
+// platform_audit_log table. There is no single transaction that can span
+// both. Callers perform the mutation first, then call this immediately
+// after; if this call fails, the caller must surface a loud error (not
+// swallow it) since the underlying action already succeeded and the only
+// remaining question is whether it got recorded -- the same self-healing-
+// not-atomic honesty internal/oauth's account-link write already accepts
+// for an analogous two-package-can't-share-a-transaction constraint.
+func (s *Service) RecordCorrectiveAction(ctx context.Context, staffID, businessID uuid.UUID, action, targetResource, reason, requestID string) error {
+	id, err := newID()
+	if err != nil {
+		return err
+	}
+	err = store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+		_, err := q.CreatePlatformAuditEntry(ctx, sqlc.CreatePlatformAuditEntryParams{
+			ID: id, PlatformStaffID: staffID, Action: action, TargetBusinessID: pgUUID(businessID),
+			TargetResource: pgText(targetResource), Reason: pgText(reason), RequestID: pgText(requestID),
+		})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("record corrective action: %w", err)
 	}
 	return nil
 }

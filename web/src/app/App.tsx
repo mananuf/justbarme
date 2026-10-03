@@ -25,6 +25,7 @@ import { Reports } from '../pages/Reports';
 import { Settings } from '../pages/Settings';
 import { PlatformLogin } from '../pages/platform/PlatformLogin';
 import { PlatformDashboard } from '../pages/platform/PlatformDashboard';
+import { PlatformBusinessDetail } from '../pages/platform/PlatformBusinessDetail';
 
 function NotFound() {
   return (
@@ -172,6 +173,14 @@ export function App() {
             element={
               <RequirePlatformAuth>
                 <PlatformDashboard />
+              </RequirePlatformAuth>
+            }
+          />
+          <Route
+            path="/platform/businesses/:businessId"
+            element={
+              <RequirePlatformAuth>
+                <PlatformBusinessDetail />
               </RequirePlatformAuth>
             }
           />

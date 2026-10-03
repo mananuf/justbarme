@@ -157,3 +157,36 @@ func (q *Queries) SetUserPhone(ctx context.Context, arg SetUserPhoneParams) (Use
 	)
 	return i, err
 }
+
+const upsertSystemUser = `-- name: UpsertSystemUser :one
+INSERT INTO users (id, email, display_name, password_hash)
+VALUES ($1, $2, $3, NULL)
+ON CONFLICT (id) DO UPDATE SET display_name = EXCLUDED.display_name
+RETURNING id, email, phone, display_name, password_hash, status, created_at, updated_at
+`
+
+type UpsertSystemUserParams struct {
+	ID          uuid.UUID   `json:"id"`
+	Email       pgtype.Text `json:"email"`
+	DisplayName string      `json:"display_name"`
+}
+
+// Idempotently ensures the reserved "Platform Support" system user row
+// exists -- called once at process startup (internal/app.Run), never by a
+// request handler. See internal/identity.PlatformSupportUserID's doc
+// comment for why this user exists and why password_hash is NULL.
+func (q *Queries) UpsertSystemUser(ctx context.Context, arg UpsertSystemUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, upsertSystemUser, arg.ID, arg.Email, arg.DisplayName)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Phone,
+		&i.DisplayName,
+		&i.PasswordHash,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

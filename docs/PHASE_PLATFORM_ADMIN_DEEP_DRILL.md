@@ -1,14 +1,16 @@
 # Platform admin: deep drill-down and corrective actions
 
-**Status:** Proposed — design only, not yet built or confirmed in code.
-This doc records the decisions made so far (via a scoping conversation)
-and the concrete technical shape; it is the thing to review/amend before
-any implementation branch starts. **Not** part of `docs/`'s frozen plan —
-like every other platform-admin feature, designed in-session.
+**Status:** Built and verified live end-to-end against a running backend.
+**Not** part of `docs/`'s frozen plan — like every other platform-admin
+feature, designed and confirmed in-session.
 **Depends on:** `internal/platformadmin` (the existing admin dashboard —
 `docs/PHASE_ADMIN_DASHBOARD.md` — this widens it, it does not replace
 it), and reuses `internal/sales`/`internal/expenses`/`internal/inventory`/
-`internal/activity`'s existing Service methods directly.
+`internal/activity`/`internal/identity`'s existing Service methods
+directly — no new Service methods were needed for reads, and only three
+new ones for writes (`inventory.Service.AdminForceReverseStockReceipt`,
+`AdminCorrectBalance`, `ListAllAdjustmentRequests`; see "As built" below
+for exactly what changed from the original design).
 
 ## Why this exists
 
@@ -284,19 +286,157 @@ on before this ships to production, not assumed:
 This is a flag for a real NDPA pass before shipping, not a blocker on
 writing the code — the two are independent and can proceed in parallel.
 
-## Open questions to resolve during implementation (not yet decided)
+## As built — what changed from the original design
 
-- Pagination/filtering shape for the new line-item list endpoints (date
-  range at minimum, matching the existing reports endpoints' convention)
-  — not fully specified above, left to implementation to match
-  `docs/ARCHITECTURE.md` §14's existing date-range convention.
-- Whether `ListPendingAdjustmentRequests` needs a genuine new
-  `ListAllAdjustmentRequests` method (decided/approved/rejected included)
-  or whether the activity feed's existing approved-adjustments branch
-  already covers "what was decided" well enough for drill-down — check
-  during implementation rather than building a method that turns out to
-  duplicate the activity feed.
-- Frontend: a new `/platform/businesses/{id}` detail page (tabs per
-  resource type, mirroring `Reports.tsx`'s six-tab shape) vs. expanding
-  the existing `BusinessActivityPanel.tsx` — leaning toward a dedicated
-  page given the amount of content, but not decided.
+- **`ListAllAdjustmentRequests` was built** (migration `000032` widens
+  `inventory_adjustment_requests.reason_category`'s CHECK to add
+  `'platform_correction'`, plus a new `ListAllInventoryAdjustmentRequestsDetailed`
+  sqlc query) — the activity feed's approved-adjustments branch doesn't
+  carry decision context (who decided it, their note), so a genuine new
+  method was the right call, not a duplication. `AdjustmentRequest`
+  gained `DecidedBy`/`DecidedAt`/`ResolutionNote` fields (zero-valued
+  until decided), threaded through `GetAdjustmentRequest` and the new
+  method; `toAdjustmentRequestResponse` gained a `decidedByName` parameter
+  (every pre-existing call site passes `""`, unaffected).
+- **`AdminCorrectBalance` needed no new Service-level ledger-posting
+  logic duplication risk the plan worried about** — it's a single new
+  method that opens one `WithTenant` transaction, reads the live balance,
+  computes the delta, and inlines the same
+  create-request→approve→event→movement→balance-upsert→negative-review
+  sequence `ApproveAdjustmentRequest` already uses (necessarily inlined,
+  not called as two separate public methods, since each of those opens
+  its own transaction — composing them as two calls would mean a
+  created-but-unapproved request could survive a failure between the
+  two). `ErrBalanceAlreadyCorrect` added for the zero-delta case (the
+  `quantity_delta <> 0` CHECK would otherwise surface as a confusing raw
+  constraint violation).
+- **`AdminForceReverseStockReceipt` turned out to need a real design
+  decision the plan only gestured at**: giving back "whatever's left"
+  means computing `giveBack := min(originalQuantity, lot.RemainingQuantity)`
+  **per line**, in a first pass with no writes, so a receipt with nothing
+  left anywhere (`ErrReceiptFullyConsumed`) can be rejected before any row
+  exists — and a partially-given-back line's reversed cost is computed
+  proportionally (`lineTotalCost * giveBack / originalQuantity`), the one
+  place in this codebase a per-unit cost is deliberately derived rather
+  than stored, accepted here as a bounded exception for this specific
+  admin-override edge case. Three dedicated unit tests
+  (`TestAdminForceReverseStockReceiptGivesBackOnlyWhatsLeftInTheLot`,
+  `...RejectsFullyConsumedReceipt`, `...StillBlocksOnNegativeBalance`)
+  pin this, using a `consumeLot` test helper that decrements both
+  `stock_lots.remaining_quantity` and `inventory_balances` together (a
+  real sale always moves both; an earlier draft of the helper only moved
+  the lot and produced a silently wrong balance expectation, caught by
+  the first test run before it ever reached a commit).
+- **The "same transaction" claim for `RecordCorrectiveAction` was
+  corrected during implementation.** The original draft said each
+  corrective action's audit entry is written "in the same transaction as
+  the action itself," copying `SuspendBusiness`'s phrasing. That's not
+  achievable here: the mutation runs through a different package's
+  `store.WithTenant` transaction (tenant-owned tables), while the audit
+  write is `internal/platformadmin`'s own `store.WithApp` transaction
+  (non-tenant `platform_audit_log`) — two different transactions, no way
+  to span both. The real contract, implemented and documented on
+  `RecordCorrectiveAction` itself: mutate first, audit immediately after,
+  and surface a loud `500` (never swallow) if the audit write fails after
+  the mutation already succeeded — the same self-healing-not-atomic
+  honesty `internal/oauth`'s account-link write already accepts for an
+  analogous constraint.
+- **A real bug was caught by live curl verification, not by unit
+  tests**: `listPlatformAuditLog`'s HTTP response type
+  (`platformAuditEntryResponse`) was never updated to include the new
+  `target_resource` field, even though the domain model, the sqlc query,
+  and the Service-level `AuditEntry.TargetResource` field were all
+  correct and covered by a passing Go test
+  (`TestRecordDetailViewedAndCorrectiveActionCarryTargetResource` asserts
+  against the `platformadmin.Service` layer directly, which was already
+  right). The gap only showed up hitting the real HTTP endpoint with
+  curl — a reminder that a unit test one layer below the HTTP response
+  struct doesn't catch a forgotten field in that struct. Fixed in
+  `internal/httpapi/platform_handlers.go`.
+- **Frontend: built as a dedicated page**, `PlatformBusinessDetail.tsx`
+  (`/platform/businesses/:businessId`, linked from `PlatformDashboard.tsx`'s
+  business row via a new "Deep drill" link), with the seven resource
+  types as tabs (Sales, Expenses, Bills, Stock, Reviews, Members,
+  Activity) rather than expanding `BusinessActivityPanel.tsx` — the
+  amount of content made a dedicated page the clear right call once
+  actually building it. `src/api/platformDetail.ts` is the typed client.
+  Every corrective-action button opens a shared inline `ActionPrompt`
+  (one reason field, matching `PlatformDashboard.tsx`'s existing
+  suspend/reactivate prompt shape) except balance correction, which needed
+  its own two-field `CorrectBalancePrompt` (target quantity + reason) —
+  an early draft tried overloading the single-reason-field `ActionPrompt`
+  with a pipe-delimited "quantity | reason" string, which worked but was
+  bad UX, replaced before this was considered done.
+
+## Verified live end-to-end
+
+Against a running backend (`go run ./cmd/api`, a real local Postgres),
+using curl with the frontend's own exact request/response shapes, after
+seeding a superadmin, a support staff account, and a real business with a
+product/variant/stock receipt/sale:
+
+- Support: `200` reading sales, members, bill detail, stock receipts,
+  the activity feed; `403 PERMISSION_DENIED` attempting to reverse a sale
+  — confirmed again after restarting the server (ruling out a stale
+  compiled binary masking the real result, which is exactly what
+  happened the first time through, see below).
+- Superadmin: reversing a sale without a `reason` correctly `422`s
+  (`VALIDATION_FAILED`); with a reason, returns `201` and the reversal's
+  `seller_id` is the reserved Platform Support UUID.
+- The reversal's audit log entry carries the right `action`,
+  `target_resource` (`"sale:<id>"`), and `reason` — confirmed only after
+  fixing the `listPlatformAuditLog` response gap above (a real `kill
+  <pid>` + restart was needed mid-verification: an earlier `pkill -f "go
+  run ./cmd/api"` missed the actual compiled child process, so a stale
+  pre-fix binary kept serving requests and made the bug look unfixed for
+  one extra round).
+- The reversal shows up in the **business's own** `GET /activity` feed
+  (the ordinary, non-platform endpoint) as "Sale reversed" with
+  `actor_name: "Platform Support"` — zero new code in `internal/activity`
+  or its frontend rendering made this work, exactly as designed.
+- A balance correction (`target_quantity: 50` on a variant sitting at
+  48) returned a pre-approved `platform_correction` adjustment, and
+  `GET .../stock/{variant}/history` showed it as a real `+2` ledger
+  movement attributed to Platform Support, alongside the receipt and
+  sale/reversal movements that came before it.
+- `ListAllAdjustmentRequests` showed the balance-correction request with
+  both `requested_by_name` and `decided_by_name` as "Platform Support"
+  and the auto-generated resolution note.
+- Customer PII: confirmed by inspection that no response anywhere in this
+  feature's endpoints includes a `customers` row's `name`/`phone`/`email`/
+  `notes` — `billResponse`/`billDetailResponse` only ever expose
+  `customer_id` (an opaque UUID, already the existing shape business
+  owners themselves see), and no `ListCustomers`/`GetCustomer`-equivalent
+  endpoint was added to the platform routes.
+- All test data (businesses, users, platform staff, audit log entries)
+  cleaned up afterward via the RLS-aware `SET LOCAL ROLE jbm_app`
+  transaction pattern, in FK-respecting order (events before the
+  adjustment requests/receipts they reference, movements before events)
+  — the first cleanup attempt got this order wrong and was rolled back
+  cleanly before retrying, no partial state left behind.
+
+Backend: full `go test ./cmd/... ./internal/...` passes, including 10 new
+tests (7 in `internal/inventory`, 2 in `internal/platformadmin`, 1 in
+`internal/identity`) alongside every pre-existing test unchanged.
+Frontend: full `npm run check`-equivalent (format, lint, 59 tests
+including 2 new ones for `PlatformBusinessDetail.tsx`, production build)
+passes.
+
+**Not done**: an actual browser/Playwright click-through of the new
+frontend page — Claude in Chrome's extension was not connected in this
+environment, the same named gap several other phases in this codebase
+already carry (OAuth, Unified Sell/Bills' rewritten pages, Phase 7's
+offline-queueing UI). The backend every one of this page's calls hits was
+independently, thoroughly live-verified via curl above; only the
+frontend's own rendering and interaction code was not driven through a
+real browser. Worth a manual pass before trusting this in production.
+
+## Open questions genuinely still open
+
+- Pagination/filtering shape for the line-item list endpoints beyond a
+  simple `limit` — no date-range filter was added to
+  `platformListSales`/`platformListExpenses`, unlike the business-facing
+  reports endpoints. Add if a real support case needs it; not built
+  speculatively.
+- The NDPA lawful-basis question flagged above is still open — this
+  shipped the code with that flag, not a legal sign-off.

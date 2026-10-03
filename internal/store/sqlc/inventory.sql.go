@@ -645,6 +645,7 @@ const getInventoryAdjustmentRequestDetailed = `-- name: GetInventoryAdjustmentRe
 SELECT
     r.id, r.location_id, r.variant_id, r.requested_by, r.quantity_delta,
     r.reason_category, r.reason_note, r.source_count_line_id, r.status, r.created_at,
+    r.decided_by, r.decided_at, r.resolution_note,
     v.name AS variant_name, p.name AS product_name
 FROM inventory_adjustment_requests r
 JOIN product_variants v ON v.business_id = r.business_id AND v.id = r.variant_id
@@ -668,6 +669,9 @@ type GetInventoryAdjustmentRequestDetailedRow struct {
 	SourceCountLineID pgtype.UUID        `json:"source_count_line_id"`
 	Status            string             `json:"status"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	DecidedBy         pgtype.UUID        `json:"decided_by"`
+	DecidedAt         pgtype.Timestamptz `json:"decided_at"`
+	ResolutionNote    pgtype.Text        `json:"resolution_note"`
 	VariantName       string             `json:"variant_name"`
 	ProductName       string             `json:"product_name"`
 }
@@ -686,6 +690,9 @@ func (q *Queries) GetInventoryAdjustmentRequestDetailed(ctx context.Context, arg
 		&i.SourceCountLineID,
 		&i.Status,
 		&i.CreatedAt,
+		&i.DecidedBy,
+		&i.DecidedAt,
+		&i.ResolutionNote,
 		&i.VariantName,
 		&i.ProductName,
 	)
@@ -819,6 +826,76 @@ func (q *Queries) IncrementLotRemainingQuantity(ctx context.Context, arg Increme
 		&i.Source,
 	)
 	return i, err
+}
+
+const listAllInventoryAdjustmentRequestsDetailed = `-- name: ListAllInventoryAdjustmentRequestsDetailed :many
+SELECT
+    r.id, r.location_id, r.variant_id, r.requested_by, r.quantity_delta,
+    r.reason_category, r.reason_note, r.source_count_line_id, r.status, r.created_at,
+    r.decided_by, r.decided_at, r.resolution_note,
+    v.name AS variant_name, p.name AS product_name
+FROM inventory_adjustment_requests r
+JOIN product_variants v ON v.business_id = r.business_id AND v.id = r.variant_id
+JOIN products p ON p.business_id = v.business_id AND p.id = v.product_id
+WHERE r.business_id = $1
+ORDER BY r.created_at DESC
+`
+
+type ListAllInventoryAdjustmentRequestsDetailedRow struct {
+	ID                uuid.UUID          `json:"id"`
+	LocationID        uuid.UUID          `json:"location_id"`
+	VariantID         uuid.UUID          `json:"variant_id"`
+	RequestedBy       uuid.UUID          `json:"requested_by"`
+	QuantityDelta     int32              `json:"quantity_delta"`
+	ReasonCategory    string             `json:"reason_category"`
+	ReasonNote        string             `json:"reason_note"`
+	SourceCountLineID pgtype.UUID        `json:"source_count_line_id"`
+	Status            string             `json:"status"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	DecidedBy         pgtype.UUID        `json:"decided_by"`
+	DecidedAt         pgtype.Timestamptz `json:"decided_at"`
+	ResolutionNote    pgtype.Text        `json:"resolution_note"`
+	VariantName       string             `json:"variant_name"`
+	ProductName       string             `json:"product_name"`
+}
+
+// Unlike ListPendingInventoryAdjustmentRequestsDetailed, includes decided
+// (approved/rejected) requests too -- platform admin's deep-drill view
+// needs to see what was already decided, not just what's still open.
+func (q *Queries) ListAllInventoryAdjustmentRequestsDetailed(ctx context.Context, businessID uuid.UUID) ([]ListAllInventoryAdjustmentRequestsDetailedRow, error) {
+	rows, err := q.db.Query(ctx, listAllInventoryAdjustmentRequestsDetailed, businessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllInventoryAdjustmentRequestsDetailedRow{}
+	for rows.Next() {
+		var i ListAllInventoryAdjustmentRequestsDetailedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LocationID,
+			&i.VariantID,
+			&i.RequestedBy,
+			&i.QuantityDelta,
+			&i.ReasonCategory,
+			&i.ReasonNote,
+			&i.SourceCountLineID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.DecidedBy,
+			&i.DecidedAt,
+			&i.ResolutionNote,
+			&i.VariantName,
+			&i.ProductName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAllocationsBySaleItem = `-- name: ListAllocationsBySaleItem :many

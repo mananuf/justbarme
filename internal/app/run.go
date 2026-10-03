@@ -60,6 +60,9 @@ func Run(ctx context.Context) error {
 	}
 
 	identitySvc := identity.New(pool, cfg.Argon2)
+	if err := identitySvc.EnsureSystemUser(ctx); err != nil {
+		return err
+	}
 	catalogueSvc := catalogue.New(pool)
 	inventorySvc := inventory.New(pool)
 	salesSvc := sales.New(pool, cfg.PublicBaseURL)

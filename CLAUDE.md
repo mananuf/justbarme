@@ -11,7 +11,7 @@ Full design decisions live in `docs/`:
 - `docs/API_CONTRACT.md` — the frozen HTTP/API conventions (envelopes, error codes, config keys, capability names).
 - `docs/IMPLEMENTATION_PLAN.md` — the phase-by-phase build plan and the working agreement between the backend owner (this repo's primary author) and the frontend owner (an AI coding agent working in `web/`).
 
-**Current state:** Phase 1 (server lifecycle + health checks), Phase 2 (businesses, memberships, tenancy, authentication), Phase 3's catalogue (`internal/catalogue`, its `internal/httpapi` endpoints — no standalone Settings management page yet; see the Phase 3 section), Phase 7 stock receiving plus counts, staff adjustment requests/approval, negative-stock and stale-count reviews, and stock history (`internal/inventory`, `/dashboard/stock`, `/dashboard/reviews` — see the Stock receiving and Phase 7 sections), Phase 8 expenses, a capability-aware dashboard, a unified activity feed, and six reports (`internal/expenses`, `internal/activity`, `internal/reports`, `/dashboard/expenses`, `/dashboard/activity`, `/dashboard/reports` — see the Phase 8 section), a single-device slice of Phase 5 walk-in selling (`internal/sales`, `/dashboard/sell`, real offline persistence via IndexedDB — see the Walk-in selling section), a single-device slice of Phase 6 tabs/named credit/payments (also `internal/sales`, `/dashboard/tabs` — online-only, see the Tabs and credit section for why), platform admin oversight (`internal/platformadmin`), public signup (`internal/signup`), Google sign-in (`internal/oauth`), dual-identity invitations/WhatsApp messaging via Zavu (`internal/whatsapp`, `internal/verification`, `internal/invitations`, `/dashboard/team`), and Phase 4 revisited as an offline catalogue cache plus a sale-reviews UI rather than the literal generic sync protocol (`/dashboard/reviews`, `catalogueCache` in `web/src/lib/db.ts` — see the Phase 4, revisited section) are implemented — see the Phase 2, Phase 3, Stock receiving, Walk-in selling, Tabs and credit, Platform admin, Signup, OAuth, Invitations and WhatsApp messaging, Phase 4 revisited, Phase 7, and Phase 8 sections below. Onboarding is just business name → done; product/price setup happens the first time an owner logs a stock receipt, not during signup. The generic Phase 4 multi-device event-sourcing protocol (`docs/IMPLEMENTATION_PLAN.md`'s literal spec), FIFO/COGS costing, multi-location UI, and low-stock threshold alerts do not exist — do not assume otherwise until you check `internal/` and `migrations/`. Platform admin, Signup, OAuth, stock receiving/selling/tabs, invitations/WhatsApp, and Phase 4's revisited scope are **not part of the frozen `docs/` plan** (stock receiving, walk-in selling, and tabs are deliberate, documented reorderings ahead of Phase 4 rather than deviations from a specific rule) — read their sections before extending any of them. Phase 7's and Phase 8's slices, by contrast, *are* the frozen plan's actual Phase 7/8 (each narrowed to a confirmed subset — see `docs/PHASE_INVENTORY_COUNTS_AND_ADJUSTMENTS.md` §1 and `docs/PHASE_EXPENSES_DASHBOARD_ACTIVITY_REPORTS.md` §1 for exactly what was cut and why).
+**Current state:** Phase 1 (server lifecycle + health checks), Phase 2 (businesses, memberships, tenancy, authentication), Phase 3's catalogue (`internal/catalogue`, its `internal/httpapi` endpoints — no standalone Settings management page yet; see the Phase 3 section), Phase 7 stock receiving plus counts, staff adjustment requests/approval, negative-stock and stale-count reviews, and stock history (`internal/inventory`, `/dashboard/stock`, `/dashboard/reviews` — see the Stock receiving and Phase 7 sections), Phase 8 expenses, a capability-aware dashboard, a unified activity feed, and six reports (`internal/expenses`, `internal/activity`, `internal/reports`, `/dashboard/expenses`, `/dashboard/activity`, `/dashboard/reports` — see the Phase 8 section), a single-device slice of Phase 5 walk-in selling (`internal/sales`, `/dashboard/sell`, real offline persistence via IndexedDB — see the Walk-in selling section), a single-device slice of Phase 6 tabs/named credit/payments (also `internal/sales`, `/dashboard/tabs` — online-only, see the Tabs and credit section for why), platform admin oversight (`internal/platformadmin`, widened with a full line-item deep-drill and superadmin-only corrective-action layer — see the Platform admin: deep drill-down and corrective actions section), public signup (`internal/signup`), Google sign-in (`internal/oauth`), dual-identity invitations/WhatsApp messaging via Zavu (`internal/whatsapp`, `internal/verification`, `internal/invitations`, `/dashboard/team`), and Phase 4 revisited as an offline catalogue cache plus a sale-reviews UI rather than the literal generic sync protocol (`/dashboard/reviews`, `catalogueCache` in `web/src/lib/db.ts` — see the Phase 4, revisited section) are implemented — see the Phase 2, Phase 3, Stock receiving, Walk-in selling, Tabs and credit, Platform admin, Signup, OAuth, Invitations and WhatsApp messaging, Phase 4 revisited, Phase 7, and Phase 8 sections below. Onboarding is just business name → done; product/price setup happens the first time an owner logs a stock receipt, not during signup. The generic Phase 4 multi-device event-sourcing protocol (`docs/IMPLEMENTATION_PLAN.md`'s literal spec), FIFO/COGS costing, multi-location UI, and low-stock threshold alerts do not exist — do not assume otherwise until you check `internal/` and `migrations/`. Platform admin, Signup, OAuth, stock receiving/selling/tabs, invitations/WhatsApp, and Phase 4's revisited scope are **not part of the frozen `docs/` plan** (stock receiving, walk-in selling, and tabs are deliberate, documented reorderings ahead of Phase 4 rather than deviations from a specific rule) — read their sections before extending any of them. Phase 7's and Phase 8's slices, by contrast, *are* the frozen plan's actual Phase 7/8 (each narrowed to a confirmed subset — see `docs/PHASE_INVENTORY_COUNTS_AND_ADJUSTMENTS.md` §1 and `docs/PHASE_EXPENSES_DASHBOARD_ACTIVITY_REPORTS.md` §1 for exactly what was cut and why).
 
 ## Commands
 
@@ -600,6 +600,98 @@ login bug — **not** part of `docs/`'s frozen plan. Branch:
   done**: an actual browser/Playwright pass over the new login channel
   toggle or the failed-queue UI sections — same named gap this codebase
   already carries for several other frontend features.
+
+## Platform admin: deep drill-down and corrective actions
+
+Widens platform admin from the aggregate-only dashboard (above) to full
+line-item read access into one business plus a named, reason-required set
+of superadmin-only corrective actions — so a real support case no longer
+needs direct database access or a screenshot from the business. **Not**
+part of `docs/`'s frozen plan, designed and confirmed in-session. Full
+design record, the real deviations from the original design, and the
+live-verification transcript live in
+`docs/PHASE_PLATFORM_ADMIN_DEEP_DRILL.md` — read it before extending any
+of this.
+
+- **Two new capabilities**: `platform:businesses:read_detail` (both
+  roles) and `platform:businesses:adjust` (superadmin only, same
+  every-platform-write-is-superadmin-only rule `platform:staff:manage`
+  already follows). Every new read/write endpoint lives in
+  `internal/httpapi/platform_admin_detail_handlers.go`, under
+  `/platform/businesses/{id}/...` — sales, expenses, bills, stock
+  receipts, inventory adjustments (all statuses, not just pending),
+  stock history, sale/inventory reviews, members (full names, not just
+  counts), and a line-item activity feed distinct from the existing
+  aggregate `/activity` route.
+- **No RLS bypass, still.** Every read/write goes through the exact same
+  `store.WithApp`/`WithTenant` mechanism the aggregate dashboard already
+  uses — this phase calls straight into `internal/sales`/`internal/
+  expenses`/`internal/inventory`'s own existing Service methods with
+  `uuid.Nil` as the acting user for reads. Only two genuinely new
+  Service methods exist for writes a business owner can't already do:
+  `inventory.Service.AdminForceReverseStockReceipt` (gives back only
+  whatever's still unsold in each line's lot, computed in a no-writes
+  first pass so a fully-consumed receipt is rejected before anything is
+  written) and `AdminCorrectBalance` (still posts through the ordinary
+  adjustment-request ledger as a computed delta, never a raw balance
+  overwrite). `ListAllAdjustmentRequests` is a third new method (decided
+  requests included, not just pending).
+- **Customer PII is protected by omission, not redaction** — no endpoint
+  in this phase ever calls `internal/sales`' customer-reading methods, so
+  a bill response's `customer_id` is always just the same opaque UUID
+  reference business owners themselves already see. There is no PII
+  field anywhere in this phase's responses to forget to redact.
+- **A reserved "Platform Support" system user** (`identity.PlatformSupportUserID`,
+  a fixed well-known UUID, `internal/identity.Service.EnsureSystemUser`
+  called idempotently at every process start) is the actor for every
+  corrective action. Because every existing name-resolution path
+  (`resolveSellerNames`, the activity feed) already does a plain
+  `identity.Service.GetUserByID` lookup with no special-casing, a
+  corrective action shows up automatically, correctly, in the
+  **business's own** activity feed and Recent Activity as "Platform
+  Support" — zero new display code needed anywhere outside this phase's
+  own files.
+- **Writes are audited immediately after the mutation, not in the same
+  transaction as it** — a real, documented correction from the original
+  design draft: the mutation runs through a different package's own
+  transaction (tenant-owned tables) than the audit write
+  (`platform_audit_log`, non-tenant), so one transaction can't span both.
+  `platformadmin.Service.RecordCorrectiveAction`'s own doc comment covers
+  why, and why a failed audit write after a successful mutation surfaces
+  as a loud `500` rather than being swallowed. Reads remain audited
+  *before* the read (`RecordDetailViewed`), same non-best-effort
+  discipline `RecordBusinessActivityViewed` already established.
+  `platform_audit_log` gained a `target_resource` column (migration
+  `000032`) naming the specific record a deep-drill read or action
+  touched (e.g. `"sale:<id>"`) — a real gap caught only by live curl
+  verification, not by unit tests: the HTTP response type for
+  `GET /platform/audit-log` had to be updated separately from the
+  Service-layer field, since a passing Go test one layer down doesn't
+  catch a forgotten field in the response struct above it.
+- **Frontend**: `src/pages/platform/PlatformBusinessDetail.tsx`
+  (`/platform/businesses/:businessId`, linked from `PlatformDashboard.tsx`'s
+  business row), seven resource types as tabs. Every corrective-action
+  button opens a shared inline reason-only prompt except balance
+  correction, which gets its own two-field prompt (target quantity +
+  reason). `src/api/platformDetail.ts` is the typed client.
+- **Compliance note, not a blocker**: an NDPA lawful-basis question for
+  processing a business's staff/customer-linked data for a platform
+  support purpose is flagged in the design doc, deliberately not closed
+  by this phase — get a real answer before this touches a real business,
+  independent of the code already being correct.
+- **Verified live end-to-end** against a running backend with curl using
+  the frontend's own exact request/response shapes: the Support/Superadmin
+  capability split on both a read and a write endpoint, a reversal's
+  validation (`422` with no reason) and success path, a balance
+  correction showing up as a real ledger movement in stock history, and
+  the reversal's own "Platform Support" attribution appearing automatically
+  in the business's own activity feed with no new code. Backend: full
+  `go test ./cmd/... ./internal/...` passes, including 10 new tests.
+  Frontend: full `npm run check`-equivalent (format, lint, 59 tests
+  including 2 new ones, production build) passes. **Not done**: an actual
+  browser/Playwright click-through of the new page — Claude in Chrome's
+  extension was not connected in this environment, the same named gap
+  several other phases in this codebase already carry.
 
 ## Frontend architecture
 

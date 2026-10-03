@@ -692,3 +692,283 @@ func TestReverseStockReceiptBlockedOncePartiallySold(t *testing.T) {
 		t.Fatalf("expected ErrReceiptPartiallyConsumed, got %v", err)
 	}
 }
+
+// consumeLot simulates what a real sale's FIFO allocation does when it
+// sells quantity of variantID: decrements the lot's remaining_quantity
+// *and* the live inventory_balances row together, via raw UPDATEs --
+// internal/inventory's own test file deliberately doesn't import
+// internal/sales (each feature package stays self-contained, including in
+// its own tests). A sale always moves both in the same transaction, so a
+// test that only moved one (leaving the other at its post-receipt value)
+// would silently misrepresent the scenario ReverseStockReceipt's own
+// guards exist for. Mirrors cleanupTenant's own raw-connection pattern: a
+// plain UPDATE on an RLS-scoped table needs SET LOCAL ROLE jbm_app +
+// app.business_id set first, under this environment's non-superuser
+// JBM_DATABASE_URL role.
+func consumeLot(t *testing.T, pool *pgxpool.Pool, businessID, locationID, variantID, receiptLineID uuid.UUID, quantity int32) {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire connection: %v", err)
+	}
+	defer conn.Release()
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SET LOCAL ROLE jbm_app"); err != nil {
+		t.Fatalf("set local role: %v", err)
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.business_id', $1, true)", businessID.String()); err != nil {
+		t.Fatalf("set app.business_id: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		"UPDATE stock_lots SET remaining_quantity = remaining_quantity - $2 WHERE business_id = $1 AND receipt_line_id = $3",
+		businessID, quantity, receiptLineID,
+	); err != nil {
+		t.Fatalf("consume lot: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		"UPDATE inventory_balances SET quantity = quantity - $2 WHERE business_id = $1 AND variant_id = $3 AND location_id = $4",
+		businessID, quantity, variantID, locationID,
+	); err != nil {
+		t.Fatalf("consume balance: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+}
+
+func TestAdminForceReverseStockReceiptGivesBackOnlyWhatsLeftInTheLot(t *testing.T) {
+	inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, catalogueSvc, identitySvc, pool)
+
+	receipt, err := inventorySvc.ReceiveStock(ctx, ownerID, businessID, locationID, []inventory.ReceiptLine{
+		{VariantID: variantID, Quantity: 48, TotalCostKobo: 4_800_000},
+	})
+	if err != nil {
+		t.Fatalf("ReceiveStock: %v", err)
+	}
+	// Simulate 20 of the 48 having already been sold -- the ordinary
+	// ReverseStockReceipt would refuse this receipt entirely.
+	consumeLot(t, pool, businessID, locationID, variantID, receipt.Lines[0].ID, 20)
+
+	if _, err := inventorySvc.ReverseStockReceipt(ctx, ownerID, businessID, receipt.ID, ownerID); err != inventory.ErrReceiptPartiallyConsumed {
+		t.Fatalf("expected the ordinary path to still refuse this receipt, got %v", err)
+	}
+
+	reversal, err := inventorySvc.AdminForceReverseStockReceipt(ctx, ownerID, businessID, receipt.ID, ownerID)
+	if err != nil {
+		t.Fatalf("AdminForceReverseStockReceipt: %v", err)
+	}
+	if len(reversal.Lines) != 1 || reversal.Lines[0].Quantity != -28 {
+		t.Fatalf("expected a single -28 line (only the 28 still in the lot), got %+v", reversal.Lines)
+	}
+	wantCost := int64(-4_800_000) * 28 / 48
+	if reversal.Lines[0].TotalCostKobo != wantCost {
+		t.Fatalf("expected proportional cost %d, got %d", wantCost, reversal.Lines[0].TotalCostKobo)
+	}
+
+	balances, err := inventorySvc.GetBalances(ctx, ownerID, businessID)
+	if err != nil {
+		t.Fatalf("GetBalances: %v", err)
+	}
+	// 48 received, 20 sold, 28 given back -- net live balance is 0.
+	if got := balances[variantID]; got != 0 {
+		t.Fatalf("expected balance 0 after giving back the remaining 28, got %d", got)
+	}
+}
+
+func TestAdminForceReverseStockReceiptRejectsFullyConsumedReceipt(t *testing.T) {
+	inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, catalogueSvc, identitySvc, pool)
+
+	receipt, err := inventorySvc.ReceiveStock(ctx, ownerID, businessID, locationID, []inventory.ReceiptLine{
+		{VariantID: variantID, Quantity: 10, TotalCostKobo: 500_000},
+	})
+	if err != nil {
+		t.Fatalf("ReceiveStock: %v", err)
+	}
+	consumeLot(t, pool, businessID, locationID, variantID, receipt.Lines[0].ID, 10)
+
+	if _, err := inventorySvc.AdminForceReverseStockReceipt(ctx, ownerID, businessID, receipt.ID, ownerID); err != inventory.ErrReceiptFullyConsumed {
+		t.Fatalf("expected ErrReceiptFullyConsumed, got %v", err)
+	}
+}
+
+func TestAdminForceReverseStockReceiptStillBlocksOnNegativeBalance(t *testing.T) {
+	inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, catalogueSvc, identitySvc, pool)
+
+	receipt, err := inventorySvc.ReceiveStock(ctx, ownerID, businessID, locationID, []inventory.ReceiptLine{
+		{VariantID: variantID, Quantity: 10, TotalCostKobo: 500_000},
+	})
+	if err != nil {
+		t.Fatalf("ReceiveStock: %v", err)
+	}
+	// The lot itself is untouched (still 10/10), but a manual adjustment
+	// has independently taken the live balance down to 2 -- giving back
+	// the full 10 would drive the balance to -8. The negative-balance
+	// guard is not an override-able business-logic preference, so this
+	// must still block even through the force path.
+	req, err := inventorySvc.RequestAdjustment(ctx, ownerID, businessID, locationID, variantID, ownerID,
+		uuid.New(), -8, inventory.AdjustmentReasonManual, "test consumption")
+	if err != nil {
+		t.Fatalf("RequestAdjustment: %v", err)
+	}
+	if _, err := inventorySvc.ApproveAdjustmentRequest(ctx, ownerID, businessID, req.ID, ownerID, ""); err != nil {
+		t.Fatalf("ApproveAdjustmentRequest: %v", err)
+	}
+
+	if _, err := inventorySvc.AdminForceReverseStockReceipt(ctx, ownerID, businessID, receipt.ID, ownerID); err != inventory.ErrReceiptPartiallyConsumed {
+		t.Fatalf("expected ErrReceiptPartiallyConsumed, got %v", err)
+	}
+}
+
+func TestAdminCorrectBalancePostsThroughTheAdjustmentLedger(t *testing.T) {
+	inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, catalogueSvc, identitySvc, pool)
+
+	if _, err := inventorySvc.ReceiveStock(ctx, ownerID, businessID, locationID, []inventory.ReceiptLine{
+		{VariantID: variantID, Quantity: 10, TotalCostKobo: 500_000},
+	}); err != nil {
+		t.Fatalf("ReceiveStock: %v", err)
+	}
+
+	corrected, err := inventorySvc.AdminCorrectBalance(ctx, ownerID, businessID, locationID, variantID, ownerID, 15, "data looked wrong after a bug")
+	if err != nil {
+		t.Fatalf("AdminCorrectBalance: %v", err)
+	}
+	if corrected.QuantityDelta != 5 {
+		t.Fatalf("expected a +5 delta (10 -> 15), got %d", corrected.QuantityDelta)
+	}
+	if corrected.ReasonCategory != inventory.AdjustmentReasonPlatformCorrection {
+		t.Fatalf("expected reason_category %q, got %q", inventory.AdjustmentReasonPlatformCorrection, corrected.ReasonCategory)
+	}
+	if corrected.Status != inventory.AdjustmentStatusApproved {
+		t.Fatalf("expected the correction to post pre-approved, got status %q", corrected.Status)
+	}
+
+	balances, err := inventorySvc.GetBalances(ctx, ownerID, businessID)
+	if err != nil {
+		t.Fatalf("GetBalances: %v", err)
+	}
+	if balances[variantID] != 15 {
+		t.Fatalf("expected balance 15, got %d", balances[variantID])
+	}
+
+	// A real movement was posted through the normal ledger -- never a raw
+	// balance overwrite.
+	history, err := inventorySvc.GetHistory(ctx, ownerID, businessID, variantID, 10)
+	if err != nil {
+		t.Fatalf("GetHistory: %v", err)
+	}
+	var found bool
+	for _, h := range history {
+		if h.EventType == "adjustment" && h.AdjustmentReasonCategory == inventory.AdjustmentReasonPlatformCorrection && h.QuantityDelta == 5 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected history to include the +5 platform_correction movement, got %+v", history)
+	}
+}
+
+func TestAdminCorrectBalanceNoOpWhenAlreadyCorrect(t *testing.T) {
+	inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, catalogueSvc, identitySvc, pool)
+
+	if _, err := inventorySvc.ReceiveStock(ctx, ownerID, businessID, locationID, []inventory.ReceiptLine{
+		{VariantID: variantID, Quantity: 10, TotalCostKobo: 500_000},
+	}); err != nil {
+		t.Fatalf("ReceiveStock: %v", err)
+	}
+
+	if _, err := inventorySvc.AdminCorrectBalance(ctx, ownerID, businessID, locationID, variantID, ownerID, 10, "already correct"); err != inventory.ErrBalanceAlreadyCorrect {
+		t.Fatalf("expected ErrBalanceAlreadyCorrect, got %v", err)
+	}
+}
+
+func TestAdminCorrectBalanceDrivingNegativeOpensReview(t *testing.T) {
+	inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, catalogueSvc, identitySvc, pool)
+
+	if _, err := inventorySvc.AdminCorrectBalance(ctx, ownerID, businessID, locationID, variantID, ownerID, -2, "test"); err != nil {
+		t.Fatalf("AdminCorrectBalance: %v", err)
+	}
+	reviews, err := inventorySvc.ListOpenReviews(ctx, ownerID, businessID)
+	if err != nil {
+		t.Fatalf("ListOpenReviews: %v", err)
+	}
+	if len(reviews) != 1 || reviews[0].Type != inventory.ReviewTypeNegativeInventory {
+		t.Fatalf("expected 1 negative_inventory review, got %+v", reviews)
+	}
+}
+
+func TestListAllAdjustmentRequestsIncludesDecidedOnes(t *testing.T) {
+	inventorySvc, catalogueSvc, identitySvc, pool := testServices(t)
+	ctx := context.Background()
+	ownerID, businessID, locationID, variantID := newTenant(t, ctx, catalogueSvc, identitySvc, pool)
+
+	pendingReq, err := inventorySvc.RequestAdjustment(ctx, ownerID, businessID, locationID, variantID, ownerID,
+		uuid.New(), -1, inventory.AdjustmentReasonManual, "still pending")
+	if err != nil {
+		t.Fatalf("RequestAdjustment (pending): %v", err)
+	}
+	decidedReq, err := inventorySvc.RequestAdjustment(ctx, ownerID, businessID, locationID, variantID, ownerID,
+		uuid.New(), -1, inventory.AdjustmentReasonBroken, "will be approved")
+	if err != nil {
+		t.Fatalf("RequestAdjustment (to decide): %v", err)
+	}
+	if _, err := inventorySvc.ApproveAdjustmentRequest(ctx, ownerID, businessID, decidedReq.ID, ownerID, "approved for test"); err != nil {
+		t.Fatalf("ApproveAdjustmentRequest: %v", err)
+	}
+
+	// ListPendingAdjustmentRequests only ever shows the still-open one...
+	pending, err := inventorySvc.ListPendingAdjustmentRequests(ctx, ownerID, businessID)
+	if err != nil {
+		t.Fatalf("ListPendingAdjustmentRequests: %v", err)
+	}
+	if len(pending) != 1 || pending[0].ID != pendingReq.ID {
+		t.Fatalf("expected exactly the pending request, got %+v", pending)
+	}
+
+	// ...but ListAllAdjustmentRequests shows both, with the decided one's
+	// decision context populated.
+	all, err := inventorySvc.ListAllAdjustmentRequests(ctx, ownerID, businessID)
+	if err != nil {
+		t.Fatalf("ListAllAdjustmentRequests: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected both requests, got %+v", all)
+	}
+	var sawDecided bool
+	for _, a := range all {
+		if a.ID == decidedReq.ID {
+			sawDecided = true
+			if a.Status != inventory.AdjustmentStatusApproved {
+				t.Fatalf("expected the decided request's status to be approved, got %q", a.Status)
+			}
+			if a.DecidedBy != ownerID {
+				t.Fatalf("expected DecidedBy %s, got %s", ownerID, a.DecidedBy)
+			}
+			if a.ResolutionNote != "approved for test" {
+				t.Fatalf("expected the resolution note to round-trip, got %q", a.ResolutionNote)
+			}
+			if a.DecidedAt.IsZero() {
+				t.Fatalf("expected a non-zero DecidedAt")
+			}
+		}
+	}
+	if !sawDecided {
+		t.Fatalf("expected to find the decided request in the full list")
+	}
+}

@@ -396,6 +396,47 @@ func NewHandler(deps Dependencies) http.Handler {
 				router.Post("/staff/{staff_id}/revoke", api.revokePlatformStaff)
 
 				router.Get("/audit-log", api.listPlatformAuditLog)
+
+				// Deep drill-down and corrective actions
+				// (docs/PHASE_PLATFORM_ADMIN_DEEP_DRILL.md): full line-item
+				// read access (CapabilityBusinessesReadDetail, both roles)
+				// plus named, reason-required corrective actions
+				// (CapabilityBusinessesAdjust, superadmin only). Every
+				// handler re-validates business_id itself
+				// (platformDetailBusiness), so no extra route-level
+				// middleware is needed beyond the group's existing auth/CSRF.
+				router.Get("/businesses/{business_id}/members", api.platformListMembers)
+				router.Get("/businesses/{business_id}/activity/feed", api.platformListActivityFeed)
+
+				router.Get("/businesses/{business_id}/sales", api.platformListSales)
+				router.Get("/businesses/{business_id}/sales/{sale_id}", api.platformGetSale)
+				router.Post("/businesses/{business_id}/sales/{sale_id}/reverse", api.platformReverseSale)
+
+				router.Get("/businesses/{business_id}/expenses", api.platformListExpenses)
+				router.Get("/businesses/{business_id}/expenses/{expense_id}", api.platformGetExpense)
+				router.Post("/businesses/{business_id}/expenses/{expense_id}/reverse", api.platformReverseExpense)
+
+				router.Get("/businesses/{business_id}/bills", api.platformListBills)
+				router.Get("/businesses/{business_id}/bills/{bill_id}", api.platformGetBillDetail)
+				router.Post("/businesses/{business_id}/bills/{bill_id}/close", api.platformCloseBill)
+				router.Post("/businesses/{business_id}/bills/{bill_id}/void", api.platformVoidBill)
+
+				router.Get("/businesses/{business_id}/stock-receipts/{receipt_id}", api.platformGetStockReceipt)
+				router.Post("/businesses/{business_id}/stock-receipts/{receipt_id}/reverse", api.platformReverseStockReceipt)
+				router.Post("/businesses/{business_id}/stock-receipts/{receipt_id}/force-reverse", api.platformForceReverseStockReceipt)
+
+				router.Get("/businesses/{business_id}/inventory-adjustments", api.platformListAdjustmentRequests)
+				router.Get("/businesses/{business_id}/inventory-adjustments/{adjustment_id}", api.platformGetAdjustmentRequest)
+				router.Post("/businesses/{business_id}/inventory-adjustments/{adjustment_id}/approve", api.platformApproveAdjustmentRequest)
+				router.Post("/businesses/{business_id}/inventory-adjustments/{adjustment_id}/reject", api.platformRejectAdjustmentRequest)
+
+				router.Get("/businesses/{business_id}/stock/{variant_id}/history", api.platformGetStockHistory)
+				router.Post("/businesses/{business_id}/stock/{variant_id}/correct-balance", api.platformCorrectBalance)
+
+				router.Get("/businesses/{business_id}/sale-reviews", api.platformListSaleReviews)
+				router.Post("/businesses/{business_id}/sale-reviews/{review_id}/resolve", api.platformResolveSaleReview)
+				router.Get("/businesses/{business_id}/inventory-reviews", api.platformListInventoryReviews)
+				router.Post("/businesses/{business_id}/inventory-reviews/{review_id}/resolve", api.platformResolveInventoryReview)
 			})
 		})
 	})

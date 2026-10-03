@@ -122,7 +122,7 @@ func (api *API) getAdjustmentRequest(w http.ResponseWriter, r *http.Request) {
 		api.internalErrorResponse(w, r, fmt.Errorf("resolve actor names: %w", err))
 		return
 	}
-	if err := writeJSON(w, http.StatusOK, envelope{"data": toAdjustmentRequestResponse(req, names[req.RequestedBy])}, nil); err != nil {
+	if err := writeJSON(w, http.StatusOK, envelope{"data": toAdjustmentRequestResponse(req, names[req.RequestedBy], "")}, nil); err != nil {
 		api.logger.Error("write get adjustment request response", "request_id", RequestID(r.Context()), "error", err)
 	}
 }

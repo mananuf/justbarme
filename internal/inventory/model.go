@@ -83,6 +83,13 @@ const (
 	AdjustmentReasonStaffUse        = "staff_use"
 	AdjustmentReasonManual          = "manual"
 	AdjustmentReasonCountCorrection = "count_correction"
+	// AdjustmentReasonPlatformCorrection is excluded from
+	// permittedAdjustmentReasons the same way AdjustmentReasonCountCorrection
+	// already is -- it only ever comes from
+	// Service.AdminCorrectBalance (internal/platformadmin's deep-drill
+	// corrective actions), never a direct business request. See
+	// docs/PHASE_PLATFORM_ADMIN_DEEP_DRILL.md.
+	AdjustmentReasonPlatformCorrection = "platform_correction"
 )
 
 const (
@@ -134,7 +141,11 @@ type StockCount struct {
 // AdjustmentRequest is any signed inventory change that isn't a receipt or
 // a sale. Staff may create one (pending); only an Owner may approve
 // (posting the real movement) or reject (posting nothing) it.
-// VariantName/ProductName are only populated by ListPendingAdjustmentRequests.
+// VariantName/ProductName are only populated by ListPendingAdjustmentRequests/
+// ListAllAdjustmentRequests. DecidedBy/DecidedAt/ResolutionNote are
+// zero-valued until a decision is made, populated by ListAllAdjustmentRequests
+// (the deep-drill view needs to show what was decided, not just what's
+// still pending).
 type AdjustmentRequest struct {
 	ID                uuid.UUID
 	LocationID        uuid.UUID
@@ -148,6 +159,9 @@ type AdjustmentRequest struct {
 	CreatedAt         time.Time
 	VariantName       string
 	ProductName       string
+	DecidedBy         uuid.UUID
+	DecidedAt         time.Time
+	ResolutionNote    string
 }
 
 // InventoryReview flags a negative balance or a stale count for an owner

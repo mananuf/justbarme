@@ -13,9 +13,9 @@ import (
 )
 
 const createPlatformAuditEntry = `-- name: CreatePlatformAuditEntry :one
-INSERT INTO platform_audit_log (id, platform_staff_id, action, target_business_id, target_staff_id, reason, request_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, platform_staff_id, action, target_business_id, reason, request_id, created_at, target_staff_id
+INSERT INTO platform_audit_log (id, platform_staff_id, action, target_business_id, target_staff_id, reason, request_id, target_resource)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, platform_staff_id, action, target_business_id, reason, request_id, created_at, target_staff_id, target_resource
 `
 
 type CreatePlatformAuditEntryParams struct {
@@ -26,6 +26,7 @@ type CreatePlatformAuditEntryParams struct {
 	TargetStaffID    pgtype.UUID `json:"target_staff_id"`
 	Reason           pgtype.Text `json:"reason"`
 	RequestID        pgtype.Text `json:"request_id"`
+	TargetResource   pgtype.Text `json:"target_resource"`
 }
 
 func (q *Queries) CreatePlatformAuditEntry(ctx context.Context, arg CreatePlatformAuditEntryParams) (PlatformAuditLog, error) {
@@ -37,6 +38,7 @@ func (q *Queries) CreatePlatformAuditEntry(ctx context.Context, arg CreatePlatfo
 		arg.TargetStaffID,
 		arg.Reason,
 		arg.RequestID,
+		arg.TargetResource,
 	)
 	var i PlatformAuditLog
 	err := row.Scan(
@@ -48,12 +50,13 @@ func (q *Queries) CreatePlatformAuditEntry(ctx context.Context, arg CreatePlatfo
 		&i.RequestID,
 		&i.CreatedAt,
 		&i.TargetStaffID,
+		&i.TargetResource,
 	)
 	return i, err
 }
 
 const listPlatformAuditLog = `-- name: ListPlatformAuditLog :many
-SELECT id, platform_staff_id, action, target_business_id, reason, request_id, created_at, target_staff_id FROM platform_audit_log ORDER BY created_at DESC LIMIT $1
+SELECT id, platform_staff_id, action, target_business_id, reason, request_id, created_at, target_staff_id, target_resource FROM platform_audit_log ORDER BY created_at DESC LIMIT $1
 `
 
 func (q *Queries) ListPlatformAuditLog(ctx context.Context, limit int32) ([]PlatformAuditLog, error) {
@@ -74,6 +77,7 @@ func (q *Queries) ListPlatformAuditLog(ctx context.Context, limit int32) ([]Plat
 			&i.RequestID,
 			&i.CreatedAt,
 			&i.TargetStaffID,
+			&i.TargetResource,
 		); err != nil {
 			return nil, err
 		}

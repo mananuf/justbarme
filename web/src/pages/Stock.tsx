@@ -95,10 +95,24 @@ function VariantPicker({
   variants,
   onPick,
   onHistory,
+  emptyHint,
+  onAddNew,
 }: {
   variants: SimpleVariant[];
   onPick: (v: SimpleVariant) => void;
   onHistory?: (v: SimpleVariant) => void;
+  // emptyHint overrides the plain "No products found." message -- Pricing
+  // uses this to point an owner typing a not-yet-created product (e.g.
+  // "pork") at Add stock, since this picker only ever lists products that
+  // already exist and has no create-a-new-product path of its own (unlike
+  // the Add stock flow's own search step).
+  emptyHint?: string;
+  // onAddNew, when provided, renders a one-tap button in the empty state
+  // that carries the typed search text over to it -- Pricing's own
+  // "difficult to add pork from pricing" feedback was specifically that
+  // typing a new product name here looked like a dead end with no way
+  // forward, not just an unclear message.
+  onAddNew?: (query: string) => void;
 }) {
   const [search, setSearch] = useState('');
   const query = search.trim().toLowerCase();
@@ -116,7 +130,17 @@ function VariantPicker({
       />
       <div className="space-y-2">
         {matches.length === 0 && (
-          <p className="text-[13px] text-jb-ink/40 px-1">No products found.</p>
+          <div className="px-1">
+            <p className="text-[13px] text-jb-ink/40">{emptyHint ?? 'No products found.'}</p>
+            {onAddNew && query && (
+              <button
+                onClick={() => onAddNew(search.trim())}
+                className="text-[13px] text-jb-ink underline underline-offset-2 mt-1"
+              >
+                Add &ldquo;{search.trim()}&rdquo; from Add stock →
+              </button>
+            )}
+          </div>
         )}
         {matches.map((v) => (
           <div
@@ -910,7 +934,7 @@ export function Stock() {
               mode === 'restock' ? 'bg-white text-jb-ink shadow-sm' : 'text-jb-ink/45'
             }`}
           >
-            Restock
+            Add stock
           </button>
           <button
             onClick={() => setMode('count')}
@@ -1077,7 +1101,16 @@ export function Stock() {
                 <p className="text-[13px] text-jb-ink/45 mb-4">
                   Pick a product or service to set multi-buy pricing for.
                 </p>
-                <VariantPicker variants={allPricableVariants} onPick={pickPricingVariant} />
+                <VariantPicker
+                  variants={allPricableVariants}
+                  onPick={pickPricingVariant}
+                  emptyHint="Not added yet. Add it from Add stock first, then come back here to set its price."
+                  onAddNew={(query) => {
+                    setSearch(query);
+                    setMode('restock');
+                    setPhase('search');
+                  }}
+                />
               </div>
             )}
           </div>

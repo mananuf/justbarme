@@ -255,8 +255,14 @@ type platformAuditEntryResponse struct {
 	Action           string `json:"action"`
 	TargetBusinessID string `json:"target_business_id,omitempty"`
 	TargetStaffID    string `json:"target_staff_id,omitempty"`
-	Reason           string `json:"reason,omitempty"`
-	CreatedAt        string `json:"created_at"`
+	// TargetResource names the specific record a deep-drill read or
+	// corrective action touched (e.g. "sale:<id>") -- empty for every
+	// pre-existing action type (login, suspend, activity-viewed), which
+	// only ever target a whole business or staff account, never one
+	// record within it. See docs/PHASE_PLATFORM_ADMIN_DEEP_DRILL.md.
+	TargetResource string `json:"target_resource,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+	CreatedAt      string `json:"created_at"`
 }
 
 // listPlatformAuditLog implements GET /api/v1/platform/audit-log. Requires
@@ -276,7 +282,8 @@ func (api *API) listPlatformAuditLog(w http.ResponseWriter, r *http.Request) {
 	for _, e := range entries {
 		row := platformAuditEntryResponse{
 			ID: e.ID.String(), StaffID: e.StaffID.String(), Action: e.Action,
-			Reason: e.Reason, CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339),
+			TargetResource: e.TargetResource,
+			Reason:         e.Reason, CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339),
 		}
 		if e.TargetBusinessID != uuid.Nil {
 			row.TargetBusinessID = e.TargetBusinessID.String()

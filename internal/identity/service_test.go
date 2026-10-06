@@ -376,3 +376,35 @@ func TestCSRFTokenDiffersAcrossSessions(t *testing.T) {
 		t.Fatalf("expected re-deriving session A's token to match what login issued, got %q vs %q", rederivedA, csrfA)
 	}
 }
+
+// TestEnsureSystemUserIsIdempotent exercises
+// docs/PHASE_PLATFORM_ADMIN_DEEP_DRILL.md's reserved "Platform Support"
+// actor: calling EnsureSystemUser twice (as every process start does, via
+// internal/app.Run) must not fail or create a second row -- it's an
+// upsert keyed on the fixed PlatformSupportUserID, not an insert.
+func TestEnsureSystemUserIsIdempotent(t *testing.T) {
+	svc, _ := testService(t)
+	ctx := context.Background()
+
+	if err := svc.EnsureSystemUser(ctx); err != nil {
+		t.Fatalf("EnsureSystemUser (first call): %v", err)
+	}
+	if err := svc.EnsureSystemUser(ctx); err != nil {
+		t.Fatalf("EnsureSystemUser (second call): %v", err)
+	}
+
+	user, err := svc.GetUserByID(ctx, identity.PlatformSupportUserID)
+	if err != nil {
+		t.Fatalf("GetUserByID(PlatformSupportUserID): %v", err)
+	}
+	if user.DisplayName != "Platform Support" {
+		t.Fatalf("expected display name %q, got %q", "Platform Support", user.DisplayName)
+	}
+
+	// A login attempt against this account must fail safely, the same way
+	// an OAuth-only passwordless account's does -- never a crash, never a
+	// successful login, since no raw password was ever set for it.
+	if _, err := svc.Authenticate(ctx, user.Email, "any-password-at-all"); err != identity.ErrInvalidCredentials {
+		t.Fatalf("expected ErrInvalidCredentials against the passwordless system user, got %v", err)
+	}
+}

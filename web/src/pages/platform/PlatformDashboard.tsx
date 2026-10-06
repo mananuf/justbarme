@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import { apiRequest } from '../../api/client';
 import { getPlatformStats, type PlatformBusiness, type PlatformStats } from '../../api/platform';
@@ -309,6 +309,12 @@ export function PlatformDashboard() {
                             >
                               {activityFor === b.id ? 'Hide activity' : 'Activity'}
                             </button>
+                            <Link
+                              to={`/platform/businesses/${b.id}`}
+                              className="text-[12px] px-3 py-1.5 rounded-lg border border-jb-ink/15 text-jb-ink/70 hover:bg-jb-ink/[0.04] transition-colors mr-2 inline-block"
+                            >
+                              Deep drill
+                            </Link>
                             {canSuspend && (
                               <button
                                 onClick={() => startAction(b.id, b.status === 'active')}

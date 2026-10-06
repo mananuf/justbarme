@@ -87,6 +87,20 @@ func toAdjustmentRequestDetailed(r sqlc.ListPendingInventoryAdjustmentRequestsDe
 	}
 }
 
+// toAllAdjustmentRequestDetailed is toAdjustmentRequestDetailed's sibling
+// for ListAllAdjustmentRequests -- the only difference is this row also
+// carries decided_by/decided_at/resolution_note, since "all" includes
+// already-decided requests a pending-only list never needs to show.
+func toAllAdjustmentRequestDetailed(r sqlc.ListAllInventoryAdjustmentRequestsDetailedRow) AdjustmentRequest {
+	return AdjustmentRequest{
+		ID: r.ID, LocationID: r.LocationID, VariantID: r.VariantID, RequestedBy: r.RequestedBy,
+		QuantityDelta: r.QuantityDelta, ReasonCategory: r.ReasonCategory, ReasonNote: r.ReasonNote,
+		SourceCountLineID: toUUID(r.SourceCountLineID), Status: r.Status, CreatedAt: toTime(r.CreatedAt),
+		VariantName: r.VariantName, ProductName: r.ProductName,
+		DecidedBy: toUUID(r.DecidedBy), DecidedAt: toTime(r.DecidedAt), ResolutionNote: toText(r.ResolutionNote),
+	}
+}
+
 func toInventoryReview(r sqlc.InventoryReview) InventoryReview {
 	return InventoryReview{
 		ID: r.ID, Type: r.Type, VariantID: r.VariantID, LocationID: r.LocationID,

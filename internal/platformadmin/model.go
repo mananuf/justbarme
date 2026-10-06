@@ -47,13 +47,17 @@ type Business struct {
 }
 
 // AuditEntry is one recorded platform-scoped action. TargetBusinessID is
-// uuid.Nil for an action with no single business target.
+// uuid.Nil for an action with no single business target. TargetResource
+// is empty unless the action touched one specific record within the
+// business (e.g. "sale:3f2a...-...") -- see
+// docs/PHASE_PLATFORM_ADMIN_DEEP_DRILL.md.
 type AuditEntry struct {
 	ID               uuid.UUID
 	StaffID          uuid.UUID
 	Action           string
 	TargetBusinessID uuid.UUID
 	TargetStaffID    uuid.UUID
+	TargetResource   string
 	Reason           string
 	RequestID        string
 	CreatedAt        time.Time
@@ -68,6 +72,28 @@ const (
 	ActionBusinessActivityViewed = "business.activity_viewed"
 	ActionStaffCreated           = "staff.created"
 	ActionStaffRevoked           = "staff.revoked"
+
+	// ActionBusinessDetailViewed is logged before every deep-drill
+	// line-item read (docs/PHASE_PLATFORM_ADMIN_DEEP_DRILL.md) --
+	// TargetResource names what was viewed (e.g. "sale:<id>" for a single
+	// record, or a bare resource-type name like "sales" for a list).
+	ActionBusinessDetailViewed = "business.detail_viewed"
+
+	// One action per corrective-action type, not one generic
+	// "business.adjusted" bucket -- this is what keeps the audit log
+	// queryable by what actually happened, matching the rest of this
+	// table's existing per-action-type convention.
+	ActionBusinessSaleReversed            = "business.sale_reversed"
+	ActionBusinessExpenseReversed         = "business.expense_reversed"
+	ActionBusinessReceiptReversed         = "business.receipt_reversed"
+	ActionBusinessReceiptForceReversed    = "business.receipt_force_reversed"
+	ActionBusinessBillClosed              = "business.bill_closed"
+	ActionBusinessBillVoided              = "business.bill_voided"
+	ActionBusinessSaleReviewResolved      = "business.sale_review_resolved"
+	ActionBusinessInventoryReviewResolved = "business.inventory_review_resolved"
+	ActionBusinessAdjustmentApproved      = "business.adjustment_approved"
+	ActionBusinessAdjustmentRejected      = "business.adjustment_rejected"
+	ActionBusinessBalanceCorrected        = "business.balance_corrected"
 )
 
 // Stats is the platform-wide overview, derived only from non-tenant tables.

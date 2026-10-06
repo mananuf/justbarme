@@ -27,7 +27,8 @@ func inventoryErrorResponse(api *API, w http.ResponseWriter, r *http.Request, er
 		api.conflictResponse(w, r, err.Error())
 	case errors.Is(err, inventory.ErrReceiptNotFound):
 		api.notFoundResponse(w, r)
-	case errors.Is(err, inventory.ErrReceiptAlreadyReversed), errors.Is(err, inventory.ErrReceiptPartiallyConsumed):
+	case errors.Is(err, inventory.ErrReceiptAlreadyReversed), errors.Is(err, inventory.ErrReceiptPartiallyConsumed),
+		errors.Is(err, inventory.ErrReceiptFullyConsumed), errors.Is(err, inventory.ErrBalanceAlreadyCorrect):
 		api.conflictResponse(w, r, err.Error())
 	default:
 		api.internalErrorResponse(w, r, fmt.Errorf("%s: %w", action, err))
@@ -171,14 +172,26 @@ type adjustmentRequestResponse struct {
 	Status          string `json:"status"`
 	RequestedByName string `json:"requested_by_name,omitempty"`
 	CreatedAt       string `json:"created_at"`
+	// DecidedByName/ResolutionNote/DecidedAt are only populated by callers
+	// that resolve a decision's context -- platform admin's deep-drill
+	// listing (internal/httpapi/platform_admin_detail_handlers.go), not
+	// any business-facing endpoint today.
+	DecidedByName  string `json:"decided_by_name,omitempty"`
+	ResolutionNote string `json:"resolution_note,omitempty"`
+	DecidedAt      string `json:"decided_at,omitempty"`
 }
 
-func toAdjustmentRequestResponse(a inventory.AdjustmentRequest, requestedByName string) adjustmentRequestResponse {
-	return adjustmentRequestResponse{
+func toAdjustmentRequestResponse(a inventory.AdjustmentRequest, requestedByName, decidedByName string) adjustmentRequestResponse {
+	out := adjustmentRequestResponse{
 		ID: a.ID.String(), VariantID: a.VariantID.String(), VariantName: a.VariantName, ProductName: a.ProductName,
 		QuantityDelta: a.QuantityDelta, ReasonCategory: a.ReasonCategory, ReasonNote: a.ReasonNote,
 		Status: a.Status, RequestedByName: requestedByName, CreatedAt: a.CreatedAt.UTC().Format(time.RFC3339),
+		DecidedByName: decidedByName, ResolutionNote: a.ResolutionNote,
 	}
+	if !a.DecidedAt.IsZero() {
+		out.DecidedAt = a.DecidedAt.UTC().Format(time.RFC3339)
+	}
+	return out
 }
 
 // requestAdjustment implements POST /api/v1/inventory-adjustments
@@ -230,7 +243,7 @@ func (api *API) requestAdjustment(w http.ResponseWriter, r *http.Request) {
 		inventoryErrorResponse(api, w, r, err, "request adjustment")
 		return
 	}
-	if err := writeJSON(w, http.StatusCreated, envelope{"data": toAdjustmentRequestResponse(created, "")}, nil); err != nil {
+	if err := writeJSON(w, http.StatusCreated, envelope{"data": toAdjustmentRequestResponse(created, "", "")}, nil); err != nil {
 		api.logger.Error("write request adjustment response", "request_id", RequestID(r.Context()), "error", err)
 	}
 }
@@ -265,7 +278,7 @@ func (api *API) listPendingAdjustments(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]adjustmentRequestResponse, 0, len(list))
 	for _, a := range list {
-		out = append(out, toAdjustmentRequestResponse(a, names[a.RequestedBy]))
+		out = append(out, toAdjustmentRequestResponse(a, names[a.RequestedBy], ""))
 	}
 	if err := writeJSON(w, http.StatusOK, envelope{"data": out}, nil); err != nil {
 		api.logger.Error("write list pending adjustments response", "request_id", RequestID(r.Context()), "error", err)
@@ -313,7 +326,7 @@ func (api *API) approveAdjustment(w http.ResponseWriter, r *http.Request) {
 		inventoryErrorResponse(api, w, r, err, "approve adjustment")
 		return
 	}
-	if err := writeJSON(w, http.StatusOK, envelope{"data": toAdjustmentRequestResponse(updated, "")}, nil); err != nil {
+	if err := writeJSON(w, http.StatusOK, envelope{"data": toAdjustmentRequestResponse(updated, "", "")}, nil); err != nil {
 		api.logger.Error("write approve adjustment response", "request_id", RequestID(r.Context()), "error", err)
 	}
 }
@@ -354,7 +367,7 @@ func (api *API) rejectAdjustment(w http.ResponseWriter, r *http.Request) {
 		inventoryErrorResponse(api, w, r, err, "reject adjustment")
 		return
 	}
-	if err := writeJSON(w, http.StatusOK, envelope{"data": toAdjustmentRequestResponse(updated, "")}, nil); err != nil {
+	if err := writeJSON(w, http.StatusOK, envelope{"data": toAdjustmentRequestResponse(updated, "", "")}, nil); err != nil {
 		api.logger.Error("write reject adjustment response", "request_id", RequestID(r.Context()), "error", err)
 	}
 }

@@ -18,6 +18,22 @@ import (
 	"github.com/mananuf/justbarme/internal/tenancy"
 )
 
+// PlatformSupportUserID is a fixed, well-known users.id reserved for
+// platform-admin corrective actions (docs/PHASE_PLATFORM_ADMIN_DEEP_DRILL.md)
+// -- never a real signed-in account, never a member of any business.
+// seller_id/actor_id/requested_by/decided_by/received_by columns across
+// sales/expenses/inventory are all plain `REFERENCES users (id)`, with no
+// nullable-actor path and no special-casing in any existing display code
+// (Recent Activity, bill rounds, the unified activity feed all just call
+// identity.Service.GetUserByID on whatever id they're given) -- so a
+// single reserved row with DisplayName "Platform Support" is what makes a
+// platform-admin-initiated correction show up correctly, automatically,
+// everywhere an ordinary user's action already does, with zero changes to
+// any of that display code. EnsureSystemUser (called once at process
+// startup, internal/app.Run) is what guarantees this row exists before
+// anything can reference it.
+var PlatformSupportUserID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+
 type Service struct {
 	pool   *pgxpool.Pool
 	argon2 config.Argon2
@@ -98,6 +114,30 @@ func (s *Service) CreateUserWithHashedPassword(ctx context.Context, email, phone
 // password. Returns ErrEmailTaken if the email is already registered.
 func (s *Service) CreateUserWithoutPassword(ctx context.Context, email, phone, displayName string) (User, error) {
 	return s.CreateUserWithHashedPassword(ctx, email, phone, displayName, "")
+}
+
+// EnsureSystemUser idempotently creates or refreshes the reserved
+// PlatformSupportUserID row -- an upsert keyed on that fixed id, safe to
+// call on every process start (internal/app.Run calls it once, right
+// after constructing this Service, failing startup closed if it errors,
+// since every platform-admin corrective action depends on this row
+// existing). password_hash is left NULL, the same passwordless-account
+// shape internal/oauth's CreateUserWithoutPassword already established --
+// auth.VerifyPassword already fails safely against a NULL hash, so this
+// needs no special case in Authenticate, and a login attempt against this
+// email just looks like a wrong password.
+func (s *Service) EnsureSystemUser(ctx context.Context) error {
+	err := store.WithApp(ctx, s.pool, uuid.Nil, func(ctx context.Context, q *sqlc.Queries) error {
+		_, err := q.UpsertSystemUser(ctx, sqlc.UpsertSystemUserParams{
+			ID: PlatformSupportUserID, Email: pgText("platform-support@justbarme.internal"),
+			DisplayName: "Platform Support",
+		})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("ensure platform support system user: %w", err)
+	}
+	return nil
 }
 
 // GetUserByEmail looks up a user by email (case-insensitive), for a caller

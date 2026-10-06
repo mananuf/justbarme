@@ -20,6 +20,23 @@ const (
 	// Superadmin only, permanently: every platform *write* capability is
 	// superadmin-only by rule, never decided per feature.
 	CapabilityStaffManage Capability = "platform:staff:manage"
+
+	// CapabilityBusinessesReadDetail reads full line-item detail inside
+	// one business -- individual sales/expenses/receipts/adjustments/
+	// bills/reviews, with staff identity resolved. Customer PII is never
+	// included regardless of this capability: no endpoint gated by it
+	// ever calls into internal/sales' customer-reading methods, so there
+	// is nothing to redact (docs/PHASE_PLATFORM_ADMIN_DEEP_DRILL.md).
+	// Both roles, same tier as CapabilityBusinessesReadActivity.
+	CapabilityBusinessesReadDetail Capability = "platform:businesses:read_detail"
+	// CapabilityBusinessesAdjust performs a corrective action against a
+	// business's tenant data on its behalf -- reversing a sale/expense/
+	// receipt, closing/voiding a bill, resolving a review, approving or
+	// rejecting an adjustment request, overriding a blocked receipt
+	// reversal, or directly correcting an inventory balance. Superadmin
+	// only, permanently, by the same "every platform write is superadmin-
+	// only by rule" convention CapabilityStaffManage already follows.
+	CapabilityBusinessesAdjust Capability = "platform:businesses:adjust"
 )
 
 // Role names. Stored on platform_staff.role and checked verbatim.
@@ -34,6 +51,7 @@ var supportCapabilities = []Capability{
 	CapabilityAuditRead,
 	CapabilityBusinessesReadActivity,
 	CapabilityStaffRead,
+	CapabilityBusinessesReadDetail,
 }
 
 // allCapabilities is every platform capability that exists. Superadmin
@@ -46,6 +64,8 @@ var allCapabilities = []Capability{
 	CapabilityBusinessesReadActivity,
 	CapabilityStaffRead,
 	CapabilityStaffManage,
+	CapabilityBusinessesReadDetail,
+	CapabilityBusinessesAdjust,
 }
 
 // Set is an unordered collection of capabilities with O(1) membership

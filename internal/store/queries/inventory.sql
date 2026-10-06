@@ -129,6 +129,21 @@ JOIN products p ON p.business_id = v.business_id AND p.id = v.product_id
 WHERE r.business_id = $1 AND r.status = 'pending'
 ORDER BY r.created_at DESC;
 
+-- name: ListAllInventoryAdjustmentRequestsDetailed :many
+-- Unlike ListPendingInventoryAdjustmentRequestsDetailed, includes decided
+-- (approved/rejected) requests too -- platform admin's deep-drill view
+-- needs to see what was already decided, not just what's still open.
+SELECT
+    r.id, r.location_id, r.variant_id, r.requested_by, r.quantity_delta,
+    r.reason_category, r.reason_note, r.source_count_line_id, r.status, r.created_at,
+    r.decided_by, r.decided_at, r.resolution_note,
+    v.name AS variant_name, p.name AS product_name
+FROM inventory_adjustment_requests r
+JOIN product_variants v ON v.business_id = r.business_id AND v.id = r.variant_id
+JOIN products p ON p.business_id = v.business_id AND p.id = v.product_id
+WHERE r.business_id = $1
+ORDER BY r.created_at DESC;
+
 -- name: ApproveInventoryAdjustmentRequest :one
 UPDATE inventory_adjustment_requests
     SET status = 'approved', decided_by = $3, decided_at = now(), resolution_note = $4
@@ -220,6 +235,7 @@ RETURNING *;
 SELECT
     r.id, r.location_id, r.variant_id, r.requested_by, r.quantity_delta,
     r.reason_category, r.reason_note, r.source_count_line_id, r.status, r.created_at,
+    r.decided_by, r.decided_at, r.resolution_note,
     v.name AS variant_name, p.name AS product_name
 FROM inventory_adjustment_requests r
 JOIN product_variants v ON v.business_id = r.business_id AND v.id = r.variant_id

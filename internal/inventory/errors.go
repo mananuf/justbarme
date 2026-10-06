@@ -29,6 +29,18 @@ var (
 	// should use a manual inventory adjustment instead, which corrects a
 	// quantity without rewriting receiving history.
 	ErrReceiptPartiallyConsumed = errors.New("some of this receipt's stock has already been sold; use a manual adjustment instead")
+	// ErrReceiptFullyConsumed is returned by AdminForceReverseStockReceipt
+	// when every line's lot has nothing left to give back -- there would be
+	// nothing for the override to actually do. ReverseStockReceipt never
+	// returns this; it returns ErrReceiptPartiallyConsumed instead, which
+	// covers this case too (it doesn't distinguish "some" from "all"
+	// consumed since neither is safe for the ordinary, non-override path).
+	ErrReceiptFullyConsumed = errors.New("this receipt's stock has been fully consumed; there is nothing left to give back")
+	// ErrBalanceAlreadyCorrect is returned by AdminCorrectBalance when the
+	// requested target already equals the live balance -- there is no
+	// delta to post, and posting a zero-quantity adjustment would violate
+	// inventory_adjustment_requests' own CHECK (quantity_delta <> 0).
+	ErrBalanceAlreadyCorrect = errors.New("this variant's balance already matches the requested value")
 )
 
 // pgErrorCode reports err's Postgres SQLSTATE code, if any. Duplicated
